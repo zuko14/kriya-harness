@@ -75,6 +75,13 @@
     - id: kriya-mirror
       name: '@kriya-ai/harness-mirror'
 
+# H7 (HD-10): the device agent's Kriya skills as a skill source (local
+# skills win a name) and kriya_memory_search / kriya_memory_save; notes
+# saved from here stay unconfirmed until the person confirms them in Kriya
+- insert:
+    - id: kriya-tools
+      name: '@kriya-ai/harness-tools'
+
 # DSH's first-run "Preview Notice" speaks for DeepSeek Harness; Kriya shows
 # its own beta notice at first run (bin/kriya.js) and in SAFETY.md, which
 # say DSH is an unaudited preview. Marked as seen with DSH's own

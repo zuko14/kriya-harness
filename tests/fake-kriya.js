@@ -1,11 +1,12 @@
 import { createServer } from "node:http"
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 
 // A local fake of the Kriya Harness API for tests: the device flow, /me,
 // /models, DELETE /device, an OpenAI-compatible /chat/completions that
 // streams a scripted answer, approval requests (H5) that the test
-// answers with answer(), expire() or by script, and the session mirror
-// (H6) with a mode and an outage the test sets. It records every request so tests can check
+// answers with answer(), expire() or by script, the session mirror (H6)
+// with a mode and an outage the test sets, and the device agent's skills
+// and memory (H7) from state the test fills. It records every request so tests can check
 // headers and bodies against contract/contract.json. Nothing here reaches
 // a real Kriya deployment or a model provider.
 
@@ -28,6 +29,12 @@ export async function startFakeKriya(script = {}) {
     mirrorDown: false,
     /** @type {Map<string, { id: string, threadId: string, body: any, turns: Map<number, any> }>} */
     sessions: new Map(),
+    /** H7: the device agent's skills (with their bodies) and notes; saves land in `saved` */
+    skills: [],
+    skillBodies: new Map(),
+    notes: [],
+    saved: [],
+    skillsDown: false,
   }
   const settle = (id, status) => {
     const approval = state.approvals.get(id)
@@ -151,6 +158,39 @@ export async function startFakeKriya(script = {}) {
         }
         return send(200, { status: approval.status })
       }
+    }
+    if (path === "/skills" || path.startsWith("/skills/") || path.startsWith("/memory")) {
+      if (state.skillsDown) return fail(503, "server_error", "Something went wrong. Try again.")
+      if (req.method === "GET" && path === "/skills") {
+        const etag = `"${createHash("sha256").update(JSON.stringify(state.skills)).digest("hex").slice(0, 32)}"`
+        if (req.headers["if-none-match"] === etag) {
+          record.status = 304
+          res.writeHead(304, { etag }).end()
+          return
+        }
+        record.status = 200
+        record.response = { skills: state.skills }
+        res.writeHead(200, { "Content-Type": "application/json", etag }).end(JSON.stringify({ skills: state.skills }))
+        return
+      }
+      const skill = /^\/skills\/([a-z0-9-]+)\/(\d+\.\d+\.\d+)$/.exec(path)
+      if (req.method === "GET" && skill) {
+        const text = state.skills.some((s) => s.id === skill[1] && s.version === skill[2]) && state.skillBodies.get(skill[1])
+        if (!text) return fail(404, "not_found", "Not found.")
+        record.status = 200
+        res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" }).end(text)
+        return
+      }
+      if (req.method === "POST" && path === "/memory/search")
+        return send(200, { notes: state.notes.filter((n) => n.content.includes(body?.query ?? "")).slice(0, body?.limit ?? 8) })
+      if (req.method === "POST" && path === "/memory") {
+        if (/\d{4} \d{4} \d{4} \d{4}/.test(body?.content ?? ""))
+          return fail(400, "bad_request", "Not saved: this looks like a card number. Never keep such values in memory.")
+        const id = `note-${state.saved.length + 1}`
+        state.saved.push({ id, content: body.content })
+        return send(201, { id, confirmed: false })
+      }
+      return fail(404, "not_found", "Not found.")
     }
     if (path === "/sessions" || path.startsWith("/sessions/")) {
       if (state.mirrorDown) return fail(503, "server_error", "Something went wrong. Try again.")
