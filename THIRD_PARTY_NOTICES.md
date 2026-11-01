@@ -724,7 +724,7 @@ where they run, and carry their own license file there.
 
 ## License exceptions (HF-09, 2026-11-01)
 
-Owner instruction in chat, H9 session: "Review the 21 notice/license warnings reported by `npm run check`." and "Update `generate-notices.js` / `THIRD_PARTY_NOTICES.md` so the release-gate CI check runs cleanly." Recorded as HF-09: these exact packages and versions are allowed with their notices. A new version, or a changed license, is a new decision. Still open: Counsel HQ-C1 (gate HG-7) before any public download.
+Owner instruction in chat, H9 session: "Review the 21 notice/license warnings reported by `npm run check`." and "Update `generate-notices.js` / `THIRD_PARTY_NOTICES.md` so the release-gate CI check runs cleanly." Recorded as HF-09: these exact packages and versions are allowed with their notices. A new version, or a changed license, is a new decision. Confirmed by the owner in chat the same day: "Yes, keep it". Still open: Counsel HQ-C1 (gate HG-7) before any public download.
 
 | Package | License | Why |
 | --- | --- | --- |
