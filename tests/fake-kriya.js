@@ -2,15 +2,16 @@ import { createServer } from "node:http"
 import { randomBytes } from "node:crypto"
 
 // A local fake of the Kriya Harness API for tests: the device flow, /me,
-// /models, DELETE /device and an OpenAI-compatible /chat/completions that
-// streams a scripted answer. It records every request so tests can check
+// /models, DELETE /device, an OpenAI-compatible /chat/completions that
+// streams a scripted answer, and approval requests (H5) that the test
+// answers with answer(), expire() or by script. It records every request so tests can check
 // headers and bodies against contract/contract.json. Nothing here reaches
 // a real Kriya deployment or a model provider.
 
 const b64 = (n) => randomBytes(n).toString("base64url")
 
 /**
- * @param {{ answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string } }} [script]
+ * @param {{ answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } }) }} [script]
  */
 export async function startFakeKriya(script = {}) {
   const state = {
@@ -18,6 +19,16 @@ export async function startFakeKriya(script = {}) {
     codes: new Map(),
     tokens: new Set(),
     revoked: new Set(),
+    /** @type {Map<string, { id: string, body: any, status: string, wake: Set<() => void> }>} */
+    approvals: new Map(),
+    turns: 0,
+  }
+  const settle = (id, status) => {
+    const approval = state.approvals.get(id)
+    if (!approval || approval.status !== "pending") return false
+    approval.status = status
+    for (const wake of approval.wake) wake()
+    return true
   }
   const answer = script.answer ?? "Kriya fake gateway says hello."
 
@@ -100,11 +111,48 @@ export async function startFakeKriya(script = {}) {
         object: "list",
         data: ["budget", "balanced", "escalation"].map((id) => ({ id, object: "model", owned_by: "kriya" })),
       })
+    if (req.method === "POST" && path === "/approvals") {
+      if (script.approvalsError)
+        return fail(script.approvalsError.status, script.approvalsError.error, script.approvalsError.message)
+      const id = crypto.randomUUID()
+      const approval = { id, body, status: "pending", wake: new Set() }
+      state.approvals.set(id, approval)
+      send(201, { id, expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() })
+      script.onApproval?.({ id, body })
+      return
+    }
+    const one = /^\/approvals\/([0-9a-f-]{36})$/.exec(path)
+    if (one) {
+      const approval = state.approvals.get(one[1])
+      if (!approval) return fail(404, "not_found", "Not found.")
+      if (req.method === "DELETE") {
+        settle(approval.id, "canceled")
+        return send(204)
+      }
+      if (req.method === "GET") {
+        // The real route waits up to `wait` (≤ 25) seconds; tests cap it with maxWait
+        const wait = Math.min(Number(url.searchParams.get("wait") ?? 0), script.maxWait ?? 25)
+        if (approval.status === "pending" && wait > 0) {
+          await new Promise((done) => {
+            const wake = () => {
+              clearTimeout(timer)
+              approval.wake.delete(wake)
+              done()
+            }
+            const timer = setTimeout(wake, wait * 1000)
+            approval.wake.add(wake)
+          })
+        }
+        return send(200, { status: approval.status })
+      }
+    }
     if (req.method === "POST" && path === "/chat/completions") {
       if (script.chatError) return fail(script.chatError.status, script.chatError.error, script.chatError.message)
       if (!["budget", "balanced", "escalation"].includes(body?.model))
         return fail(400, "tier_not_allowed", "That model isn't on your plan.")
       record.status = 200
+      // A scripted turn: plain text, or one tool call for the agent to run
+      const reply = script.chat?.(body, ++state.turns) ?? { content: answer }
       const id = `chatcmpl-${b64(6)}`
       const base = { id, object: "chat.completion.chunk", created: 1, model: body.model }
       if (!body.stream) {
@@ -113,14 +161,23 @@ export async function startFakeKriya(script = {}) {
           object: "chat.completion",
           created: 1,
           model: body.model,
-          choices: [{ index: 0, message: { role: "assistant", content: answer }, finish_reason: "stop" }],
+          choices: [{ index: 0, message: { role: "assistant", content: reply.content ?? answer }, finish_reason: "stop" }],
           usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
         })
       }
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
       const event = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
       event({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] })
-      for (const word of answer.split(/(?<= )/))
+      if (reply.toolCall) {
+        const { name, args } = reply.toolCall
+        const call = { index: 0, id: `call_${b64(6)}`, type: "function", function: { name, arguments: JSON.stringify(args) } }
+        event({ ...base, choices: [{ index: 0, delta: { tool_calls: [call] }, finish_reason: null }] })
+        event({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })
+        event({ ...base, choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })
+        res.end("data: [DONE]\n\n")
+        return
+      }
+      for (const word of reply.content.split(/(?<= )/))
         event({ ...base, choices: [{ index: 0, delta: { content: word }, finish_reason: null }] })
       event({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
       event({ ...base, choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })
@@ -136,6 +193,9 @@ export async function startFakeKriya(script = {}) {
     url,
     state,
     /** A token as if the device flow had finished */
+    /** The person answers in Kriya (approved | declined), or the request expires */
+    answer: (id, status) => settle(id, status),
+    expire: (id) => settle(id, "expired"),
     issueToken() {
       const token = b64(32)
       state.tokens.add(token)

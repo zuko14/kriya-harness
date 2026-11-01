@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-approvals",
+  "description": "Approvals from the phone for the Kriya Harness: DeepSeek Harness's approval requests answered here or in Kriya, first answer wins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}
