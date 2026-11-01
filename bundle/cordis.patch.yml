@@ -32,6 +32,14 @@
     provider: kriya
     model: balanced
 
+# H11 (HD-13): ACP sessions start on the same route. dsh-acp-app's row names
+# DeepSeek's own provider and model; this replaces its config (only the
+# kriya-acp profile has the row)
+- id: acp
+  config:
+    provider: kriya
+    model: balanced
+
 # DeepSeek's own account, models and web search need a DeepSeek sign-in or
 # key; the Kriya Harness uses Kriya's gateway instead
 - id: deepseek-account
