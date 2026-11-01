@@ -54,6 +54,12 @@ export const REFUSALS = {
   // H6: the mirror's refusals (the plugin handles them; listed for completeness)
   no_agent: "Choose the agent this computer works as in Kriya, Account → Devices.",
   mirror_summary_only: "This computer mirrors summaries only.",
+  // H8: handoff and pull (kriya handoff / kriya pull print Kriya's own sentence)
+  not_connected: "Connect GitHub in Kriya, Account → Apps, then hand off again.",
+  too_large: "The changes are larger than a handoff allows.",
+  patch_mismatch: "The upload was damaged on the way; hand off again.",
+  no_checkpoint: "This workspace has no changes saved yet.",
+  task_refused: "Kriya couldn't start the task for this handoff; try again shortly.",
 }
 
 const PI_AI_ERROR = /PI_AI_ERROR: \d{3} "([a-z_]+)"/
