@@ -51,6 +51,25 @@
 - id: ui-settings-account
   disabled: true
 
+# The Web UI shows Kriya, not DeepSeek: the official brand row is off and
+# Kriya's brand plugin (plugins/brand: sidebar mark and name, hero mark,
+# tab title and icon) fills the same slots, as that row's README asks of
+# other identities. In the headless profile its node half does nothing
+- id: ui-brand-official
+  disabled: true
+- insert:
+    - id: ui-brand-kriya
+      name: '@kriya-ai/harness-brand'
+
+# DSH's first-run "Preview Notice" speaks for DeepSeek Harness; Kriya shows
+# its own beta notice at first run (bin/kriya.js) and in SAFETY.md, which
+# say DSH is an unaudited preview. Marked as seen with DSH's own
+# acknowledgement field; a DSH bump that changes the version shows it again
+# and changes the recorded dump (HT-REL-03)
+- id: ui-settings-general
+  config:
+    welcomeNoticeVersion: '2026-09-28.1'
+
 # HD-17: no telemetry leaves the machine
 - id: otel
   disabled: true

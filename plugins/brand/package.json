@@ -1,0 +1,24 @@
+{
+  "name": "@kriya-ai/harness-brand",
+  "description": "Kriya brand for the Kriya Harness Web UI: DeepSeek Harness's brand slots, title and icon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "UNLICENSED"
+}

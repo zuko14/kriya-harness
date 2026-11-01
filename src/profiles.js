@@ -27,6 +27,28 @@ function manifest(name, bundles) {
   )
 }
 
+// Packages of this repository a profile resolves by name: the bundle itself
+// and the Web UI brand plugin the bundle mounts
+export const LINKED = {
+  "@kriya-ai/harness": PACKAGE_ROOT,
+  "@kriya-ai/harness-brand": join(PACKAGE_ROOT, "plugins", "brand"),
+}
+
+function link(dir, name, target) {
+  const path = join(dir, "node_modules", ...name.split("/"))
+  mkdirSync(dirname(path), { recursive: true })
+  let current = null
+  try {
+    current = lstatSync(path).isSymbolicLink() ? resolve(dirname(path), readlinkSync(path)) : "not-a-link"
+  } catch {
+    // Missing: created below
+  }
+  if (current === resolve(target)) return
+  // Only ever our own link (or a stale one from an older install) is replaced
+  if (current !== null) rmSync(path, { force: true, recursive: current === "not-a-link" })
+  symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir")
+}
+
 /** Creates or repairs one profile; returns its directory. Idempotent. */
 export function ensureProfile(name) {
   const bundles = PROFILES[name]
@@ -36,19 +58,7 @@ export function ensureProfile(name) {
   mkdirSync(dir, { recursive: true })
   // Rewritten each time: the bundle list is this package's, not the person's
   writeFileSync(join(dir, "package.json"), manifest(name, bundles))
-  const link = join(dir, "node_modules", "@kriya-ai", "harness")
-  mkdirSync(dirname(link), { recursive: true })
-  let current = null
-  try {
-    current = lstatSync(link).isSymbolicLink() ? resolve(dirname(link), readlinkSync(link)) : "not-a-link"
-  } catch {
-    // Missing: created below
-  }
-  if (current !== resolve(PACKAGE_ROOT)) {
-    // Only ever our own link (or a stale one from an older install) is replaced
-    if (current !== null) rmSync(link, { force: true, recursive: current === "not-a-link" })
-    symlinkSync(PACKAGE_ROOT, link, process.platform === "win32" ? "junction" : "dir")
-  }
+  for (const [packageName, target] of Object.entries(LINKED)) link(dir, packageName, target)
   return dir
 }
 

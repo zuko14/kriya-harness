@@ -584,8 +584,12 @@
   name: '@deepseek-ai/dsh-client-ui-sidebar-files'
 - id: ui-settings
   name: '@deepseek-ai/dsh-client-ui-settings'
+# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
 - id: ui-settings-general
   name: '@deepseek-ai/dsh-client-ui-settings-general'
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+# == @deepseek-ai/dsh-web-app
 - id: ui-settings-models
   name: '@deepseek-ai/dsh-client-ui-settings-models'
 - id: ui-plugin-manager
@@ -598,8 +602,11 @@
   name: '@deepseek-ai/dsh-client-ui-approval'
 - id: ui-chat
   name: '@deepseek-ai/dsh-client-ui-chat'
+# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
 - id: ui-brand-official
   name: '@deepseek-ai/dsh-client-ui-brand-official'
+  disabled: true
+# == @deepseek-ai/dsh-web-app
 - id: ui-attachment
   name: '@deepseek-ai/dsh-client-ui-attachment'
 - id: ui-tool
@@ -1268,3 +1275,6 @@
       - id: tool-plugin-market
         name: '@deepseek-ai/dsh-plugin-market/tools'
         disabled: !!js '!ctx.get(''profileContext'')'
+# == @kriya-ai/harness
+- id: ui-brand-kriya
+  name: '@kriya-ai/harness-brand'

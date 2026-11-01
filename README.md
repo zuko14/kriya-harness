@@ -38,6 +38,12 @@ plan decides which are allowed and its monthly limit.
   `dsh-base`: the Kriya gateway as the only model route, Kriya's
   `balanced` tier as the default, and DeepSeek's account, models, web
   search and telemetry rows disabled.
+- `plugins/brand/` is the Kriya look for the Web UI ([DESIGN.md](plugins/brand/DESIGN.md)):
+  Kriya's palette through DeepSeek Harness's theme token layer, Geist,
+  Fraunces and JetBrains Mono embedded, the brand slots (sidebar mark and
+  name), the start screen where the K is stitched in, and Kriya's tab title
+  and icon. The bundle turns DeepSeek's official brand row off. Edit
+  `plugins/brand/src/client.js`, then `npm run build:brand`.
 - `contract/contract.json` is the Kriya Harness API contract, copied from
   the Kriya repository ([contract/SOURCE.md](contract/SOURCE.md)).
 - Approvals from your phone, the session mirror, skills and memory, handoff
@@ -46,7 +52,8 @@ plan decides which are allowed and its monthly limit.
 ## Develop
 
 ```bash
-npm run check          # exact pins, notices current, all tests
+npm run check          # exact pins, notices and theme build current, all tests
+npm run build:brand    # rebuild plugins/brand/client.js (fonts inlined)
 npm run release:check  # the release gate, including the license allow-list
 npm run dump-config    # re-record expected/*.dump.yml after a reviewed DSH bump
 npm run notices        # regenerate THIRD_PARTY_NOTICES.md from the lockfile

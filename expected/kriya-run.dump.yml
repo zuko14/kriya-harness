@@ -410,3 +410,6 @@
     task: !!js ctx.headlessStartup.task
     sessionId: !!js ctx.headlessStartup.sessionId
     json: !!js ctx.headlessStartup.json
+# == @kriya-ai/harness
+- id: ui-brand-kriya
+  name: '@kriya-ai/harness-brand'

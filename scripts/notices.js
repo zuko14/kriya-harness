@@ -23,6 +23,8 @@ export const ALLOWED = new Set([
   "BlueOak-1.0.0",
   "CC0-1.0",
   "Python-2.0",
+  // Fonts only (scripts/build-brand.js); not for code
+  "OFL-1.1",
 ])
 
 /** An SPDX expression is allowed when every alternative of an OR, or every part of an AND, is. */
@@ -54,7 +56,7 @@ export function releasePackages(lock, root = ROOT) {
 }
 
 /** @returns {{ markdown: string, problems: string[] }} */
-export function buildNotices(lock, exceptions = {}, root = ROOT) {
+export function buildNotices(lock, exceptions = {}, root = ROOT, embedded = EMBEDDED_FONTS) {
   const packages = releasePackages(lock, root)
   const problems = []
   for (const pkg of packages) {
@@ -89,8 +91,25 @@ ${dsh?.text ?? "(license text missing)"}
   }
   for (const [text, names] of texts)
     markdown += `\n### ${names.join(", ")}\n\n\`\`\`text\n${text.replaceAll("```", "'''")}\n\`\`\`\n`
+  // Fonts copied into plugins/brand/client.js by scripts/build-brand.js:
+  // shipped inside this package, so their notices travel with it
+  markdown += "\n## Fonts embedded in the Web UI theme\n"
+  for (const name of embedded) {
+    const entry = lock.packages?.[`node_modules/${name}`]
+    const text = licenseText(join(root, "node_modules", name))
+    if (!entry || !licenseAllowed(entry.license)) problems.push(`${name}: embedded font license ${entry?.license ?? "unknown"} isn't allowed`)
+    markdown += `\n### ${name}@${entry?.version ?? "?"} (${entry?.license ?? "unknown"})\n\n\`\`\`text\n${(text ?? "(license text missing)").replaceAll("```", "'''")}\n\`\`\`\n`
+  }
   return { markdown, problems }
 }
+
+// The font packages scripts/build-brand.js inlines (OFL-1.1 permits bundling
+// with software when the license accompanies it)
+export const EMBEDDED_FONTS = [
+  "@fontsource-variable/fraunces",
+  "@fontsource-variable/geist",
+  "@fontsource-variable/jetbrains-mono",
+]
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8"))

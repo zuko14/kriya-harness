@@ -35,6 +35,9 @@ test("HT-REL-01: THIRD_PARTY_NOTICES.md is current and carries DeepSeek Harness'
   const { markdown } = buildNotices(read("package-lock.json"), exceptions)
   assert.equal(readFileSync(join(ROOT, "THIRD_PARTY_NOTICES.md"), "utf8"), markdown)
   assert.match(markdown, /## DeepSeek Harness\n\nMIT License\n\nCopyright \(c\) 2026 DeepSeek/)
+  // The fonts inlined into the theme carry their license
+  for (const font of ["fraunces", "geist", "jetbrains-mono"])
+    assert.match(markdown, new RegExp(`### @fontsource-variable/${font}@[\\d.]+ \\(OFL-1\\.1\\)\\n\\n\`\`\`text\\n.*SIL OPEN FONT LICENSE`, "s"))
 })
 
 test("HT-REL-02: licenses outside the allow-list, or unknown, block a release", () => {
@@ -50,11 +53,11 @@ test("HT-REL-02: licenses outside the allow-list, or unknown, block a release", 
       "node_modules/tool": { version: "4.0.0", license: "GPL-3.0", dev: true },
     },
   }
-  const { problems } = buildNotices(lock, {}, "/nonexistent")
+  const { problems } = buildNotices(lock, {}, "/nonexistent", [])
   assert.deepEqual(problems, [
     "mystery@3.0.0: license unknown isn't allowed",
     "odd@2.0.0: license MPL-2.0 isn't allowed",
   ])
   // A recorded exception (an owner decision) clears exactly that package and version
-  assert.deepEqual(buildNotices(lock, { "odd@2.0.0": "reason", "mystery@3.0.0": "reason" }, "/nonexistent").problems, [])
+  assert.deepEqual(buildNotices(lock, { "odd@2.0.0": "reason", "mystery@3.0.0": "reason" }, "/nonexistent", []).problems, [])
 })
