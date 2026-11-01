@@ -1,0 +1,56 @@
+import assert from "node:assert/strict"
+import { createRequire } from "node:module"
+import { join } from "node:path"
+import { test } from "node:test"
+
+import { launchEnv, TOKEN_ENV } from "../src/launch.js"
+import { freshHome, ROOT } from "./helpers.js"
+
+// The device token reaches DSH only as a launch variable, and DSH removes
+// credential-shaped variables from every shell the agent runs. If DSH ever
+// changes that pattern, or the variable is renamed, a model's `echo` could
+// print the token: this test fails first.
+
+const require = createRequire(join(ROOT, "package.json"))
+const subprocess = await import(require.resolve("@deepseek-ai/dsh-subprocess"))
+
+test("DSH scrubs the token variable from agent shells", () => {
+  assert.ok(subprocess.SENSITIVE_ENV_PATTERN.test(TOKEN_ENV))
+  const before = process.env[TOKEN_ENV]
+  process.env[TOKEN_ENV] = "secret-for-test"
+  try {
+    assert.equal(subprocess.scrubbedParentEnv()[TOKEN_ENV], undefined)
+  } finally {
+    if (before === undefined) delete process.env[TOKEN_ENV]
+    else process.env[TOKEN_ENV] = before
+  }
+})
+
+test("launch variables: the sign-in's token and gateway only, telemetry off", () => {
+  const home = freshHome()
+  const env = launchEnv(
+    { url: "https://k.example", token: "t1" },
+    { PATH: "/bin", KRIYA_DEVICE_TOKEN: "from-shell", KRIYA_GATEWAY_URL: "https://evil.example" }
+  )
+  assert.equal(env.KRIYA_DEVICE_TOKEN, "t1")
+  assert.equal(env.KRIYA_GATEWAY_URL, "https://k.example/api/harness/v1")
+  assert.equal(env.DSH_HOME, home)
+  assert.equal(env.DSH_TELEMETRY_DISABLED, "1")
+  assert.equal(env.PATH, "/bin")
+
+  const signedOut = launchEnv(null, { KRIYA_DEVICE_TOKEN: "from-shell", KRIYA_GATEWAY_URL: "https://evil.example" })
+  assert.equal(signedOut.KRIYA_DEVICE_TOKEN, undefined)
+  assert.equal(signedOut.KRIYA_GATEWAY_URL, undefined)
+})
+
+test("every refusal code in the contract has a plain sentence for kriya run", async () => {
+  const { REFUSALS, explain } = await import("../src/launch.js")
+  const { contract } = await import("./helpers.js")
+  const codes = contract.error.properties.error.enum.filter(
+    (code) => !["not_found", "bad_request", "pending", "denied", "expired", "server_error"].includes(code)
+  )
+  for (const code of codes) assert.ok(REFUSALS[code], code)
+  assert.equal(explain('dsh: PI_AI_ERROR: 429 "rate_limited"'), REFUSALS.rate_limited)
+  assert.equal(explain('dsh: PI_AI_ERROR: 500 "something_else"'), null)
+  assert.equal(explain("no error here"), null)
+})

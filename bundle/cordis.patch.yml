@@ -1,0 +1,64 @@
+# The "kriya" bundle (Kriya Harness, built on DeepSeek Harness): patch rows
+# applied over dsh-base and the surface bundle (dsh-web-app or
+# dsh-headless) in every Kriya profile. HD-02: nothing in DSH is edited;
+# Kriya is added through configuration rows. HT-REL-03 checks the composed
+# result of each profile against expected/.
+
+# P-GW: the only model route is the Kriya gateway. The address, the client
+# version and the device token come from the launcher (src/launch.js);
+# apiKeyEnv is a credential reference DSH resolves per request, so the
+# token never enters a config file. Tiers are Kriya's aliases; Kriya maps
+# them to models on the server.
+- id: llm-pi-ai
+  config:
+    providers:
+      kriya:
+        displayName: Kriya
+        api: openai-completions
+        baseURL: !!js process.env.KRIYA_GATEWAY_URL ?? 'http://127.0.0.1:9/kriya-signed-out'
+        apiKeyEnv: KRIYA_DEVICE_TOKEN
+        headers:
+          X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
+        models:
+          - id: balanced
+            name: Kriya balanced
+          - id: budget
+            name: Kriya budget
+          - id: escalation
+            name: Kriya escalation
+
+- id: agent-default-model
+  config:
+    provider: kriya
+    model: balanced
+
+# DeepSeek's own account, models and web search need a DeepSeek sign-in or
+# key; the Kriya Harness uses Kriya's gateway instead
+- id: deepseek-account
+  disabled: true
+- id: llm-deepseek
+  disabled: true
+- id: llm-deepseek-account
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+- id: web-deepseek-api
+  disabled: true
+# The Web UI's DeepSeek account page and its controller (which would wait
+# forever for the disabled account service); no-ops in the headless profile
+- id: account-controller
+  disabled: true
+- id: ui-settings-account
+  disabled: true
+
+# HD-17: no telemetry leaves the machine
+- id: otel
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+# Web UI only (no such rows in the headless profile, where they're no-ops);
+# DSH turns these on only for its desktop profile, Kriya turns them off outright
+- id: desktop-product-telemetry
+  disabled: true
+- id: product-analytics
+  disabled: true

@@ -1,0 +1,39 @@
+# Client CI (TEST_STRATEGY: HT-REL-01…03, contract tests, kriya doctor and
+# kriya run against the fake gateway). No secrets, no network beyond npm:
+# every test talks to tests/fake-kriya.js on 127.0.0.1.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.9"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+  # The release gate (license allow-list): fails until the owner decides on
+  # the MPL-2.0, LGPL-3.0 and Unlicense packages DSH brings in (HF-09)
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.9"
+          cache: npm
+      - run: npm ci
+      - run: npm run release:check

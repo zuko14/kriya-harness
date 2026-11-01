@@ -1,0 +1,43 @@
+{
+  "name": "@kriya-ai/harness",
+  "version": "0.1.0",
+  "description": "Kriya Harness (beta): a Kriya agent on your machine, built on DeepSeek Harness",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.9"
+  },
+  "bin": {
+    "kriya": "bin/kriya.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "bundle/",
+    "contract/",
+    "SAFETY.md",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./bundle/cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "check:pins": "node scripts/check-pins.js",
+    "check:notices": "node scripts/notices.js --check",
+    "notices": "node scripts/notices.js",
+    "dump-config": "node scripts/dump-config.js",
+    "check": "npm run check:pins && npm run check:notices && npm test",
+    "release:check": "npm run check:pins && node scripts/notices.js --check --strict"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.5"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1"
+  }
+}
