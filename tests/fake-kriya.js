@@ -3,8 +3,9 @@ import { randomBytes } from "node:crypto"
 
 // A local fake of the Kriya Harness API for tests: the device flow, /me,
 // /models, DELETE /device, an OpenAI-compatible /chat/completions that
-// streams a scripted answer, and approval requests (H5) that the test
-// answers with answer(), expire() or by script. It records every request so tests can check
+// streams a scripted answer, approval requests (H5) that the test
+// answers with answer(), expire() or by script, and the session mirror
+// (H6) with a mode and an outage the test sets. It records every request so tests can check
 // headers and bodies against contract/contract.json. Nothing here reaches
 // a real Kriya deployment or a model provider.
 
@@ -22,6 +23,11 @@ export async function startFakeKriya(script = {}) {
     /** @type {Map<string, { id: string, body: any, status: string, wake: Set<() => void> }>} */
     approvals: new Map(),
     turns: 0,
+    /** H6: the device's mirror mode, and whether Kriya is "down" for the mirror */
+    mirror: script.mirror ?? "summary",
+    mirrorDown: false,
+    /** @type {Map<string, { id: string, threadId: string, body: any, turns: Map<number, any> }>} */
+    sessions: new Map(),
   }
   const settle = (id, status) => {
     const approval = state.approvals.get(id)
@@ -145,6 +151,26 @@ export async function startFakeKriya(script = {}) {
         }
         return send(200, { status: approval.status })
       }
+    }
+    if (path === "/sessions" || path.startsWith("/sessions/")) {
+      if (state.mirrorDown) return fail(503, "server_error", "Something went wrong. Try again.")
+      if (state.mirror === "off") return fail(404, "not_found", "Not found.")
+      if (req.method === "POST" && path === "/sessions") {
+        const found = [...state.sessions.values()].find((s) => s.body.deviceSessionId === body?.deviceSessionId)
+        if (found) return send(200, { sessionId: found.id, threadId: found.threadId, mirror: state.mirror })
+        const session = { id: crypto.randomUUID(), threadId: b64(9), body, turns: new Map() }
+        state.sessions.set(session.id, session)
+        return send(201, { sessionId: session.id, threadId: session.threadId, mirror: state.mirror })
+      }
+      const turn = /^\/sessions\/([0-9a-f-]{36})\/turns$/.exec(path)
+      const session = turn && state.sessions.get(turn[1])
+      if (req.method === "POST" && session) {
+        if (body?.full && state.mirror !== "full")
+          return fail(403, "mirror_summary_only", "This device mirrors summaries only.")
+        if (!session.turns.has(body.seq)) session.turns.set(body.seq, body)
+        return send(204)
+      }
+      return fail(404, "not_found", "Not found.")
     }
     if (req.method === "POST" && path === "/chat/completions") {
       if (script.chatError) return fail(script.chatError.status, script.chatError.error, script.chatError.message)

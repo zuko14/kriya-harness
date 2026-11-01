@@ -1,4 +1,4 @@
-import { BASE_PATH, call } from "../../src/api.js"
+import { call, deviceFromEnv } from "../../src/api.js"
 
 // Kriya approvals plugin (H5, HD-08): when DeepSeek Harness asks before a
 // tool runs, the person can answer here (DSH's own prompt) or in Kriya on
@@ -49,14 +49,6 @@ export function inputFor(args) {
   let keep = MAX_INPUT - 64
   while (JSON.stringify({ truncated: text.slice(0, keep) }).length > MAX_INPUT) keep -= 256
   return { truncated: text.slice(0, keep) }
-}
-
-// The signed-in device, from the variables the launcher sets (src/launch.js)
-function signedIn() {
-  const token = process.env.KRIYA_DEVICE_TOKEN
-  const gateway = process.env.KRIYA_GATEWAY_URL
-  if (!token || !gateway?.endsWith(BASE_PATH)) return null
-  return { token, url: gateway.slice(0, -BASE_PATH.length) }
 }
 
 const sleep = (ms, signal) =>
@@ -182,7 +174,7 @@ export function apply(ctx) {
     function (req, next) {
       // Our own copy, sent down the chain: the rest of the answerers decide it
       if (relayed.has(req)) return next()
-      const device = signedIn()
+      const device = deviceFromEnv()
       if (!device) return next()
       return answer(this, req, device).then((outcome) => outcome ?? next())
     },

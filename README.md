@@ -51,8 +51,13 @@ plan decides which are allowed and its monthly limit.
   answer wins. With no answer from either (Kriya unreachable, the request
   expired), the action is refused. In `kriya run` the phone is the only
   place to answer.
-- The session mirror, skills and memory, handoff and editor (ACP) support
-  are later phases (H6–H8, H11).
+- `plugins/mirror/` sends a summary of each turn (its answer and the tools
+  it used) to a thread in Kriya, so your phone shows progress, but only
+  when you turn the mirror on for this computer in Kriya (Account →
+  Devices). "Full" also sends each tool's arguments and output. Turns wait
+  in `~/.kriya/mirror-queue.json` while Kriya is unreachable.
+- Skills and memory, handoff and editor (ACP) support are later phases
+  (H7, H8, H11).
 
 ## Develop
 

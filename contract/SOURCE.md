@@ -7,9 +7,9 @@ again from Kriya and update the hash below in the same change.
 
 | Field | Value |
 | --- | --- |
-| Copied | 2026-11-01 (again, for H5: the three approval routes) |
+| Copied | 2026-11-01 (again, for H6: the two mirror routes and their refusals) |
 | From | Kriya repository `main` at `9a51a12` plus uncommitted work (the file isn't committed there yet) |
-| sha256 | `8df89a41fb560bbc374f3a348a29e7cea1f1a5f71c52d8d15159046c970c8283` |
+| sha256 | `058b219c385a8d2ddd49c14287abb1185551a73841e74c2b3bc08124dae19ff7` |
 
 When the Kriya side commits the file, replace "From" with that commit.
 `tests/contract.test.js` checks the hash, so a hand edit fails.

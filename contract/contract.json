@@ -26,7 +26,9 @@
           "tier_not_allowed",
           "cap_reached",
           "not_priced",
-          "upstream_unavailable"
+          "upstream_unavailable",
+          "no_agent",
+          "mirror_summary_only"
         ]
       },
       "message": {
@@ -372,6 +374,107 @@
       "path": "/approvals/{id}",
       "auth": true,
       "request": null,
+      "response": null
+    },
+    {
+      "method": "POST",
+      "path": "/sessions",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "deviceSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "project": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": ["deviceSessionId", "project", "title"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "mirror": {
+            "type": "string",
+            "enum": ["summary", "full"]
+          }
+        },
+        "required": ["sessionId", "threadId", "mirror"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/{id}/turns",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "tools": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ok", "error", "declined"]
+                },
+                "ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": ["name", "status", "ms"],
+              "additionalProperties": false
+            }
+          },
+          "full": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": ["seq", "text", "tools"],
+        "additionalProperties": false
+      },
       "response": null
     }
   ]
