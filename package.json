@@ -34,6 +34,7 @@
     "dump-config": "node scripts/dump-config.js",
     "check": "npm run check:pins && npm run check:notices && npm run check:brand && npm test",
     "release:check": "npm run check:pins && node scripts/notices.js --check --strict",
+    "sbom": "npm sbom --sbom-format cyclonedx --omit dev --package-lock-only",
     "build:brand": "node scripts/build-brand.js",
     "check:brand": "node scripts/build-brand.js --check"
   },

@@ -25,13 +25,7 @@ test("HT-REL-01: a range or a lockfile mismatch is caught", () => {
 })
 
 test("HT-REL-01: THIRD_PARTY_NOTICES.md is current and carries DeepSeek Harness's license", () => {
-  const exceptions = (() => {
-    try {
-      return read("notices-exceptions.json")
-    } catch {
-      return {}
-    }
-  })()
+  const exceptions = read("notices-exceptions.json")
   const { markdown } = buildNotices(read("package-lock.json"), exceptions)
   assert.equal(readFileSync(join(ROOT, "THIRD_PARTY_NOTICES.md"), "utf8"), markdown)
   assert.match(markdown, /## DeepSeek Harness\n\nMIT License\n\nCopyright \(c\) 2026 DeepSeek/)
@@ -58,8 +52,48 @@ test("HT-REL-02: licenses outside the allow-list, or unknown, block a release", 
     "mystery@3.0.0: license unknown isn't allowed",
     "odd@2.0.0: license MPL-2.0 isn't allowed",
   ])
-  // A recorded exception (an owner decision) clears exactly that package and version
-  assert.deepEqual(buildNotices(lock, { "odd@2.0.0": "reason", "mystery@3.0.0": "reason" }, "/nonexistent", []).problems, [])
+  // A recorded exception (an owner decision) clears exactly that package, version and license
+  const decision = { id: "HF-x", date: "2026-11-01", record: "Owner decided." }
+  const decided = {
+    decision,
+    packages: {
+      "odd@2.0.0": { license: "MPL-2.0", reason: "Needed for x." },
+      "mystery@3.0.0": { license: null, reason: "Checked by hand." },
+    },
+  }
+  assert.deepEqual(buildNotices(lock, decided, "/nonexistent", []).problems, [])
+  assert.match(buildNotices(lock, decided, "/nonexistent", []).markdown, /## License exceptions \(HF-x, 2026-11-01\)\n\nOwner decided\.\n[\s\S]*\| odd@2\.0\.0 \| MPL-2\.0 \| Needed for x\. \|/)
+})
+
+test("HT-REL-02: an exception without a decision, for another license, or for a package not installed fails", () => {
+  const lock = { packages: { "": {}, "node_modules/odd": { version: "2.0.0", license: "MPL-2.0" } } }
+  const exception = { license: "MPL-2.0", reason: "Needed for x." }
+  const decision = { id: "HF-x", date: "2026-11-01", record: "Owner decided." }
+  const problems = (file) => buildNotices(lock, file, "/nonexistent", []).problems
+  assert.equal(problems({ packages: { "odd@2.0.0": exception } }).length, 1)
+  assert.match(problems({ decision, packages: { "odd@2.0.0": { ...exception, license: "MIT" } } })[0], /doesn't match/)
+  assert.match(problems({ decision, packages: { "odd@2.0.0": exception, "odd@1.0.0": exception } })[0], /odd@1\.0\.0: exception for a package this release doesn't install/)
+})
+
+test("HF-09: every exception is decided, matches the lockfile, and the release gate is clean", () => {
+  const file = read("notices-exceptions.json")
+  assert.equal(file.decision.id, "HF-09")
+  assert.match(file.decision.stillOpen, /HQ-C1/)
+  const { problems } = buildNotices(read("package-lock.json"), file)
+  assert.deepEqual(problems, [])
+  assert.equal(Object.keys(file.packages).length, 21)
+})
+
+test("HG-5: npm run sbom writes a CycloneDX SBOM of the release, from the lockfile, without dev tools", async () => {
+  const { execFileSync } = await import("node:child_process")
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm"
+  const sbom = JSON.parse(execFileSync(npm, ["run", "-s", "sbom"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }))
+  assert.equal(sbom.bomFormat, "CycloneDX")
+  const pins = read("package.json").dependencies
+  const dsh = sbom.components.find((c) => c.purl?.startsWith("pkg:npm/%40deepseek-ai/dsh@"))
+  assert.equal(dsh?.version, pins["@deepseek-ai/dsh"])
+  for (const dev of Object.keys(read("package.json").devDependencies).filter((n) => n.startsWith("@fontsource")))
+    assert.ok(!sbom.components.some((c) => c.purl?.includes(encodeURIComponent(dev).replace("%2F", "/"))), dev)
 })
 
 test("HT-REL-01: the notices come out the same on every system", async () => {
@@ -86,4 +120,25 @@ test("HT-REL-01: the notices come out the same on every system", async () => {
   assert.match(onMac, /\| mac-only \| 1\.0\.0 \| MIT \| darwin, arm64 \|/)
   assert.match(onMac, /\| maybe \| 1\.0\.0 \| MIT \| optional \|/)
   assert.doesNotMatch(onMac, /License of (mac-only|maybe)/)
+})
+
+test("HG-6: SAFETY.md's defaults are the composed profiles' defaults, and it covers what leaves the machine", () => {
+  const safety = readFileSync(join(ROOT, "SAFETY.md"), "utf8")
+  for (const profile of ["kriya", "kriya-run", "kriya-acp"]) {
+    const dump = readFileSync(join(ROOT, "expected", `${profile}.dump.yml`), "utf8")
+    assert.match(dump, /mode: !!js process\.env\.DSH_PERMISSION_MODE \?\? 'workspace-write'/, profile)
+    assert.match(dump, /'danger-full-access' \? 'never' : 'ask'/, profile)
+  }
+  for (const fact of [
+    /has not had a\nsecurity audit/,
+    /\| Sandbox \| `workspace-write` \|/,
+    /\| Approvals \| `ask` \|/,
+    /DSH_PERMISSION_MODE/,
+    /Never start it in `\/`, your home folder/,
+    /\*\*unconfirmed\*\* until you confirm them/,
+    /\*\*which is not redacted\*\*/,
+    /\*\*including untracked files\*\*/,
+    /removes variables with `TOKEN` in their name/,
+  ])
+    assert.match(safety, fact)
 })

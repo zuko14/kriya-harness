@@ -125,6 +125,24 @@ test("summary mode never sends file contents or command output; full mode sends 
   assert.deepEqual(sent.full.tools[0], { name: "bash", input: { command: "npm test" }, output: "2 failed" })
 })
 
+test("full mode hides arguments with secret-looking names before they leave the machine", async () => {
+  fake.state.mirror = "full"
+  fake.state.sessions.clear()
+  const ctx = await compose()
+  const secret = "sk-live-0123456789"
+  turn(ctx, { id: "dsh-secret" }, 1, {
+    results: [{ name: "http", args: { url: "https://api.example.com", headers: { Authorization: secret }, api_key: secret }, output: "200" }],
+  })
+  await until(() => sessions()[0]?.turns.size === 1)
+  const [sent] = turnsOf(sessions()[0])
+  assert.deepEqual(sent.full.tools[0].input, {
+    url: "https://api.example.com",
+    headers: { Authorization: "[redacted]" },
+    api_key: "[redacted]",
+  })
+  assert.doesNotMatch(JSON.stringify(fake.state.requests.map((r) => r.body)), new RegExp(secret))
+})
+
 test("Kriya unreachable: turns wait on disk (0600) and arrive in order once it's back, even after a restart", async () => {
   fake.state.mirrorDown = true
   let ctx = await compose()
