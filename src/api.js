@@ -26,10 +26,11 @@ export class KriyaError extends Error {
  * @param {string} url Kriya origin
  * @param {string} method
  * @param {string} path below BASE_PATH
- * @param {{ token?: string, body?: unknown, signal?: AbortSignal }} [options]
+ * @param {{ token?: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>, raw?: boolean }} [options]
+ *   `raw`: the Response itself for 2xx and 304 (a skill body, an ETag check)
  */
-export async function call(url, method, path, { token, body, signal } = {}) {
-  const headers = { "X-Kriya-Harness": CLIENT_VERSION, Accept: "application/json" }
+export async function call(url, method, path, { token, body, signal, headers: extra = {}, raw = false } = {}) {
+  const headers = { "X-Kriya-Harness": CLIENT_VERSION, Accept: "application/json", ...extra }
   if (token) headers.Authorization = `Bearer ${token}`
   if (body !== undefined) headers["Content-Type"] = "application/json"
   let response
@@ -43,6 +44,7 @@ export async function call(url, method, path, { token, body, signal } = {}) {
   } catch (error) {
     throw new KriyaError(0, "network", `Couldn't reach ${url} (${error?.cause?.code ?? error?.name ?? "network error"}).`)
   }
+  if (raw && (response.ok || response.status === 304)) return response
   if (response.status === 204) return null
   const text = await response.text()
   let data = null

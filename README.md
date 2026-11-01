@@ -56,8 +56,11 @@ plan decides which are allowed and its monthly limit.
   when you turn the mirror on for this computer in Kriya (Account →
   Devices). "Full" also sends each tool's arguments and output. Turns wait
   in `~/.kriya/mirror-queue.json` while Kriya is unreachable.
-- Skills and memory, handoff and editor (ACP) support are later phases
-  (H7, H8, H11).
+- `plugins/kriya-tools/` brings your Kriya agent's skills into the harness
+  (your own local skills win a name) and two tools: `kriya_memory_search`
+  for its notes and `kriya_memory_save`, whose notes stay unconfirmed
+  until you confirm them in Kriya.
+- Handoff and editor (ACP) support are later phases (H8, H11).
 
 ## Develop
 

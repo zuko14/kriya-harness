@@ -417,3 +417,5 @@
   name: '@kriya-ai/harness-approvals'
 - id: kriya-mirror
   name: '@kriya-ai/harness-mirror'
+- id: kriya-tools
+  name: '@kriya-ai/harness-tools'

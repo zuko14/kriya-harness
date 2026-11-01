@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-tools",
+  "description": "Kriya skills and memory inside the Kriya Harness: a DeepSeek Harness skill source and two memory tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}
