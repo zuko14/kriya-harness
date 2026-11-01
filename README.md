@@ -22,6 +22,7 @@ node bin/kriya.js login --url https://<your Kriya address>
 | `kriya login [--url …] [--no-browser]` | Signs this device in: shows a code, opens Kriya's connect page, waits for you to approve it there |
 | `kriya [--no-open] [--port <n>]` | DeepSeek Harness's Web UI on `127.0.0.1`, with Kriya's models |
 | `kriya run "<job>" [--json]` | One job; prints the answer; exit 0 done, 1 failed |
+| `kriya acp` | The same agent for editors that speak ACP v1 (Agent Client Protocol): your editor starts it and talks over stdin/stdout |
 | `kriya handoff ["<note>"]` | Hands this repository's uncommitted work (HEAD must be on GitHub) to your Kriya agent in a cloud workspace; prints the thread's link |
 | `kriya pull [<workspace id>]` | Brings a workspace's latest changes back on a new branch `kriya/pull-<id>` at its base commit (default: your last handoff) |
 | `kriya doctor` | Checks Node, the profiles, the sign-in and the gateway |
@@ -35,11 +36,12 @@ plan decides which are allowed and its monthly limit.
 
 - `bin/kriya.js` signs in, prepares the Kriya profiles in `~/.kriya`
   (`DSH_HOME`) and starts DeepSeek Harness's own launcher with
-  `--profile kriya` or `--profile kriya-run`.
-- `bundle/cordis.patch.yml` is the "kriya" bundle each profile stacks on
-  `dsh-base`: the Kriya gateway as the only model route, Kriya's
-  `balanced` tier as the default, and DeepSeek's account, models, web
-  search and telemetry rows disabled.
+  `--profile kriya`, `--profile kriya-run` or `--profile kriya-acp`.
+- `bundle/cordis.patch.yml` is the "kriya" bundle each profile (`kriya`,
+  `kriya-run`, `kriya-acp`) stacks on `dsh-base`: the Kriya gateway as the
+  only model route, Kriya's `balanced` tier as the default (for ACP
+  sessions too), and DeepSeek's account, models, web search and telemetry
+  rows disabled.
 - `plugins/brand/` is the Kriya look for the Web UI ([DESIGN.md](plugins/brand/DESIGN.md)):
   Kriya's palette through DeepSeek Harness's theme token layer, Geist,
   Fraunces and JetBrains Mono embedded, the brand slots (sidebar mark and
@@ -68,7 +70,12 @@ plan decides which are allowed and its monthly limit.
   cloud workspace starts from GitHub at HEAD and applies it. A pull checks
   the sha256, needs a clean tree and changes nothing if the patch doesn't
   apply.
-- Editor (ACP) support is a later phase (H11).
+- `kriya acp` is DeepSeek Harness's ACP app (`dsh-acp-app`) with the same
+  Kriya bundle: sessions start on Kriya's `balanced` tier (the editor's
+  model picker lists Kriya's three tiers only), with the same tools,
+  skills, memory, phone approvals (the editor's permission prompt and your
+  phone; first answer wins), mirror and permission defaults as `kriya`.
+  Stdout carries only protocol frames; kriya's own messages go to stderr.
 
 ## Develop
 

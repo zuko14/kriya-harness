@@ -15,6 +15,8 @@ export const PROFILES = {
   kriya: ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@kriya-ai/harness"],
   // `kriya run "…"`: one job, final answer printed
   "kriya-run": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless", "@kriya-ai/harness"],
+  // `kriya acp`: DSH's ACP server over stdio, for editors (HD-13)
+  "kriya-acp": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-acp-app", "@kriya-ai/harness"],
 }
 
 function manifest(name, bundles) {

@@ -20,6 +20,8 @@ Usage:
   kriya [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
   kriya run "<job>"     run one job and print the answer (--json for events)
+  kriya acp             the agent for editors: an ACP server on stdin/stdout
+                        (your editor starts it; kriya acp --help for details)
   kriya handoff ["<note>"]
                         hand this repository's uncommitted work to your Kriya
                         agent in a cloud workspace (HEAD must be on GitHub)
@@ -31,6 +33,14 @@ Usage:
   kriya --version
 
 Run it in a folder you can afford to change; see SAFETY.md.`
+
+const ACP_HELP = `kriya acp: the Kriya Harness agent for editors that speak the Agent Client
+Protocol (ACP v1). The editor starts it and talks over stdin/stdout; stdout
+carries only protocol frames, messages go to stderr. It's the same agent as
+\`kriya\`: Kriya's models, skills and memory tools, phone approvals and the
+mirror, with the same permission defaults. Sign in first with kriya login.
+
+In your editor's agent settings, use the command:  kriya acp`
 
 const NOTICE = `Kriya Harness is a beta built on DeepSeek Harness, a developer preview that
 hasn't had a security audit. The agent can read and change files and run
@@ -138,6 +148,26 @@ async function main(argv) {
     case "run": {
       const device = signedIn()
       return runDsh("kriya-run", args, device)
+    }
+    case "acp": {
+      // Stdout carries only ACP frames (newline-delimited JSON-RPC), so
+      // everything kriya itself says goes to stderr. DSH's ACP app takes no
+      // options but --help; the transport is stdio, the editor's choice
+      const help = args.length === 1 && (args[0] === "--help" || args[0] === "-h")
+      if (args.length && !help) {
+        process.stderr.write(`kriya acp takes no options but --help.\n`)
+        return 1
+      }
+      if (help) {
+        say(ACP_HELP)
+        return 0
+      }
+      const device = readDevice()
+      if (!device) {
+        process.stderr.write("kriya: run `kriya login` to connect your Kriya account.\n")
+        return 1
+      }
+      return runDsh("kriya-acp", [], device)
     }
     case undefined:
     case "--no-open":
