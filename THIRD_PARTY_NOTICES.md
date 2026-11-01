@@ -30,8 +30,8 @@ SOFTWARE.
 
 ## Packages
 
-Packages marked with a platform are installed by npm only on that system
-and carry their own license file there.
+Packages marked with a platform, or "optional", are installed by npm only
+where they run, and carry their own license file there.
 
 | Package | Version | License | Platform |
 | --- | --- | --- | --- |
@@ -376,7 +376,7 @@ and carry their own license file there.
 | @deepseek-ai/schemastery | 3.18.5 | MIT | all |
 | @earendil-works/pi-ai | 1.4.0 | MIT | all |
 | @earendil-works/pi-telemetry | 1.4.0 | MIT | all |
-| @emnapi/runtime | 1.11.3 | MIT | all |
+| @emnapi/runtime | 1.11.3 | MIT | optional |
 | @eslint-community/regexpp | 4.12.2 | MIT | all |
 | @google/genai | 2.21.0 | Apache-2.0 | all |
 | @img/colour | 1.1.0 | MIT | all |
@@ -401,7 +401,7 @@ and carry their own license file there.
 | @img/sharp-linux-x64 | 0.35.5 | Apache-2.0 | linux, x64 |
 | @img/sharp-linuxmusl-arm64 | 0.35.5 | Apache-2.0 | linux, arm64 |
 | @img/sharp-linuxmusl-x64 | 0.35.5 | Apache-2.0 | linux, x64 |
-| @img/sharp-wasm32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later AND MIT | all |
+| @img/sharp-wasm32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later AND MIT | optional |
 | @img/sharp-webcontainers-wasm32 | 0.35.5 | Apache-2.0 | wasm32 |
 | @img/sharp-win32-arm64 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later | win32, arm64 |
 | @img/sharp-win32-ia32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later | win32, ia32 |

@@ -70,11 +70,12 @@ test("HT-REL-01: the notices come out the same on every system", async () => {
       "": {},
       "node_modules/everywhere": { version: "1.0.0", license: "MIT" },
       "node_modules/mac-only": { version: "1.0.0", license: "MIT", os: ["darwin"], cpu: ["arm64"] },
+      "node_modules/maybe": { version: "1.0.0", license: "MIT", optional: true },
     },
   }
   const install = (withMacOnly) => {
     const root = mkdtempSync(join(tmpdir(), "kriya-notices-"))
-    for (const name of withMacOnly ? ["everywhere", "mac-only"] : ["everywhere"]) {
+    for (const name of withMacOnly ? ["everywhere", "mac-only", "maybe"] : ["everywhere"]) {
       mkdirSync(join(root, "node_modules", name), { recursive: true })
       writeFileSync(join(root, "node_modules", name, "LICENSE"), `License of ${name}`)
     }
@@ -83,5 +84,6 @@ test("HT-REL-01: the notices come out the same on every system", async () => {
   const onMac = install(true)
   assert.equal(onMac, install(false))
   assert.match(onMac, /\| mac-only \| 1\.0\.0 \| MIT \| darwin, arm64 \|/)
-  assert.doesNotMatch(onMac, /License of mac-only/)
+  assert.match(onMac, /\| maybe \| 1\.0\.0 \| MIT \| optional \|/)
+  assert.doesNotMatch(onMac, /License of (mac-only|maybe)/)
 })

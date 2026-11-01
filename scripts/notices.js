@@ -44,16 +44,18 @@ function licenseText(dir) {
 
 /**
  * The release's packages from a lockfile: name, version, license, its notice
- * text. Packages npm installs only on some systems (an `os` or `cpu` field)
- * are listed with that platform but without a copied text: which of them a
- * machine has depends on the machine, and this file must come out the same
- * everywhere. Each carries its own license file wherever npm installs it.
+ * text. Packages npm installs only on some systems (an `os` or `cpu` field,
+ * or any optional dependency) are listed with that platform, or "optional",
+ * but without a copied text: which of them a machine has depends on the
+ * machine, and this file must come out the same everywhere. Each carries its
+ * own license file wherever npm installs it.
  */
 export function releasePackages(lock, root = ROOT) {
   return Object.entries(lock.packages ?? {})
     .filter(([path, entry]) => path.startsWith("node_modules/") && !entry.dev && !entry.link)
     .map(([path, entry]) => {
-      const platform = [entry.os, entry.cpu].filter(Boolean).flat().join(", ") || null
+      const platform =
+        [entry.os, entry.cpu].filter(Boolean).flat().join(", ") || (entry.optional ? "optional" : null)
       return {
         name: entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length),
         version: entry.version,
@@ -86,8 +88,8 @@ ${dsh?.text ?? "(license text missing)"}
 
 ## Packages
 
-Packages marked with a platform are installed by npm only on that system
-and carry their own license file there.
+Packages marked with a platform, or "optional", are installed by npm only
+where they run, and carry their own license file there.
 
 | Package | Version | License | Platform |
 | --- | --- | --- | --- |
