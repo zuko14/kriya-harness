@@ -1,3 +1,4 @@
 node_modules/
 *.log
 .kriya-test-*/
+sbom.cdx.json

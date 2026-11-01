@@ -82,7 +82,8 @@ plan decides which are allowed and its monthly limit.
 ```bash
 npm run check          # exact pins, notices and theme build current, all tests
 npm run build:brand    # rebuild plugins/brand/client.js (fonts inlined)
-npm run release:check  # the release gate, including the license allow-list
+npm run release:check  # the release gate: pins, licenses (allow-list or a decided exception), notices
+npm run sbom           # the release's SBOM (CycloneDX JSON) on stdout, from the lockfile
 npm run dump-config    # re-record expected/*.dump.yml after a reviewed DSH bump
 npm run notices        # regenerate THIRD_PARTY_NOTICES.md from the lockfile
 ```
@@ -92,3 +93,6 @@ DeepSeek Harness; nothing reaches a real Kriya or model provider.
 
 Upgrading DeepSeek Harness: change only the version, run `npm run check`,
 review the `expected/` diff from `npm run dump-config`, record the result.
+A package outside the license allow-list needs an owner decision recorded in
+`notices-exceptions.json` for its exact version and license; the release
+gate fails on a new version, a changed license or a stale exception.

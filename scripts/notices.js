@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url"
 // THIRD_PARTY_NOTICES.md from the lockfile (DSH_DISTRIBUTION §6, HT-REL-01,
 // HT-REL-02). Every package the release installs (not dev tools) must have
 // a license on the allow-list, or a recorded exception in
-// notices-exceptions.json; an unknown license fails. `--check` regenerates
+// notices-exceptions.json (an owner decision for one exact package, version
+// and license; a stale or changed one fails); an unknown license fails. `--check` regenerates
 // in memory and fails when the committed file differs; `--strict` (the
 // release gate) also fails on any license problem, which `--check` only
 // reports.
@@ -67,14 +68,28 @@ export function releasePackages(lock, root = ROOT) {
     .sort((a, b) => a.name.localeCompare(b.name) || String(a.version).localeCompare(String(b.version)))
 }
 
-/** @returns {{ markdown: string, problems: string[] }} */
-export function buildNotices(lock, exceptions = {}, root = ROOT, embedded = EMBEDDED_FONTS) {
+/**
+ * @param {{ decision?: { id: string, date: string, record: string, stillOpen?: string }, packages?: Record<string, { license: string, reason: string }> }} [exceptionsFile]
+ * @returns {{ markdown: string, problems: string[] }}
+ */
+export function buildNotices(lock, exceptionsFile = {}, root = ROOT, embedded = EMBEDDED_FONTS) {
   const packages = releasePackages(lock, root)
+  const exceptions = exceptionsFile.packages ?? {}
   const problems = []
+  const used = new Set()
   for (const pkg of packages) {
-    if (!licenseAllowed(pkg.license) && !exceptions[`${pkg.name}@${pkg.version}`])
-      problems.push(`${pkg.name}@${pkg.version}: license ${pkg.license ?? "unknown"} isn't allowed`)
+    if (licenseAllowed(pkg.license)) continue
+    const key = `${pkg.name}@${pkg.version}`
+    const exception = exceptions[key]
+    if (!exception) problems.push(`${key}: license ${pkg.license ?? "unknown"} isn't allowed`)
+    else if (!exceptionsFile.decision || !exception.reason || exception.license !== pkg.license)
+      problems.push(`${key}: the exception doesn't match (license ${pkg.license ?? "unknown"}, recorded ${exception.license ?? "none"}) or has no decision`)
+    else used.add(key)
   }
+  // An exception only ever covers the exact package it was decided for
+  for (const key of Object.keys(exceptions))
+    if (!used.has(key) && !packages.some((pkg) => `${pkg.name}@${pkg.version}` === key))
+      problems.push(`${key}: exception for a package this release doesn't install; remove it`)
   const dsh = packages.find((pkg) => pkg.name === "@deepseek-ai/dsh")
   let markdown = `# Third-party notices
 
@@ -96,6 +111,11 @@ where they run, and carry their own license file there.
 `
   for (const pkg of packages)
     markdown += `| ${pkg.name} | ${pkg.version} | ${pkg.license ?? "unknown"} | ${pkg.platform ?? "all"} |\n`
+  if (used.size) {
+    const { decision } = exceptionsFile
+    markdown += `\n## License exceptions (${decision.id}, ${decision.date})\n\n${decision.record}${decision.stillOpen ? ` Still open: ${decision.stillOpen}` : ""}\n\n| Package | License | Why |\n| --- | --- | --- |\n`
+    for (const key of [...used].sort()) markdown += `| ${key} | ${exceptions[key].license} | ${exceptions[key].reason} |\n`
+  }
   markdown += "\n## License texts\n"
   // One copy of each distinct text, with every package that ships it
   const texts = new Map()

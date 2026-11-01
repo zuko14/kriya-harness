@@ -3,13 +3,15 @@ import { basename, join } from "node:path"
 
 import { call, deviceFromEnv } from "../../src/api.js"
 import { kriyaHome } from "../../src/paths.js"
+import { hideSecrets } from "../approvals/index.js"
 
 // Kriya mirror plugin (H6, HD-09, P-SYNC): a summary of each DeepSeek
 // Harness turn goes to a thread in Kriya, so the phone shows progress.
 // It only watches DSH's committed `session/event` feed: local history stays
 // DSH's own and complete. A turn's summary is its answer text and each
 // tool's name, status and time; tool arguments and output go only when the
-// person chose "Full" for this device (Kriya says which when the session
+// person chose "Full" for this device (arguments with secret-looking names
+// are hidden first, as for phone approvals; output text is sent as it is) (Kriya says which when the session
 // opens, and refuses `full` otherwise). Turns wait in a queue on disk (0600
 // in the Kriya home) while Kriya is unreachable and are sent in order; a
 // session Kriya doesn't mirror (404, mirror off) is dropped and not retried.
@@ -46,7 +48,7 @@ function fullOf(tools) {
   const full = {
     tools: tools.slice(0, MAX_TOOLS).map((tool) => ({
       name: tool.name,
-      input: parsed(tool.args ?? "{}"),
+      input: hideSecrets(parsed(tool.args ?? "{}")),
       output: cut(tool.output, MAX_OUTPUT),
     })),
   }

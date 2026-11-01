@@ -25,8 +25,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-  # The release gate (license allow-list): fails until the owner decides on
-  # the MPL-2.0, LGPL-3.0 and Unlicense packages DSH brings in (HF-09)
+  # The release gate (HG-5): exact pins, every license on the allow-list or
+  # an owner-decided exception (notices-exceptions.json, HF-09), notices
+  # current; then the release's SBOM (CycloneDX) as a build artifact
   release-gate:
     runs-on: ubuntu-latest
     steps:
@@ -37,3 +38,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:check
+      - run: npm run -s sbom > sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
