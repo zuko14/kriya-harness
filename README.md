@@ -46,8 +46,13 @@ plan decides which are allowed and its monthly limit.
   `plugins/brand/src/client.js`, then `npm run build:brand`.
 - `contract/contract.json` is the Kriya Harness API contract, copied from
   the Kriya repository ([contract/SOURCE.md](contract/SOURCE.md)).
-- Approvals from your phone, the session mirror, skills and memory, handoff
-  and editor (ACP) support are later phases (H5–H8, H11).
+- `plugins/approvals/` sends DeepSeek Harness's approval questions to Kriya
+  too: answer in the local prompt or in Kriya on your phone, and the first
+  answer wins. With no answer from either (Kriya unreachable, the request
+  expired), the action is refused. In `kriya run` the phone is the only
+  place to answer.
+- The session mirror, skills and memory, handoff and editor (ACP) support
+  are later phases (H6–H8, H11).
 
 ## Develop
 

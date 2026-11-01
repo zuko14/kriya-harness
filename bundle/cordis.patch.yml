@@ -61,6 +61,13 @@
     - id: ui-brand-kriya
       name: '@kriya-ai/harness-brand'
 
+# H5 (HD-08): DSH's approval requests also go to Kriya, so the person can
+# answer on their phone; first answer wins, no answer fails closed. Both
+# profiles: in the headless one it's the only answerer (plugins/approvals)
+- insert:
+    - id: kriya-approvals
+      name: '@kriya-ai/harness-approvals'
+
 # DSH's first-run "Preview Notice" speaks for DeepSeek Harness; Kriya shows
 # its own beta notice at first run (bin/kriya.js) and in SAFETY.md, which
 # say DSH is an unaudited preview. Marked as seen with DSH's own
