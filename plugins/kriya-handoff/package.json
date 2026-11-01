@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-handoff",
+  "description": "Handoff and pull for the Kriya Harness: hand a repository's uncommitted work to a Kriya cloud workspace, and pull a workspace's changes back onto a new branch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

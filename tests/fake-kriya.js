@@ -6,7 +6,9 @@ import { createHash, randomBytes } from "node:crypto"
 // streams a scripted answer, approval requests (H5) that the test
 // answers with answer(), expire() or by script, the session mirror (H6)
 // with a mode and an outage the test sets, and the device agent's skills
-// and memory (H7) from state the test fills. It records every request so tests can check
+// and memory (H7) from state the test fills, and handoff and pull (H8):
+// uploads land in `workspaces`, where a test can also put a later
+// checkpoint. It records every request so tests can check
 // headers and bodies against contract/contract.json. Nothing here reaches
 // a real Kriya deployment or a model provider.
 
@@ -35,6 +37,13 @@ export async function startFakeKriya(script = {}) {
     notes: [],
     saved: [],
     skillsDown: false,
+    /** H8: workspaces by id: the handoff's meta, the latest checkpoint and its base */
+    /** @type {Map<string, { meta: any, patch: Buffer, baseSha: string }>} */
+    workspaces: new Map(),
+    /** H8: a refusal the next handoffs get, e.g. { status: 403, error: "not_connected", message } */
+    handoffError: null,
+    /** H8: serve checkpoints with a wrong X-Kriya-Sha256 */
+    corruptCheckpoint: false,
   }
   const settle = (id, status) => {
     const approval = state.approvals.get(id)
@@ -48,12 +57,30 @@ export async function startFakeKriya(script = {}) {
   const server = createServer(async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
-    const raw = Buffer.concat(chunks).toString("utf8")
+    const bytes = Buffer.concat(chunks)
+    const raw = bytes.toString("utf8")
     let body = null
-    try {
-      body = raw ? JSON.parse(raw) : null
-    } catch {
-      body = raw
+    let form = null
+    if (String(req.headers["content-type"]).startsWith("multipart/form-data")) {
+      // Parsed the way a route handler does; the record's body is the meta part
+      form = await new Request("http://fake", {
+        method: "POST",
+        headers: { "content-type": req.headers["content-type"] },
+        body: bytes,
+      })
+        .formData()
+        .catch(() => null)
+      try {
+        body = JSON.parse(String(form?.get("meta")))
+      } catch {
+        body = null
+      }
+    } else {
+      try {
+        body = raw ? JSON.parse(raw) : null
+      } catch {
+        body = raw
+      }
     }
     const url = new URL(req.url, "http://fake")
     const path = url.pathname.replace(/^\/api\/harness\/v1/, "")
@@ -191,6 +218,40 @@ export async function startFakeKriya(script = {}) {
         return send(201, { id, confirmed: false })
       }
       return fail(404, "not_found", "Not found.")
+    }
+    if (req.method === "POST" && path === "/handoff") {
+      if (state.handoffError)
+        return fail(state.handoffError.status, state.handoffError.error, state.handoffError.message)
+      const part = form?.get("patch")
+      if (!body || !(part instanceof Blob)) return fail(400, "bad_request", "That request isn't what this API expects.")
+      const patch = Buffer.from(await part.arrayBuffer())
+      if (patch.length !== body.bytes || createHash("sha256").update(patch).digest("hex") !== body.sha256)
+        return fail(400, "patch_mismatch", "The upload was damaged on the way; hand off again.")
+      const workspaceId = crypto.randomUUID()
+      const threadId = b64(9)
+      state.workspaces.set(workspaceId, { meta: body, patch, baseSha: body.baseSha })
+      return send(201, {
+        threadId,
+        workspaceId,
+        taskId: crypto.randomUUID(),
+        url: `http://127.0.0.1:${server.address().port}/a/agent-1/${threadId}`,
+      })
+    }
+    const checkpoint = /^\/workspaces\/([0-9a-f-]{36})\/checkpoint$/.exec(path)
+    if (req.method === "GET" && checkpoint) {
+      const workspace = state.workspaces.get(checkpoint[1])
+      if (!workspace) return fail(404, "not_found", "Not found.")
+      if (!workspace.patch.length) return fail(404, "no_checkpoint", "This workspace has no changes saved yet.")
+      const digest = createHash("sha256").update(workspace.patch).digest("hex")
+      record.status = 200
+      res
+        .writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "X-Kriya-Sha256": state.corruptCheckpoint ? "0".repeat(64) : digest,
+          "X-Kriya-Base-Sha": workspace.baseSha,
+        })
+        .end(workspace.patch)
+      return
     }
     if (path === "/sessions" || path.startsWith("/sessions/")) {
       if (state.mirrorDown) return fail(503, "server_error", "Something went wrong. Try again.")

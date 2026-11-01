@@ -22,6 +22,8 @@ node bin/kriya.js login --url https://<your Kriya address>
 | `kriya login [--url …] [--no-browser]` | Signs this device in: shows a code, opens Kriya's connect page, waits for you to approve it there |
 | `kriya [--no-open] [--port <n>]` | DeepSeek Harness's Web UI on `127.0.0.1`, with Kriya's models |
 | `kriya run "<job>" [--json]` | One job; prints the answer; exit 0 done, 1 failed |
+| `kriya handoff ["<note>"]` | Hands this repository's uncommitted work (HEAD must be on GitHub) to your Kriya agent in a cloud workspace; prints the thread's link |
+| `kriya pull [<workspace id>]` | Brings a workspace's latest changes back on a new branch `kriya/pull-<id>` at its base commit (default: your last handoff) |
 | `kriya doctor` | Checks Node, the profiles, the sign-in and the gateway |
 | `kriya logout` | Signs out here and revokes the device in Kriya |
 | `kriya --version` | Versions of Kriya Harness and DeepSeek Harness |
@@ -60,7 +62,13 @@ plan decides which are allowed and its monthly limit.
   (your own local skills win a name) and two tools: `kriya_memory_search`
   for its notes and `kriya_memory_save`, whose notes stay unconfirmed
   until you confirm them in Kriya.
-- Handoff and editor (ACP) support are later phases (H8, H11).
+- `plugins/kriya-handoff/` is `kriya handoff` and `kriya pull`. The patch
+  is the working tree against HEAD (untracked and binary files included,
+  ignored ones left out, your index untouched), sent with its sha256; the
+  cloud workspace starts from GitHub at HEAD and applies it. A pull checks
+  the sha256, needs a clean tree and changes nothing if the patch doesn't
+  apply.
+- Editor (ACP) support is a later phase (H11).
 
 ## Develop
 

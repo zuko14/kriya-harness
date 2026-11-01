@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
+import { handoff, HandoffError, pull } from "../plugins/kriya-handoff/index.js"
 import { KriyaError, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
@@ -19,6 +20,12 @@ Usage:
   kriya [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
   kriya run "<job>"     run one job and print the answer (--json for events)
+  kriya handoff ["<note>"]
+                        hand this repository's uncommitted work to your Kriya
+                        agent in a cloud workspace (HEAD must be on GitHub)
+  kriya pull [<workspace id>]
+                        bring a workspace's changes back on a new branch
+                        kriya/pull-<id> (default: your last handoff)
   kriya doctor          check this machine, the sign-in and the gateway
   kriya logout          sign this device out
   kriya --version
@@ -40,6 +47,9 @@ function firstRunNotice() {
   process.stderr.write(`${NOTICE}\n`)
   writeFileSync(marker, `${new Date().toISOString()}\n`)
 }
+
+// The workspace of the last handoff from this machine, for a bare `kriya pull`
+const lastWorkspace = () => join(kriyaHome(), "last-workspace")
 
 function option(args, name) {
   const at = args.indexOf(name)
@@ -104,6 +114,27 @@ async function main(argv) {
     }
     case "doctor":
       return (await doctor()) ? 0 : 1
+    case "handoff": {
+      const device = signedIn()
+      const done = await handoff(device, process.cwd(), args.join(" "))
+      writeFileSync(lastWorkspace(), `${done.workspaceId}\n`)
+      say(`Handed off (${done.bytes} bytes of changes). Your agent carries on in Kriya:`)
+      say(`  ${done.url}`)
+      say(`Workspace ${done.workspaceId}; bring its changes back with kriya pull.`)
+      return 0
+    }
+    case "pull": {
+      const device = signedIn()
+      const id = args[0] ?? (existsSync(lastWorkspace()) ? readFileSync(lastWorkspace(), "utf8").trim() : "")
+      if (!id) {
+        say("Which workspace? Run kriya pull <workspace id>.")
+        return 1
+      }
+      const done = await pull(device, process.cwd(), id)
+      say(`On branch ${done.branch}: the workspace's changes on ${done.baseSha.slice(0, 12)} (${done.bytes} bytes).`)
+      say("Review them with git diff HEAD, then commit or merge as you like.")
+      return 0
+    }
     case "run": {
       const device = signedIn()
       return runDsh("kriya-run", args, device)
@@ -134,7 +165,8 @@ async function main(argv) {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error) => {
-    process.stderr.write(`kriya: ${error instanceof KriyaError ? error.message : error?.message ?? error}\n`)
+    const known = error instanceof KriyaError || error instanceof HandoffError
+    process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }
 )

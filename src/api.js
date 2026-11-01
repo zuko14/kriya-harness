@@ -27,18 +27,20 @@ export class KriyaError extends Error {
  * @param {string} method
  * @param {string} path below BASE_PATH
  * @param {{ token?: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>, raw?: boolean }} [options]
- *   `raw`: the Response itself for 2xx and 304 (a skill body, an ETag check)
+ *   `raw`: the Response itself for 2xx and 304 (a skill body, an ETag check, a checkpoint)
+ *   A FormData body goes as multipart (fetch sets the boundary); anything else as JSON
  */
 export async function call(url, method, path, { token, body, signal, headers: extra = {}, raw = false } = {}) {
   const headers = { "X-Kriya-Harness": CLIENT_VERSION, Accept: "application/json", ...extra }
   if (token) headers.Authorization = `Bearer ${token}`
-  if (body !== undefined) headers["Content-Type"] = "application/json"
+  const form = body instanceof FormData
+  if (body !== undefined && !form) headers["Content-Type"] = "application/json"
   let response
   try {
     response = await fetch(`${url}${BASE_PATH}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined || form ? body : JSON.stringify(body),
       signal: signal ?? AbortSignal.timeout(30_000),
     })
   } catch (error) {
