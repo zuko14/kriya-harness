@@ -30,694 +30,697 @@ SOFTWARE.
 
 ## Packages
 
-| Package | Version | License |
-| --- | --- | --- |
-| @agentclientprotocol/sdk | 1.4.0 | Apache-2.0 |
-| @anthropic-ai/sdk | 0.129.0 | MIT |
-| @aws-sdk/client-bedrock-runtime | 3.1127.0 | Apache-2.0 |
-| @aws-sdk/core | 3.979.1 | Apache-2.0 |
-| @aws-sdk/credential-provider-env | 3.972.80 | Apache-2.0 |
-| @aws-sdk/credential-provider-http | 3.972.82 | Apache-2.0 |
-| @aws-sdk/credential-provider-ini | 3.973.25 | Apache-2.0 |
-| @aws-sdk/credential-provider-login | 3.972.87 | Apache-2.0 |
-| @aws-sdk/credential-provider-node | 3.972.92 | Apache-2.0 |
-| @aws-sdk/credential-provider-process | 3.972.80 | Apache-2.0 |
-| @aws-sdk/credential-provider-sso | 3.973.24 | Apache-2.0 |
-| @aws-sdk/credential-provider-web-identity | 3.972.86 | Apache-2.0 |
-| @aws-sdk/eventstream-handler-node | 3.972.40 | Apache-2.0 |
-| @aws-sdk/middleware-eventstream | 3.972.36 | Apache-2.0 |
-| @aws-sdk/middleware-websocket | 3.972.62 | Apache-2.0 |
-| @aws-sdk/nested-clients | 3.997.54 | Apache-2.0 |
-| @aws-sdk/signature-v4-multi-region | 3.996.51 | Apache-2.0 |
-| @aws-sdk/token-providers | 3.1127.0 | Apache-2.0 |
-| @aws-sdk/token-providers | 3.1161.0 | Apache-2.0 |
-| @aws-sdk/types | 3.975.0 | Apache-2.0 |
-| @aws-sdk/xml-builder | 3.972.42 | Apache-2.0 |
-| @aws/lambda-invoke-store | 0.3.0 | Apache-2.0 |
-| @babel/code-frame | 7.29.7 | MIT |
-| @babel/helper-validator-identifier | 7.29.7 | MIT |
-| @babel/runtime | 7.29.10 | MIT |
-| @deepseek-ai/cordis | 4.0.5 | MIT |
-| @deepseek-ai/cordis-plugin-group | 1.0.5 | MIT |
-| @deepseek-ai/cordis-plugin-include | 1.0.10 | MIT |
-| @deepseek-ai/cordis-plugin-loader | 1.0.6 | MIT |
-| @deepseek-ai/cordis-plugin-timer | 1.1.7 | MIT |
-| @deepseek-ai/cosmokit | 1.8.6 | MIT |
-| @deepseek-ai/dsh | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-acp | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-acp-app | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent-default-model | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent-instructions | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent-loop | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent-preset | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent-preset-registry | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-agent-tool-presentation | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-anonymous-user-id | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-account-controller | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-gateway | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-job-controller | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-remote-access | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-remotes | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-session-controller | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-settings-controller | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-terminal-controller | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-workspace-controller | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-api-workspace-files | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-app-boot | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-atomic-write | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-attachment | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-attachment-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-authorization | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-base | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-bash-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-bash-sandbox | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-brand | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-chunked-list | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-connection | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-file-upload | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-hmr | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-locale | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-modules | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-product-analytics | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-resources | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-shortcuts | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-agent-preset | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-approval | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-attachment | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-brand-official | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-chat | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-commands | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-conversation | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-cordis | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-deepseek-model-label-1017 | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-deliverables | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-directory-picker-browse | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-directory-picker-native | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-entry-customization | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-goal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-input-trigger | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-jobs | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-layout | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-message-feedback | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-model-selection | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-open-in-app | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-permission-presets | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-plan | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-plugin-manager | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-plugin-market | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-reference | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-renderer | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-schedule | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-secret-mask | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-session | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-account | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-agent-loop | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-general | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-models | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-plugin-inventory | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-plugins | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-session-log | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-shell | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-subagent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-settings-web-search | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-shortcuts | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-sidebar | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-sidebar-browser | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-sidebar-documentpreview | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-sidebar-files | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-sidebar-right | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-sidebar-terminal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-skill | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-subagent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-theme | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-tool | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-trajectory | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-user-questions | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-workflow-run | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-client-ui-workspace | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-cmdline | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-command-compact | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-command-feedback | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-command-goal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-commands | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-compaction | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-compaction-basic | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-compaction-image-offload | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-compaction-tool-result-pruner | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-config-editor | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-cordis-client-runner | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-cordis-host-runner | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-credentials | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-credentials-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-deepseek-account | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-deepseek-account-platform | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-deepseek-llm-api-extensions | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-deque | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-agent-team | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-agent-team-profile | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-api-speech-to-text | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-auto-review | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-badge-skill-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-client-ui-agent-team | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-client-ui-cot-translation | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-client-ui-voice-input | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-cot-translation-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-inspector | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-inspector-profile | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-plugin-market-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-ralph-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-session-inspector | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-session-search | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-session-titles-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-speech-to-text | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-speech-to-text-sensevoice | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-terminal-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-tool-agent-team | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-tool-worktree | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-translator | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-voice-input-bundle | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-experimental-worktree | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-file-reference | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-file-reference-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-fs | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-fs-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-fs-observation-policy | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-fs-sandbox | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-goal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-goal-round-driver | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-harness-dev-context | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-headless | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-hmr | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-home-paths | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-directory-picker | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-directory-picker-auto | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-directory-picker-browse | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-directory-picker-native | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-frontend-static | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-open-in-app | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-plugin-inventory | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-product-telemetry-otel | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-host-webserver | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-http-proxy | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-jobs | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-jobs-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-launch-environment | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-lazy-require | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-llm | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-llm-deepseek | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-llm-deepseek-account | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-llm-deepseek-api-key | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-llm-pi-ai | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-llm-retry | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-mcp-client | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-mcp-resources | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-message-feedback | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-native-command | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-office-to-pdf | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-otel | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-output-retention | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-package-manifest | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-permission-presets | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-persona | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-plan-mode | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-plugin-manager | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-plugin-market | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-plugin-market-index | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-plugin-package-inventory-deepseek | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-ptc-runtime | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-ptc-runtime-node | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-pwsh-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-pwsh-sandbox | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-repeat-tool-reminder | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sandbox | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sandbox-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sandbox-policy | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sandbox-windows-acl | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-schedule | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-scope | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sdk-app | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sdk-jsonrpc-server | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sdk-minimal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-sdk-protocol | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-checkpoint-policy | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-format | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-format-catalog | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-format-v0-to-v1 | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-format-v1-to-v2 | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-format-v2-to-v3 | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-format-v3-to-v4 | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-log-deepseek | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-log-export | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-persistence | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-persistence-jsonl | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-projection | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-projection-cache | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-query | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-query-sqlite | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-reference | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-stats | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-telemetry | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-telemetry-otel | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-title | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-title-all-prompts-llm | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-title-first-prompt-llm | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-title-llm | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-session-turn-outline | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-settings | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-shell | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-shell-env | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-skill | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-skill-badge | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-skill-filesystem | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-skill-office | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-spill | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-spill-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-spill-policy | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-storage | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-storage-domain | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-storage-json | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-subagent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-subagent-fork-in-process | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-subagent-spawn-in-process | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-subprocess | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-subprocess-local | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-system-prompt | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-terminal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-terminal-bash | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-time-context | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-timeout | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tmux-context | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-token-meter | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-ask-user | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-bash | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-bash-persistent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-call-timeout-policy | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-cordis | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-fs | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-fs-search | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-goal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-jobs | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-present | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-pwsh | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-pwsh-persistent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-ralph | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-schedule | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-session-query | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-skill | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-str-replace-editor | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-subagent | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-subagent-control | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-terminal | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-todo | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-web | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-workflow | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-working-directory | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tool-workspace-dependencies | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-tools | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-typert-loader | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-typert-protocol | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-typert-registry | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-user-approval | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-user-questions | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-util-code-language | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-util-crypto | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-util-time | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-util-values | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-util-workspace-path | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-web | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-web-app | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-web-deepseek-api | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-web-fetch-http | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-web-frontend | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-web-search-deepseek | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-win32-process | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-workflow | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-workflow-ptc | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-working-directory | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-workspace | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/dsh-workspace-changes | 0.2.1-rc.5 | MIT |
-| @deepseek-ai/libreoffice-kit | 0.1.5 | MPL-2.0 |
-| @deepseek-ai/libreoffice-kit-darwin-arm64 | 0.1.5 | MPL-2.0 |
-| @deepseek-ai/libreoffice-kit-darwin-x64 | 0.1.5 | MPL-2.0 |
-| @deepseek-ai/libreoffice-kit-wasm | 0.1.5 | MPL-2.0 |
-| @deepseek-ai/libreoffice-kit-win32-arm64 | 0.1.5 | MPL-2.0 |
-| @deepseek-ai/libreoffice-kit-win32-x64 | 0.1.5 | MPL-2.0 |
-| @deepseek-ai/node-addon-system | 0.1.2 | BSD-3-Clause |
-| @deepseek-ai/node-addon-system-darwin-arm64 | 0.1.2 | BSD-3-Clause |
-| @deepseek-ai/node-addon-system-darwin-x64 | 0.1.2 | BSD-3-Clause |
-| @deepseek-ai/node-addon-system-linux-arm64 | 0.1.2 | BSD-3-Clause |
-| @deepseek-ai/node-addon-system-linux-x64 | 0.1.2 | BSD-3-Clause |
-| @deepseek-ai/schemastery | 3.18.5 | MIT |
-| @earendil-works/pi-ai | 1.4.0 | MIT |
-| @earendil-works/pi-telemetry | 1.4.0 | MIT |
-| @emnapi/runtime | 1.11.3 | MIT |
-| @eslint-community/regexpp | 4.12.2 | MIT |
-| @google/genai | 2.21.0 | Apache-2.0 |
-| @img/colour | 1.1.0 | MIT |
-| @img/sharp-darwin-arm64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-darwin-x64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-freebsd-wasm32 | 0.35.5 | Apache-2.0 |
-| @img/sharp-libvips-darwin-arm64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-darwin-x64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linux-arm | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linux-arm64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linux-ppc64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linux-riscv64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linux-s390x | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linux-x64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linuxmusl-arm64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-libvips-linuxmusl-x64 | 1.3.4 | LGPL-3.0-or-later |
-| @img/sharp-linux-arm | 0.35.5 | Apache-2.0 |
-| @img/sharp-linux-arm64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-linux-ppc64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-linux-riscv64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-linux-s390x | 0.35.5 | Apache-2.0 |
-| @img/sharp-linux-x64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-linuxmusl-arm64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-linuxmusl-x64 | 0.35.5 | Apache-2.0 |
-| @img/sharp-wasm32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later AND MIT |
-| @img/sharp-webcontainers-wasm32 | 0.35.5 | Apache-2.0 |
-| @img/sharp-win32-arm64 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later |
-| @img/sharp-win32-ia32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later |
-| @img/sharp-win32-x64 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later |
-| @joplin/turndown-plugin-gfm | 1.0.68 | MIT |
-| @js-temporal/polyfill | 0.5.1 | ISC |
-| @keyv/serialize | 1.1.1 | MIT |
-| @koromix/koffi-darwin-arm64 | 3.1.1 | MIT |
-| @koromix/koffi-darwin-x64 | 3.1.1 | MIT |
-| @koromix/koffi-freebsd-arm64 | 3.1.1 | MIT |
-| @koromix/koffi-freebsd-ia32 | 3.1.1 | MIT |
-| @koromix/koffi-freebsd-x64 | 3.1.1 | MIT |
-| @koromix/koffi-linux-arm64 | 3.1.1 | MIT |
-| @koromix/koffi-linux-ia32 | 3.1.1 | MIT |
-| @koromix/koffi-linux-loong64 | 3.1.1 | MIT |
-| @koromix/koffi-linux-riscv64 | 3.1.1 | MIT |
-| @koromix/koffi-linux-x64 | 3.1.1 | MIT |
-| @koromix/koffi-openbsd-ia32 | 3.1.1 | MIT |
-| @koromix/koffi-openbsd-x64 | 3.1.1 | MIT |
-| @koromix/koffi-win32-arm64 | 3.1.1 | MIT |
-| @koromix/koffi-win32-ia32 | 3.1.1 | MIT |
-| @koromix/koffi-win32-x64 | 3.1.1 | MIT |
-| @mixmark-io/domino | 2.2.0 | BSD-2-Clause |
-| @modelcontextprotocol/client | 2.2.0 | MIT |
-| @modelcontextprotocol/core | 2.2.0 | MIT |
-| @opentelemetry/api | 1.9.1 | Apache-2.0 |
-| @opentelemetry/api-logs | 0.222.0 | Apache-2.0 |
-| @opentelemetry/core | 2.11.0 | Apache-2.0 |
-| @opentelemetry/otlp-exporter-base | 0.222.0 | Apache-2.0 |
-| @opentelemetry/otlp-transformer | 0.222.0 | Apache-2.0 |
-| @opentelemetry/resources | 2.11.0 | Apache-2.0 |
-| @opentelemetry/sdk-logs | 0.222.0 | Apache-2.0 |
-| @opentelemetry/sdk-metrics | 2.11.0 | Apache-2.0 |
-| @opentelemetry/sdk-trace | 2.11.0 | Apache-2.0 |
-| @opentelemetry/semantic-conventions | 1.44.0 | Apache-2.0 |
-| @protobufjs/aspromise | 1.1.2 | BSD-3-Clause |
-| @protobufjs/base64 | 1.1.2 | BSD-3-Clause |
-| @protobufjs/codegen | 2.0.5 | BSD-3-Clause |
-| @protobufjs/eventemitter | 1.1.1 | BSD-3-Clause |
-| @protobufjs/fetch | 1.1.1 | BSD-3-Clause |
-| @protobufjs/float | 1.0.2 | BSD-3-Clause |
-| @protobufjs/path | 1.1.2 | BSD-3-Clause |
-| @protobufjs/pool | 1.1.0 | BSD-3-Clause |
-| @protobufjs/utf8 | 1.1.2 | BSD-3-Clause |
-| @sec-ant/readable-stream | 0.4.1 | MIT |
-| @sindresorhus/is | 7.2.0 | MIT |
-| @sindresorhus/merge-streams | 4.0.0 | MIT |
-| @smithy/core | 3.38.1 | Apache-2.0 |
-| @smithy/credential-provider-imds | 4.5.2 | Apache-2.0 |
-| @smithy/fetch-http-handler | 5.8.0 | Apache-2.0 |
-| @smithy/node-http-handler | 4.12.1 | Apache-2.0 |
-| @smithy/node-http-handler | 4.14.1 | Apache-2.0 |
-| @smithy/node-http-handler | 4.14.1 | Apache-2.0 |
-| @smithy/signature-v4 | 5.7.5 | Apache-2.0 |
-| @smithy/types | 4.19.0 | Apache-2.0 |
-| @stablelib/base64 | 1.0.1 | MIT |
-| @standard-schema/spec | 1.1.0 | MIT |
-| @swc/helpers | 0.5.23 | Apache-2.0 |
-| @types/http-cache-semantics | 4.2.0 | MIT |
-| @types/node | 26.6.6 | MIT |
-| @types/retry | 0.12.0 | MIT |
-| @vscode/ripgrep | 1.18.0 | MIT |
-| @vscode/ripgrep-darwin-arm64 | 1.18.0 | MIT |
-| @vscode/ripgrep-darwin-x64 | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-arm | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-arm64 | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-ia32 | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-ppc64 | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-riscv64 | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-s390x | 1.18.0 | MIT |
-| @vscode/ripgrep-linux-x64 | 1.18.0 | MIT |
-| @vscode/ripgrep-win32-arm64 | 1.18.0 | MIT |
-| @vscode/ripgrep-win32-ia32 | 1.18.0 | MIT |
-| @vscode/ripgrep-win32-x64 | 1.18.0 | MIT |
-| @xterm/addon-serialize | 0.14.0 | MIT |
-| @xterm/headless | 6.0.0 | MIT |
-| agent-base | 7.1.4 | MIT |
-| agent-base | 9.0.0 | MIT |
-| ajv | 8.20.0 | MIT |
-| argparse | 2.0.1 | Python-2.0 |
-| base64-js | 1.5.1 | MIT |
-| bignumber.js | 9.3.1 | MIT |
-| bowser | 2.15.0 | MIT |
-| brotli | 1.3.3 | MIT |
-| buffer-equal-constant-time | 1.0.1 | BSD-3-Clause |
-| bundle-name | 4.1.1 | MIT |
-| byte-counter | 0.1.0 | MIT |
-| bytes | 3.1.2 | MIT |
-| cacheable-lookup | 7.0.0 | MIT |
-| cacheable-request | 13.0.19 | MIT |
-| chokidar | 5.0.0 | MIT |
-| clone | 2.1.2 | MIT |
-| commander | 15.0.0 | MIT |
-| compressible | 2.0.18 | MIT |
-| compression | 1.8.2 | MIT |
-| content-type | 2.1.0 | MIT |
-| cross-spawn | 7.0.6 | MIT |
-| data-uri-to-buffer | 4.0.1 | MIT |
-| debug | 2.6.9 | MIT |
-| debug | 4.4.3 | MIT |
-| debug | 4.4.3 | MIT |
-| debug | 4.4.3 | MIT |
-| debug | 4.4.3 | MIT |
-| decompress-response | 10.0.0 | MIT |
-| default-browser | 5.5.1 | MIT |
-| default-browser-id | 5.0.1 | MIT |
-| define-lazy-prop | 3.0.0 | MIT |
-| depd | 2.0.0 | MIT |
-| destroy | 1.2.0 | MIT |
-| detect-libc | 2.1.2 | Apache-2.0 |
-| dfa | 1.2.0 | MIT |
-| diff | 9.0.0 | BSD-3-Clause |
-| ecdsa-sig-formatter | 1.0.11 | Apache-2.0 |
-| ee-first | 1.1.1 | MIT |
-| encodeurl | 2.0.1 | MIT |
-| escape-html | 1.0.3 | MIT |
-| etag | 1.8.1 | MIT |
-| eventsource | 3.0.7 | MIT |
-| eventsource-parser | 3.1.1 | MIT |
-| execa | 10.2.1 | MIT |
-| extend | 3.0.2 | MIT |
-| fast-deep-equal | 3.1.3 | MIT |
-| fast-sha256 | 1.3.0 | Unlicense |
-| fast-uri | 3.1.9 | BSD-3-Clause |
-| fetch-blob | 3.2.0 | MIT |
-| fflate | 0.8.2 | MIT |
-| fflate | 0.8.3 | MIT |
-| figures | 6.1.0 | MIT |
-| fontkit | 2.0.4 | MIT |
-| form-data-encoder | 4.1.0 | MIT |
-| formdata-polyfill | 4.0.10 | MIT |
-| fresh | 2.0.0 | MIT |
-| gaxios | 7.3.1 | Apache-2.0 |
-| gcp-metadata | 8.1.2 | Apache-2.0 |
-| get-stream | 9.0.1 | MIT |
-| google-auth-library | 10.9.1 | Apache-2.0 |
-| google-logging-utils | 1.1.3 | Apache-2.0 |
-| got | 14.6.6 | MIT |
-| http-cache-semantics | 4.3.0 | BSD-2-Clause |
-| http-errors | 2.0.1 | MIT |
-| http-proxy-agent | 9.1.0 | MIT |
-| http2-wrapper | 2.2.2 | MIT |
-| https-proxy-agent | 7.0.6 | MIT |
-| https-proxy-agent | 9.1.0 | MIT |
-| human-signals | 8.0.1 | Apache-2.0 |
-| inherits | 2.0.4 | ISC |
-| ipaddr.js | 2.5.0 | MIT |
-| is-docker | 3.0.0 | MIT |
-| is-in-ssh | 1.0.0 | MIT |
-| is-inside-container | 1.0.0 | MIT |
-| is-plain-obj | 4.1.0 | MIT |
-| is-stream | 4.0.1 | MIT |
-| is-unicode-supported | 2.1.0 | MIT |
-| is-wsl | 3.1.1 | MIT |
-| isexe | 2.0.0 | ISC |
-| jose | 6.2.14 | MIT |
-| js-tokens | 4.0.0 | MIT |
-| js-yaml | 4.3.2 | MIT |
-| jsbi | 4.3.2 | Apache-2.0 |
-| json-bigint | 1.0.0 | MIT |
-| json-schema-to-ts | 3.1.1 | MIT |
-| json-schema-traverse | 1.0.0 | MIT |
-| jwa | 2.0.1 | MIT |
-| jws | 4.0.1 | MIT |
-| keyv | 5.6.0 | MIT |
-| koffi | 3.1.1 | MIT |
-| long | 5.3.2 | Apache-2.0 |
-| lowercase-keys | 3.0.0 | MIT |
-| mime-db | 1.54.0 | MIT |
-| mime-types | 3.0.2 | MIT |
-| mimic-response | 4.0.0 | MIT |
-| minisearch | 7.2.0 | MIT |
-| ms | 2.0.0 | MIT |
-| ms | 2.1.3 | MIT |
-| ms | 2.1.3 | MIT |
-| ms | 2.1.3 | MIT |
-| ms | 2.1.3 | MIT |
-| negotiator | 0.6.4 | MIT |
-| negotiator | 1.1.0 | MIT |
-| node-addon-api | 7.1.1 | MIT |
-| node-addon-native-custom-loader | 0.1.9 | MIT |
-| node-addon-require-builtin | 0.1.9 | MIT |
-| node-addon-require-builtin-darwin-arm64 | 0.1.9 | MIT |
-| node-addon-require-builtin-darwin-x64 | 0.1.9 | MIT |
-| node-addon-require-builtin-linux-arm64-gnu | 0.1.9 | MIT |
-| node-addon-require-builtin-linux-arm64-musl | 0.1.9 | MIT |
-| node-addon-require-builtin-linux-x64-gnu | 0.1.9 | MIT |
-| node-addon-require-builtin-linux-x64-musl | 0.1.9 | MIT |
-| node-addon-require-builtin-win32-arm64-msvc | 0.1.9 | MIT |
-| node-addon-require-builtin-win32-ia32-msvc | 0.1.9 | MIT |
-| node-addon-require-builtin-win32-x64-msvc | 0.1.9 | MIT |
-| node-domexception | 1.0.0 | MIT |
-| node-fetch | 3.3.2 | MIT |
-| node-pty | 1.2.0-beta.15 | MIT |
-| normalize-url | 8.1.1 | MIT |
-| npm-run-path | 6.0.0 | MIT |
-| on-finished | 2.4.2 | MIT |
-| on-headers | 1.1.0 | MIT |
-| open | 11.0.4 | MIT |
-| openai | 7.19.0 | Apache-2.0 |
-| p-cancelable | 4.0.1 | MIT |
-| p-limit | 7.3.3 | MIT |
-| p-retry | 4.6.2 | MIT |
-| pako | 0.2.9 | MIT |
-| parse-ms | 4.0.0 | MIT |
-| parseurl | 1.3.3 | MIT |
-| partial-json | 0.1.7 | MIT |
-| path-key | 3.1.1 | MIT |
-| path-key | 4.0.0 | MIT |
-| picocolors | 1.1.1 | ISC |
-| picomatch | 4.0.7 | MIT |
-| pkce-challenge | 5.0.1 | MIT |
-| powershell-utils | 0.2.1 | MIT |
-| pretty-ms | 9.3.1 | MIT |
-| protobufjs | 7.6.6 | BSD-3-Clause |
-| proxy-agent-negotiate | 1.1.0 | MIT |
-| quick-lru | 5.1.1 | MIT |
-| range-parser | 1.3.0 | MIT |
-| readdirp | 5.1.1 | MIT |
-| require-from-string | 2.0.2 | MIT |
-| resolve-alpn | 1.2.1 | MIT |
-| resolve.exports | 2.0.4 | MIT |
-| responselike | 4.0.2 | MIT |
-| restructure | 3.0.2 | MIT |
-| retry | 0.13.1 | MIT |
-| run-applescript | 7.1.0 | MIT |
-| safe-buffer | 5.2.1 | MIT |
-| saxes | 6.0.0 | ISC |
-| semver | 7.8.5 | ISC |
-| send | 1.2.1 | MIT |
-| serve-static | 2.2.1 | MIT |
-| setprototypeof | 1.2.0 | ISC |
-| sharp | 0.35.5 | Apache-2.0 |
-| shebang-command | 2.0.0 | MIT |
-| shebang-regex | 3.0.0 | MIT |
-| sherpa-onnx-darwin-arm64 | 1.13.8 | Apache-2.0 |
-| sherpa-onnx-darwin-x64 | 1.13.8 | Apache-2.0 |
-| sherpa-onnx-linux-arm64 | 1.13.8 | Apache-2.0 |
-| sherpa-onnx-linux-x64 | 1.13.8 | Apache-2.0 |
-| sherpa-onnx-node | 1.13.8 | Apache-2.0 |
-| sherpa-onnx-win-ia32 | 1.13.8 | Apache-2.0 |
-| sherpa-onnx-win-x64 | 1.13.8 | Apache-2.0 |
-| signal-exit | 4.1.0 | ISC |
-| standardwebhooks | 1.1.1 | MIT |
-| statuses | 2.0.2 | MIT |
-| strip-final-newline | 4.0.0 | MIT |
-| tiny-inflate | 1.0.3 | MIT |
-| toidentifier | 1.0.1 | MIT |
-| ts-algebra | 2.0.0 | MIT |
-| tslib | 2.9.1 | 0BSD |
-| turndown | 7.2.4 | MIT |
-| type-fest | 4.41.0 | (MIT OR CC0-1.0) |
-| typebox | 1.3.27 | MIT |
-| undici | 8.11.2 | MIT |
-| undici-types | 8.9.0 | MIT |
-| unicode-properties | 1.4.1 | MIT |
-| unicode-trie | 2.0.0 | MIT |
-| unicorn-magic | 0.3.0 | MIT |
-| vary | 1.1.2 | MIT |
-| web-streams-polyfill | 3.3.3 | MIT |
-| which | 2.0.2 | ISC |
-| which-command | 0.1.0 | MIT |
-| ws | 8.22.1 | MIT |
-| wsl-utils | 1.0.1 | MIT |
-| xmlchars | 2.2.0 | MIT |
-| yaml | 2.9.1 | ISC |
-| yocto-queue | 1.2.2 | MIT |
-| yoctocolors | 2.2.0 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.4.3 | MIT |
-| zod | 4.6.7 | MIT |
+Packages marked with a platform are installed by npm only on that system
+and carry their own license file there.
+
+| Package | Version | License | Platform |
+| --- | --- | --- | --- |
+| @agentclientprotocol/sdk | 1.4.0 | Apache-2.0 | all |
+| @anthropic-ai/sdk | 0.129.0 | MIT | all |
+| @aws-sdk/client-bedrock-runtime | 3.1127.0 | Apache-2.0 | all |
+| @aws-sdk/core | 3.979.1 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-env | 3.972.80 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-http | 3.972.82 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-ini | 3.973.25 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-login | 3.972.87 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-node | 3.972.92 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-process | 3.972.80 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-sso | 3.973.24 | Apache-2.0 | all |
+| @aws-sdk/credential-provider-web-identity | 3.972.86 | Apache-2.0 | all |
+| @aws-sdk/eventstream-handler-node | 3.972.40 | Apache-2.0 | all |
+| @aws-sdk/middleware-eventstream | 3.972.36 | Apache-2.0 | all |
+| @aws-sdk/middleware-websocket | 3.972.62 | Apache-2.0 | all |
+| @aws-sdk/nested-clients | 3.997.54 | Apache-2.0 | all |
+| @aws-sdk/signature-v4-multi-region | 3.996.51 | Apache-2.0 | all |
+| @aws-sdk/token-providers | 3.1127.0 | Apache-2.0 | all |
+| @aws-sdk/token-providers | 3.1161.0 | Apache-2.0 | all |
+| @aws-sdk/types | 3.975.0 | Apache-2.0 | all |
+| @aws-sdk/xml-builder | 3.972.42 | Apache-2.0 | all |
+| @aws/lambda-invoke-store | 0.3.0 | Apache-2.0 | all |
+| @babel/code-frame | 7.29.7 | MIT | all |
+| @babel/helper-validator-identifier | 7.29.7 | MIT | all |
+| @babel/runtime | 7.29.10 | MIT | all |
+| @deepseek-ai/cordis | 4.0.5 | MIT | all |
+| @deepseek-ai/cordis-plugin-group | 1.0.5 | MIT | all |
+| @deepseek-ai/cordis-plugin-include | 1.0.10 | MIT | all |
+| @deepseek-ai/cordis-plugin-loader | 1.0.6 | MIT | all |
+| @deepseek-ai/cordis-plugin-timer | 1.1.7 | MIT | all |
+| @deepseek-ai/cosmokit | 1.8.6 | MIT | all |
+| @deepseek-ai/dsh | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-acp | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-acp-app | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent-default-model | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent-instructions | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent-loop | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent-preset | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent-preset-registry | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-agent-tool-presentation | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-anonymous-user-id | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-account-controller | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-gateway | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-job-controller | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-remote-access | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-remotes | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-session-controller | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-settings-controller | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-terminal-controller | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-workspace-controller | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-api-workspace-files | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-app-boot | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-atomic-write | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-attachment | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-attachment-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-authorization | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-base | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-bash-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-bash-sandbox | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-brand | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-chunked-list | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-connection | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-file-upload | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-hmr | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-locale | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-modules | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-product-analytics | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-resources | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-shortcuts | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-agent-preset | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-approval | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-attachment | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-brand-official | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-chat | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-commands | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-conversation | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-cordis | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-deepseek-model-label-1017 | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-deliverables | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-directory-picker-browse | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-directory-picker-native | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-entry-customization | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-goal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-input-trigger | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-jobs | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-layout | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-message-feedback | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-model-selection | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-open-in-app | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-permission-presets | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-plan | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-plugin-manager | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-plugin-market | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-reference | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-renderer | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-schedule | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-secret-mask | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-session | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-account | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-agent-loop | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-general | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-models | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-plugin-inventory | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-plugins | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-session-log | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-shell | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-subagent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-settings-web-search | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-shortcuts | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-sidebar | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-sidebar-browser | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-sidebar-documentpreview | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-sidebar-files | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-sidebar-right | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-sidebar-terminal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-skill | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-subagent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-theme | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-tool | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-trajectory | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-user-questions | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-workflow-run | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-client-ui-workspace | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-cmdline | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-command-compact | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-command-feedback | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-command-goal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-commands | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-compaction | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-compaction-basic | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-compaction-image-offload | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-compaction-tool-result-pruner | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-config-editor | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-cordis-client-runner | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-cordis-host-runner | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-credentials | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-credentials-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-deepseek-account | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-deepseek-account-platform | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-deepseek-llm-api-extensions | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-deque | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-agent-team | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-agent-team-profile | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-api-speech-to-text | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-auto-review | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-badge-skill-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-client-ui-agent-team | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-client-ui-cot-translation | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-client-ui-voice-input | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-cot-translation-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-inspector | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-inspector-profile | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-plugin-market-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-ralph-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-session-inspector | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-session-search | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-session-titles-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-speech-to-text | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-speech-to-text-sensevoice | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-terminal-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-tool-agent-team | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-tool-worktree | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-translator | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-voice-input-bundle | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-experimental-worktree | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-file-reference | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-file-reference-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-fs | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-fs-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-fs-observation-policy | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-fs-sandbox | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-goal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-goal-round-driver | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-harness-dev-context | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-headless | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-hmr | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-home-paths | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-directory-picker | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-directory-picker-auto | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-directory-picker-browse | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-directory-picker-native | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-frontend-static | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-open-in-app | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-plugin-inventory | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-product-telemetry-otel | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-host-webserver | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-http-proxy | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-jobs | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-jobs-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-launch-environment | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-lazy-require | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-llm | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-llm-deepseek | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-llm-deepseek-account | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-llm-deepseek-api-key | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-llm-pi-ai | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-llm-retry | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-mcp-client | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-mcp-resources | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-message-feedback | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-native-command | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-office-to-pdf | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-otel | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-output-retention | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-package-manifest | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-permission-presets | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-persona | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-plan-mode | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-plugin-manager | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-plugin-market | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-plugin-market-index | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-plugin-package-inventory-deepseek | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-ptc-runtime | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-ptc-runtime-node | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-pwsh-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-pwsh-sandbox | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-repeat-tool-reminder | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sandbox | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sandbox-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sandbox-policy | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sandbox-windows-acl | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-schedule | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-scope | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sdk-app | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sdk-jsonrpc-server | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sdk-minimal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-sdk-protocol | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-checkpoint-policy | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-format | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-format-catalog | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-format-v0-to-v1 | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-format-v1-to-v2 | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-format-v2-to-v3 | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-format-v3-to-v4 | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-log-deepseek | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-log-export | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-persistence | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-persistence-jsonl | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-projection | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-projection-cache | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-query | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-query-sqlite | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-reference | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-stats | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-telemetry | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-telemetry-otel | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-title | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-title-all-prompts-llm | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-title-first-prompt-llm | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-title-llm | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-session-turn-outline | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-settings | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-shell | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-shell-env | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-skill | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-skill-badge | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-skill-filesystem | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-skill-office | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-spill | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-spill-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-spill-policy | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-storage | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-storage-domain | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-storage-json | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-subagent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-subagent-fork-in-process | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-subagent-spawn-in-process | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-subprocess | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-subprocess-local | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-system-prompt | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-terminal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-terminal-bash | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-time-context | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-timeout | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tmux-context | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-token-meter | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-ask-user | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-bash | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-bash-persistent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-call-timeout-policy | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-cordis | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-fs | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-fs-search | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-goal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-jobs | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-present | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-pwsh | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-pwsh-persistent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-ralph | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-schedule | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-session-query | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-skill | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-str-replace-editor | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-subagent | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-subagent-control | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-terminal | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-todo | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-web | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-workflow | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-working-directory | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tool-workspace-dependencies | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-tools | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-typert-loader | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-typert-protocol | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-typert-registry | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-user-approval | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-user-questions | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-util-code-language | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-util-crypto | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-util-time | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-util-values | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-util-workspace-path | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-web | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-web-app | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-web-deepseek-api | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-web-fetch-http | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-web-frontend | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-web-search-deepseek | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-win32-process | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-workflow | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-workflow-ptc | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-working-directory | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-workspace | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/dsh-workspace-changes | 0.2.1-rc.5 | MIT | all |
+| @deepseek-ai/libreoffice-kit | 0.1.5 | MPL-2.0 | all |
+| @deepseek-ai/libreoffice-kit-darwin-arm64 | 0.1.5 | MPL-2.0 | darwin, arm64 |
+| @deepseek-ai/libreoffice-kit-darwin-x64 | 0.1.5 | MPL-2.0 | darwin, x64 |
+| @deepseek-ai/libreoffice-kit-wasm | 0.1.5 | MPL-2.0 | linux |
+| @deepseek-ai/libreoffice-kit-win32-arm64 | 0.1.5 | MPL-2.0 | win32, arm64 |
+| @deepseek-ai/libreoffice-kit-win32-x64 | 0.1.5 | MPL-2.0 | win32, x64 |
+| @deepseek-ai/node-addon-system | 0.1.2 | BSD-3-Clause | all |
+| @deepseek-ai/node-addon-system-darwin-arm64 | 0.1.2 | BSD-3-Clause | darwin, arm64 |
+| @deepseek-ai/node-addon-system-darwin-x64 | 0.1.2 | BSD-3-Clause | darwin, x64 |
+| @deepseek-ai/node-addon-system-linux-arm64 | 0.1.2 | BSD-3-Clause | linux, arm64 |
+| @deepseek-ai/node-addon-system-linux-x64 | 0.1.2 | BSD-3-Clause | linux, x64 |
+| @deepseek-ai/schemastery | 3.18.5 | MIT | all |
+| @earendil-works/pi-ai | 1.4.0 | MIT | all |
+| @earendil-works/pi-telemetry | 1.4.0 | MIT | all |
+| @emnapi/runtime | 1.11.3 | MIT | all |
+| @eslint-community/regexpp | 4.12.2 | MIT | all |
+| @google/genai | 2.21.0 | Apache-2.0 | all |
+| @img/colour | 1.1.0 | MIT | all |
+| @img/sharp-darwin-arm64 | 0.35.5 | Apache-2.0 | darwin, arm64 |
+| @img/sharp-darwin-x64 | 0.35.5 | Apache-2.0 | darwin, x64 |
+| @img/sharp-freebsd-wasm32 | 0.35.5 | Apache-2.0 | freebsd |
+| @img/sharp-libvips-darwin-arm64 | 1.3.4 | LGPL-3.0-or-later | darwin, arm64 |
+| @img/sharp-libvips-darwin-x64 | 1.3.4 | LGPL-3.0-or-later | darwin, x64 |
+| @img/sharp-libvips-linux-arm | 1.3.4 | LGPL-3.0-or-later | linux, arm |
+| @img/sharp-libvips-linux-arm64 | 1.3.4 | LGPL-3.0-or-later | linux, arm64 |
+| @img/sharp-libvips-linux-ppc64 | 1.3.4 | LGPL-3.0-or-later | linux, ppc64 |
+| @img/sharp-libvips-linux-riscv64 | 1.3.4 | LGPL-3.0-or-later | linux, riscv64 |
+| @img/sharp-libvips-linux-s390x | 1.3.4 | LGPL-3.0-or-later | linux, s390x |
+| @img/sharp-libvips-linux-x64 | 1.3.4 | LGPL-3.0-or-later | linux, x64 |
+| @img/sharp-libvips-linuxmusl-arm64 | 1.3.4 | LGPL-3.0-or-later | linux, arm64 |
+| @img/sharp-libvips-linuxmusl-x64 | 1.3.4 | LGPL-3.0-or-later | linux, x64 |
+| @img/sharp-linux-arm | 0.35.5 | Apache-2.0 | linux, arm |
+| @img/sharp-linux-arm64 | 0.35.5 | Apache-2.0 | linux, arm64 |
+| @img/sharp-linux-ppc64 | 0.35.5 | Apache-2.0 | linux, ppc64 |
+| @img/sharp-linux-riscv64 | 0.35.5 | Apache-2.0 | linux, riscv64 |
+| @img/sharp-linux-s390x | 0.35.5 | Apache-2.0 | linux, s390x |
+| @img/sharp-linux-x64 | 0.35.5 | Apache-2.0 | linux, x64 |
+| @img/sharp-linuxmusl-arm64 | 0.35.5 | Apache-2.0 | linux, arm64 |
+| @img/sharp-linuxmusl-x64 | 0.35.5 | Apache-2.0 | linux, x64 |
+| @img/sharp-wasm32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later AND MIT | all |
+| @img/sharp-webcontainers-wasm32 | 0.35.5 | Apache-2.0 | wasm32 |
+| @img/sharp-win32-arm64 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later | win32, arm64 |
+| @img/sharp-win32-ia32 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later | win32, ia32 |
+| @img/sharp-win32-x64 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later | win32, x64 |
+| @joplin/turndown-plugin-gfm | 1.0.68 | MIT | all |
+| @js-temporal/polyfill | 0.5.1 | ISC | all |
+| @keyv/serialize | 1.1.1 | MIT | all |
+| @koromix/koffi-darwin-arm64 | 3.1.1 | MIT | darwin, arm64 |
+| @koromix/koffi-darwin-x64 | 3.1.1 | MIT | darwin, x64 |
+| @koromix/koffi-freebsd-arm64 | 3.1.1 | MIT | freebsd, arm64 |
+| @koromix/koffi-freebsd-ia32 | 3.1.1 | MIT | freebsd, ia32 |
+| @koromix/koffi-freebsd-x64 | 3.1.1 | MIT | freebsd, x64 |
+| @koromix/koffi-linux-arm64 | 3.1.1 | MIT | linux, arm64 |
+| @koromix/koffi-linux-ia32 | 3.1.1 | MIT | linux, ia32 |
+| @koromix/koffi-linux-loong64 | 3.1.1 | MIT | linux, loong64 |
+| @koromix/koffi-linux-riscv64 | 3.1.1 | MIT | linux, riscv64 |
+| @koromix/koffi-linux-x64 | 3.1.1 | MIT | linux, x64 |
+| @koromix/koffi-openbsd-ia32 | 3.1.1 | MIT | openbsd, ia32 |
+| @koromix/koffi-openbsd-x64 | 3.1.1 | MIT | openbsd, x64 |
+| @koromix/koffi-win32-arm64 | 3.1.1 | MIT | win32, arm64 |
+| @koromix/koffi-win32-ia32 | 3.1.1 | MIT | win32, ia32 |
+| @koromix/koffi-win32-x64 | 3.1.1 | MIT | win32, x64 |
+| @mixmark-io/domino | 2.2.0 | BSD-2-Clause | all |
+| @modelcontextprotocol/client | 2.2.0 | MIT | all |
+| @modelcontextprotocol/core | 2.2.0 | MIT | all |
+| @opentelemetry/api | 1.9.1 | Apache-2.0 | all |
+| @opentelemetry/api-logs | 0.222.0 | Apache-2.0 | all |
+| @opentelemetry/core | 2.11.0 | Apache-2.0 | all |
+| @opentelemetry/otlp-exporter-base | 0.222.0 | Apache-2.0 | all |
+| @opentelemetry/otlp-transformer | 0.222.0 | Apache-2.0 | all |
+| @opentelemetry/resources | 2.11.0 | Apache-2.0 | all |
+| @opentelemetry/sdk-logs | 0.222.0 | Apache-2.0 | all |
+| @opentelemetry/sdk-metrics | 2.11.0 | Apache-2.0 | all |
+| @opentelemetry/sdk-trace | 2.11.0 | Apache-2.0 | all |
+| @opentelemetry/semantic-conventions | 1.44.0 | Apache-2.0 | all |
+| @protobufjs/aspromise | 1.1.2 | BSD-3-Clause | all |
+| @protobufjs/base64 | 1.1.2 | BSD-3-Clause | all |
+| @protobufjs/codegen | 2.0.5 | BSD-3-Clause | all |
+| @protobufjs/eventemitter | 1.1.1 | BSD-3-Clause | all |
+| @protobufjs/fetch | 1.1.1 | BSD-3-Clause | all |
+| @protobufjs/float | 1.0.2 | BSD-3-Clause | all |
+| @protobufjs/path | 1.1.2 | BSD-3-Clause | all |
+| @protobufjs/pool | 1.1.0 | BSD-3-Clause | all |
+| @protobufjs/utf8 | 1.1.2 | BSD-3-Clause | all |
+| @sec-ant/readable-stream | 0.4.1 | MIT | all |
+| @sindresorhus/is | 7.2.0 | MIT | all |
+| @sindresorhus/merge-streams | 4.0.0 | MIT | all |
+| @smithy/core | 3.38.1 | Apache-2.0 | all |
+| @smithy/credential-provider-imds | 4.5.2 | Apache-2.0 | all |
+| @smithy/fetch-http-handler | 5.8.0 | Apache-2.0 | all |
+| @smithy/node-http-handler | 4.12.1 | Apache-2.0 | all |
+| @smithy/node-http-handler | 4.14.1 | Apache-2.0 | all |
+| @smithy/node-http-handler | 4.14.1 | Apache-2.0 | all |
+| @smithy/signature-v4 | 5.7.5 | Apache-2.0 | all |
+| @smithy/types | 4.19.0 | Apache-2.0 | all |
+| @stablelib/base64 | 1.0.1 | MIT | all |
+| @standard-schema/spec | 1.1.0 | MIT | all |
+| @swc/helpers | 0.5.23 | Apache-2.0 | all |
+| @types/http-cache-semantics | 4.2.0 | MIT | all |
+| @types/node | 26.6.6 | MIT | all |
+| @types/retry | 0.12.0 | MIT | all |
+| @vscode/ripgrep | 1.18.0 | MIT | all |
+| @vscode/ripgrep-darwin-arm64 | 1.18.0 | MIT | darwin, arm64 |
+| @vscode/ripgrep-darwin-x64 | 1.18.0 | MIT | darwin, x64 |
+| @vscode/ripgrep-linux-arm | 1.18.0 | MIT | linux, arm |
+| @vscode/ripgrep-linux-arm64 | 1.18.0 | MIT | linux, arm64 |
+| @vscode/ripgrep-linux-ia32 | 1.18.0 | MIT | linux, ia32 |
+| @vscode/ripgrep-linux-ppc64 | 1.18.0 | MIT | linux, ppc64 |
+| @vscode/ripgrep-linux-riscv64 | 1.18.0 | MIT | linux, riscv64 |
+| @vscode/ripgrep-linux-s390x | 1.18.0 | MIT | linux, s390x |
+| @vscode/ripgrep-linux-x64 | 1.18.0 | MIT | linux, x64 |
+| @vscode/ripgrep-win32-arm64 | 1.18.0 | MIT | win32, arm64 |
+| @vscode/ripgrep-win32-ia32 | 1.18.0 | MIT | win32, ia32 |
+| @vscode/ripgrep-win32-x64 | 1.18.0 | MIT | win32, x64 |
+| @xterm/addon-serialize | 0.14.0 | MIT | all |
+| @xterm/headless | 6.0.0 | MIT | all |
+| agent-base | 7.1.4 | MIT | all |
+| agent-base | 9.0.0 | MIT | all |
+| ajv | 8.20.0 | MIT | all |
+| argparse | 2.0.1 | Python-2.0 | all |
+| base64-js | 1.5.1 | MIT | all |
+| bignumber.js | 9.3.1 | MIT | all |
+| bowser | 2.15.0 | MIT | all |
+| brotli | 1.3.3 | MIT | all |
+| buffer-equal-constant-time | 1.0.1 | BSD-3-Clause | all |
+| bundle-name | 4.1.1 | MIT | all |
+| byte-counter | 0.1.0 | MIT | all |
+| bytes | 3.1.2 | MIT | all |
+| cacheable-lookup | 7.0.0 | MIT | all |
+| cacheable-request | 13.0.19 | MIT | all |
+| chokidar | 5.0.0 | MIT | all |
+| clone | 2.1.2 | MIT | all |
+| commander | 15.0.0 | MIT | all |
+| compressible | 2.0.18 | MIT | all |
+| compression | 1.8.2 | MIT | all |
+| content-type | 2.1.0 | MIT | all |
+| cross-spawn | 7.0.6 | MIT | all |
+| data-uri-to-buffer | 4.0.1 | MIT | all |
+| debug | 2.6.9 | MIT | all |
+| debug | 4.4.3 | MIT | all |
+| debug | 4.4.3 | MIT | all |
+| debug | 4.4.3 | MIT | all |
+| debug | 4.4.3 | MIT | all |
+| decompress-response | 10.0.0 | MIT | all |
+| default-browser | 5.5.1 | MIT | all |
+| default-browser-id | 5.0.1 | MIT | all |
+| define-lazy-prop | 3.0.0 | MIT | all |
+| depd | 2.0.0 | MIT | all |
+| destroy | 1.2.0 | MIT | all |
+| detect-libc | 2.1.2 | Apache-2.0 | all |
+| dfa | 1.2.0 | MIT | all |
+| diff | 9.0.0 | BSD-3-Clause | all |
+| ecdsa-sig-formatter | 1.0.11 | Apache-2.0 | all |
+| ee-first | 1.1.1 | MIT | all |
+| encodeurl | 2.0.1 | MIT | all |
+| escape-html | 1.0.3 | MIT | all |
+| etag | 1.8.1 | MIT | all |
+| eventsource | 3.0.7 | MIT | all |
+| eventsource-parser | 3.1.1 | MIT | all |
+| execa | 10.2.1 | MIT | all |
+| extend | 3.0.2 | MIT | all |
+| fast-deep-equal | 3.1.3 | MIT | all |
+| fast-sha256 | 1.3.0 | Unlicense | all |
+| fast-uri | 3.1.9 | BSD-3-Clause | all |
+| fetch-blob | 3.2.0 | MIT | all |
+| fflate | 0.8.2 | MIT | all |
+| fflate | 0.8.3 | MIT | all |
+| figures | 6.1.0 | MIT | all |
+| fontkit | 2.0.4 | MIT | all |
+| form-data-encoder | 4.1.0 | MIT | all |
+| formdata-polyfill | 4.0.10 | MIT | all |
+| fresh | 2.0.0 | MIT | all |
+| gaxios | 7.3.1 | Apache-2.0 | all |
+| gcp-metadata | 8.1.2 | Apache-2.0 | all |
+| get-stream | 9.0.1 | MIT | all |
+| google-auth-library | 10.9.1 | Apache-2.0 | all |
+| google-logging-utils | 1.1.3 | Apache-2.0 | all |
+| got | 14.6.6 | MIT | all |
+| http-cache-semantics | 4.3.0 | BSD-2-Clause | all |
+| http-errors | 2.0.1 | MIT | all |
+| http-proxy-agent | 9.1.0 | MIT | all |
+| http2-wrapper | 2.2.2 | MIT | all |
+| https-proxy-agent | 7.0.6 | MIT | all |
+| https-proxy-agent | 9.1.0 | MIT | all |
+| human-signals | 8.0.1 | Apache-2.0 | all |
+| inherits | 2.0.4 | ISC | all |
+| ipaddr.js | 2.5.0 | MIT | all |
+| is-docker | 3.0.0 | MIT | all |
+| is-in-ssh | 1.0.0 | MIT | all |
+| is-inside-container | 1.0.0 | MIT | all |
+| is-plain-obj | 4.1.0 | MIT | all |
+| is-stream | 4.0.1 | MIT | all |
+| is-unicode-supported | 2.1.0 | MIT | all |
+| is-wsl | 3.1.1 | MIT | all |
+| isexe | 2.0.0 | ISC | all |
+| jose | 6.2.14 | MIT | all |
+| js-tokens | 4.0.0 | MIT | all |
+| js-yaml | 4.3.2 | MIT | all |
+| jsbi | 4.3.2 | Apache-2.0 | all |
+| json-bigint | 1.0.0 | MIT | all |
+| json-schema-to-ts | 3.1.1 | MIT | all |
+| json-schema-traverse | 1.0.0 | MIT | all |
+| jwa | 2.0.1 | MIT | all |
+| jws | 4.0.1 | MIT | all |
+| keyv | 5.6.0 | MIT | all |
+| koffi | 3.1.1 | MIT | all |
+| long | 5.3.2 | Apache-2.0 | all |
+| lowercase-keys | 3.0.0 | MIT | all |
+| mime-db | 1.54.0 | MIT | all |
+| mime-types | 3.0.2 | MIT | all |
+| mimic-response | 4.0.0 | MIT | all |
+| minisearch | 7.2.0 | MIT | all |
+| ms | 2.0.0 | MIT | all |
+| ms | 2.1.3 | MIT | all |
+| ms | 2.1.3 | MIT | all |
+| ms | 2.1.3 | MIT | all |
+| ms | 2.1.3 | MIT | all |
+| negotiator | 0.6.4 | MIT | all |
+| negotiator | 1.1.0 | MIT | all |
+| node-addon-api | 7.1.1 | MIT | all |
+| node-addon-native-custom-loader | 0.1.9 | MIT | all |
+| node-addon-require-builtin | 0.1.9 | MIT | all |
+| node-addon-require-builtin-darwin-arm64 | 0.1.9 | MIT | darwin, arm64 |
+| node-addon-require-builtin-darwin-x64 | 0.1.9 | MIT | darwin, x64 |
+| node-addon-require-builtin-linux-arm64-gnu | 0.1.9 | MIT | linux, arm64 |
+| node-addon-require-builtin-linux-arm64-musl | 0.1.9 | MIT | linux, arm64 |
+| node-addon-require-builtin-linux-x64-gnu | 0.1.9 | MIT | linux, x64 |
+| node-addon-require-builtin-linux-x64-musl | 0.1.9 | MIT | linux, x64 |
+| node-addon-require-builtin-win32-arm64-msvc | 0.1.9 | MIT | win32, arm64 |
+| node-addon-require-builtin-win32-ia32-msvc | 0.1.9 | MIT | win32, ia32 |
+| node-addon-require-builtin-win32-x64-msvc | 0.1.9 | MIT | win32, x64 |
+| node-domexception | 1.0.0 | MIT | all |
+| node-fetch | 3.3.2 | MIT | all |
+| node-pty | 1.2.0-beta.15 | MIT | all |
+| normalize-url | 8.1.1 | MIT | all |
+| npm-run-path | 6.0.0 | MIT | all |
+| on-finished | 2.4.2 | MIT | all |
+| on-headers | 1.1.0 | MIT | all |
+| open | 11.0.4 | MIT | all |
+| openai | 7.19.0 | Apache-2.0 | all |
+| p-cancelable | 4.0.1 | MIT | all |
+| p-limit | 7.3.3 | MIT | all |
+| p-retry | 4.6.2 | MIT | all |
+| pako | 0.2.9 | MIT | all |
+| parse-ms | 4.0.0 | MIT | all |
+| parseurl | 1.3.3 | MIT | all |
+| partial-json | 0.1.7 | MIT | all |
+| path-key | 3.1.1 | MIT | all |
+| path-key | 4.0.0 | MIT | all |
+| picocolors | 1.1.1 | ISC | all |
+| picomatch | 4.0.7 | MIT | all |
+| pkce-challenge | 5.0.1 | MIT | all |
+| powershell-utils | 0.2.1 | MIT | all |
+| pretty-ms | 9.3.1 | MIT | all |
+| protobufjs | 7.6.6 | BSD-3-Clause | all |
+| proxy-agent-negotiate | 1.1.0 | MIT | all |
+| quick-lru | 5.1.1 | MIT | all |
+| range-parser | 1.3.0 | MIT | all |
+| readdirp | 5.1.1 | MIT | all |
+| require-from-string | 2.0.2 | MIT | all |
+| resolve-alpn | 1.2.1 | MIT | all |
+| resolve.exports | 2.0.4 | MIT | all |
+| responselike | 4.0.2 | MIT | all |
+| restructure | 3.0.2 | MIT | all |
+| retry | 0.13.1 | MIT | all |
+| run-applescript | 7.1.0 | MIT | all |
+| safe-buffer | 5.2.1 | MIT | all |
+| saxes | 6.0.0 | ISC | all |
+| semver | 7.8.5 | ISC | all |
+| send | 1.2.1 | MIT | all |
+| serve-static | 2.2.1 | MIT | all |
+| setprototypeof | 1.2.0 | ISC | all |
+| sharp | 0.35.5 | Apache-2.0 | all |
+| shebang-command | 2.0.0 | MIT | all |
+| shebang-regex | 3.0.0 | MIT | all |
+| sherpa-onnx-darwin-arm64 | 1.13.8 | Apache-2.0 | darwin, arm64 |
+| sherpa-onnx-darwin-x64 | 1.13.8 | Apache-2.0 | darwin, x64 |
+| sherpa-onnx-linux-arm64 | 1.13.8 | Apache-2.0 | linux, arm64 |
+| sherpa-onnx-linux-x64 | 1.13.8 | Apache-2.0 | linux, x64 |
+| sherpa-onnx-node | 1.13.8 | Apache-2.0 | all |
+| sherpa-onnx-win-ia32 | 1.13.8 | Apache-2.0 | win32, ia32 |
+| sherpa-onnx-win-x64 | 1.13.8 | Apache-2.0 | win32, x64 |
+| signal-exit | 4.1.0 | ISC | all |
+| standardwebhooks | 1.1.1 | MIT | all |
+| statuses | 2.0.2 | MIT | all |
+| strip-final-newline | 4.0.0 | MIT | all |
+| tiny-inflate | 1.0.3 | MIT | all |
+| toidentifier | 1.0.1 | MIT | all |
+| ts-algebra | 2.0.0 | MIT | all |
+| tslib | 2.9.1 | 0BSD | all |
+| turndown | 7.2.4 | MIT | all |
+| type-fest | 4.41.0 | (MIT OR CC0-1.0) | all |
+| typebox | 1.3.27 | MIT | all |
+| undici | 8.11.2 | MIT | all |
+| undici-types | 8.9.0 | MIT | all |
+| unicode-properties | 1.4.1 | MIT | all |
+| unicode-trie | 2.0.0 | MIT | all |
+| unicorn-magic | 0.3.0 | MIT | all |
+| vary | 1.1.2 | MIT | all |
+| web-streams-polyfill | 3.3.3 | MIT | all |
+| which | 2.0.2 | ISC | all |
+| which-command | 0.1.0 | MIT | all |
+| ws | 8.22.1 | MIT | all |
+| wsl-utils | 1.0.1 | MIT | all |
+| xmlchars | 2.2.0 | MIT | all |
+| yaml | 2.9.1 | ISC | all |
+| yocto-queue | 1.2.2 | MIT | all |
+| yoctocolors | 2.2.0 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.4.3 | MIT | all |
+| zod | 4.6.7 | MIT | all |
 
 ## License texts
 
@@ -2388,39 +2391,6 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ```
 
-### @deepseek-ai/node-addon-system-darwin-arm64@0.1.2
-
-```text
-BSD 3-Clause License
-
-Copyright (c) 2026, node-addon-landlock-run contributors
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
-3. Neither the name of the copyright holder nor the names of its
-   contributors may be used to endorse or promote products derived from
-   this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-```
-
 ### @eslint-community/regexpp@4.12.2
 
 ```text
@@ -2738,202 +2708,6 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
-### @img/sharp-darwin-arm64@0.35.5, sharp@0.35.5
-
-```text
-Apache License
-Version 2.0, January 2004
-http://www.apache.org/licenses/
-
-TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-1. Definitions.
-
-"License" shall mean the terms and conditions for use, reproduction, and
-distribution as defined by Sections 1 through 9 of this document.
-
-"Licensor" shall mean the copyright owner or entity authorized by the copyright
-owner that is granting the License.
-
-"Legal Entity" shall mean the union of the acting entity and all other entities
-that control, are controlled by, or are under common control with that entity.
-For the purposes of this definition, "control" means (i) the power, direct or
-indirect, to cause the direction or management of such entity, whether by
-contract or otherwise, or (ii) ownership of fifty percent (50%) or more of the
-outstanding shares, or (iii) beneficial ownership of such entity.
-
-"You" (or "Your") shall mean an individual or Legal Entity exercising
-permissions granted by this License.
-
-"Source" form shall mean the preferred form for making modifications, including
-but not limited to software source code, documentation source, and configuration
-files.
-
-"Object" form shall mean any form resulting from mechanical transformation or
-translation of a Source form, including but not limited to compiled object code,
-generated documentation, and conversions to other media types.
-
-"Work" shall mean the work of authorship, whether in Source or Object form, made
-available under the License, as indicated by a copyright notice that is included
-in or attached to the work (an example is provided in the Appendix below).
-
-"Derivative Works" shall mean any work, whether in Source or Object form, that
-is based on (or derived from) the Work and for which the editorial revisions,
-annotations, elaborations, or other modifications represent, as a whole, an
-original work of authorship. For the purposes of this License, Derivative Works
-shall not include works that remain separable from, or merely link (or bind by
-name) to the interfaces of, the Work and Derivative Works thereof.
-
-"Contribution" shall mean any work of authorship, including the original version
-of the Work and any modifications or additions to that Work or Derivative Works
-thereof, that is intentionally submitted to Licensor for inclusion in the Work
-by the copyright owner or by an individual or Legal Entity authorized to submit
-on behalf of the copyright owner. For the purposes of this definition,
-"submitted" means any form of electronic, verbal, or written communication sent
-to the Licensor or its representatives, including but not limited to
-communication on electronic mailing lists, source code control systems, and
-issue tracking systems that are managed by, or on behalf of, the Licensor for
-the purpose of discussing and improving the Work, but excluding communication
-that is conspicuously marked or otherwise designated in writing by the copyright
-owner as "Not a Contribution."
-
-"Contributor" shall mean Licensor and any individual or Legal Entity on behalf
-of whom a Contribution has been received by Licensor and subsequently
-incorporated within the Work.
-
-2. Grant of Copyright License.
-
-Subject to the terms and conditions of this License, each Contributor hereby
-grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
-irrevocable copyright license to reproduce, prepare Derivative Works of,
-publicly display, publicly perform, sublicense, and distribute the Work and such
-Derivative Works in Source or Object form.
-
-3. Grant of Patent License.
-
-Subject to the terms and conditions of this License, each Contributor hereby
-grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
-irrevocable (except as stated in this section) patent license to make, have
-made, use, offer to sell, sell, import, and otherwise transfer the Work, where
-such license applies only to those patent claims licensable by such Contributor
-that are necessarily infringed by their Contribution(s) alone or by combination
-of their Contribution(s) with the Work to which such Contribution(s) was
-submitted. If You institute patent litigation against any entity (including a
-cross-claim or counterclaim in a lawsuit) alleging that the Work or a
-Contribution incorporated within the Work constitutes direct or contributory
-patent infringement, then any patent licenses granted to You under this License
-for that Work shall terminate as of the date such litigation is filed.
-
-4. Redistribution.
-
-You may reproduce and distribute copies of the Work or Derivative Works thereof
-in any medium, with or without modifications, and in Source or Object form,
-provided that You meet the following conditions:
-
-You must give any other recipients of the Work or Derivative Works a copy of
-this License; and
-You must cause any modified files to carry prominent notices stating that You
-changed the files; and
-You must retain, in the Source form of any Derivative Works that You distribute,
-all copyright, patent, trademark, and attribution notices from the Source form
-of the Work, excluding those notices that do not pertain to any part of the
-Derivative Works; and
-If the Work includes a "NOTICE" text file as part of its distribution, then any
-Derivative Works that You distribute must include a readable copy of the
-attribution notices contained within such NOTICE file, excluding those notices
-that do not pertain to any part of the Derivative Works, in at least one of the
-following places: within a NOTICE text file distributed as part of the
-Derivative Works; within the Source form or documentation, if provided along
-with the Derivative Works; or, within a display generated by the Derivative
-Works, if and wherever such third-party notices normally appear. The contents of
-the NOTICE file are for informational purposes only and do not modify the
-License. You may add Your own attribution notices within Derivative Works that
-You distribute, alongside or as an addendum to the NOTICE text from the Work,
-provided that such additional attribution notices cannot be construed as
-modifying the License.
-You may add Your own copyright statement to Your modifications and may provide
-additional or different license terms and conditions for use, reproduction, or
-distribution of Your modifications, or for any such Derivative Works as a whole,
-provided Your use, reproduction, and distribution of the Work otherwise complies
-with the conditions stated in this License.
-
-5. Submission of Contributions.
-
-Unless You explicitly state otherwise, any Contribution intentionally submitted
-for inclusion in the Work by You to the Licensor shall be under the terms and
-conditions of this License, without any additional terms or conditions.
-Notwithstanding the above, nothing herein shall supersede or modify the terms of
-any separate license agreement you may have executed with Licensor regarding
-such Contributions.
-
-6. Trademarks.
-
-This License does not grant permission to use the trade names, trademarks,
-service marks, or product names of the Licensor, except as required for
-reasonable and customary use in describing the origin of the Work and
-reproducing the content of the NOTICE file.
-
-7. Disclaimer of Warranty.
-
-Unless required by applicable law or agreed to in writing, Licensor provides the
-Work (and each Contributor provides its Contributions) on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied,
-including, without limitation, any warranties or conditions of TITLE,
-NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A PARTICULAR PURPOSE. You are
-solely responsible for determining the appropriateness of using or
-redistributing the Work and assume any risks associated with Your exercise of
-permissions under this License.
-
-8. Limitation of Liability.
-
-In no event and under no legal theory, whether in tort (including negligence),
-contract, or otherwise, unless required by applicable law (such as deliberate
-and grossly negligent acts) or agreed to in writing, shall any Contributor be
-liable to You for damages, including any direct, indirect, special, incidental,
-or consequential damages of any character arising as a result of this License or
-out of the use or inability to use the Work (including but not limited to
-damages for loss of goodwill, work stoppage, computer failure or malfunction, or
-any and all other commercial damages or losses), even if such Contributor has
-been advised of the possibility of such damages.
-
-9. Accepting Warranty or Additional Liability.
-
-While redistributing the Work or Derivative Works thereof, You may choose to
-offer, and charge a fee for, acceptance of support, warranty, indemnity, or
-other liability obligations and/or rights consistent with this License. However,
-in accepting such obligations, You may act only on Your own behalf and on Your
-sole responsibility, not on behalf of any other Contributor, and only if You
-agree to indemnify, defend, and hold each Contributor harmless for any liability
-incurred by, or claims asserted against, such Contributor by reason of your
-accepting any such warranty or additional liability.
-
-END OF TERMS AND CONDITIONS
-
-APPENDIX: How to apply the Apache License to your work
-
-To apply the Apache License to your work, attach the following boilerplate
-notice, with the fields enclosed by brackets "[]" replaced with your own
-identifying information. (Don't include the brackets!) The text should be
-enclosed in the appropriate comment syntax for the file format. We also
-recommend that a file or class name and description of purpose be included on
-the same "printed page" as the copyright notice for easier identification within
-third-party archives.
-
-   Copyright [yyyy] [name of copyright owner]
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
 ```
 
 ### @joplin/turndown-plugin-gfm@1.0.68, turndown@7.2.4
@@ -3639,7 +3413,7 @@ MIT License
     SOFTWARE
 ```
 
-### @vscode/ripgrep@1.18.0, @vscode/ripgrep-darwin-arm64@1.18.0
+### @vscode/ripgrep@1.18.0
 
 ```text
 vscode-ripgrep
@@ -6193,7 +5967,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### node-addon-native-custom-loader@0.1.9, node-addon-require-builtin@0.1.9, node-addon-require-builtin-darwin-arm64@0.1.9
+### node-addon-native-custom-loader@0.1.9, node-addon-require-builtin@0.1.9
 
 ```text
 MIT License
@@ -7089,6 +6863,202 @@ SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
 OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+### sharp@0.35.5
+
+```text
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+"License" shall mean the terms and conditions for use, reproduction, and
+distribution as defined by Sections 1 through 9 of this document.
+
+"Licensor" shall mean the copyright owner or entity authorized by the copyright
+owner that is granting the License.
+
+"Legal Entity" shall mean the union of the acting entity and all other entities
+that control, are controlled by, or are under common control with that entity.
+For the purposes of this definition, "control" means (i) the power, direct or
+indirect, to cause the direction or management of such entity, whether by
+contract or otherwise, or (ii) ownership of fifty percent (50%) or more of the
+outstanding shares, or (iii) beneficial ownership of such entity.
+
+"You" (or "Your") shall mean an individual or Legal Entity exercising
+permissions granted by this License.
+
+"Source" form shall mean the preferred form for making modifications, including
+but not limited to software source code, documentation source, and configuration
+files.
+
+"Object" form shall mean any form resulting from mechanical transformation or
+translation of a Source form, including but not limited to compiled object code,
+generated documentation, and conversions to other media types.
+
+"Work" shall mean the work of authorship, whether in Source or Object form, made
+available under the License, as indicated by a copyright notice that is included
+in or attached to the work (an example is provided in the Appendix below).
+
+"Derivative Works" shall mean any work, whether in Source or Object form, that
+is based on (or derived from) the Work and for which the editorial revisions,
+annotations, elaborations, or other modifications represent, as a whole, an
+original work of authorship. For the purposes of this License, Derivative Works
+shall not include works that remain separable from, or merely link (or bind by
+name) to the interfaces of, the Work and Derivative Works thereof.
+
+"Contribution" shall mean any work of authorship, including the original version
+of the Work and any modifications or additions to that Work or Derivative Works
+thereof, that is intentionally submitted to Licensor for inclusion in the Work
+by the copyright owner or by an individual or Legal Entity authorized to submit
+on behalf of the copyright owner. For the purposes of this definition,
+"submitted" means any form of electronic, verbal, or written communication sent
+to the Licensor or its representatives, including but not limited to
+communication on electronic mailing lists, source code control systems, and
+issue tracking systems that are managed by, or on behalf of, the Licensor for
+the purpose of discussing and improving the Work, but excluding communication
+that is conspicuously marked or otherwise designated in writing by the copyright
+owner as "Not a Contribution."
+
+"Contributor" shall mean Licensor and any individual or Legal Entity on behalf
+of whom a Contribution has been received by Licensor and subsequently
+incorporated within the Work.
+
+2. Grant of Copyright License.
+
+Subject to the terms and conditions of this License, each Contributor hereby
+grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
+irrevocable copyright license to reproduce, prepare Derivative Works of,
+publicly display, publicly perform, sublicense, and distribute the Work and such
+Derivative Works in Source or Object form.
+
+3. Grant of Patent License.
+
+Subject to the terms and conditions of this License, each Contributor hereby
+grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
+irrevocable (except as stated in this section) patent license to make, have
+made, use, offer to sell, sell, import, and otherwise transfer the Work, where
+such license applies only to those patent claims licensable by such Contributor
+that are necessarily infringed by their Contribution(s) alone or by combination
+of their Contribution(s) with the Work to which such Contribution(s) was
+submitted. If You institute patent litigation against any entity (including a
+cross-claim or counterclaim in a lawsuit) alleging that the Work or a
+Contribution incorporated within the Work constitutes direct or contributory
+patent infringement, then any patent licenses granted to You under this License
+for that Work shall terminate as of the date such litigation is filed.
+
+4. Redistribution.
+
+You may reproduce and distribute copies of the Work or Derivative Works thereof
+in any medium, with or without modifications, and in Source or Object form,
+provided that You meet the following conditions:
+
+You must give any other recipients of the Work or Derivative Works a copy of
+this License; and
+You must cause any modified files to carry prominent notices stating that You
+changed the files; and
+You must retain, in the Source form of any Derivative Works that You distribute,
+all copyright, patent, trademark, and attribution notices from the Source form
+of the Work, excluding those notices that do not pertain to any part of the
+Derivative Works; and
+If the Work includes a "NOTICE" text file as part of its distribution, then any
+Derivative Works that You distribute must include a readable copy of the
+attribution notices contained within such NOTICE file, excluding those notices
+that do not pertain to any part of the Derivative Works, in at least one of the
+following places: within a NOTICE text file distributed as part of the
+Derivative Works; within the Source form or documentation, if provided along
+with the Derivative Works; or, within a display generated by the Derivative
+Works, if and wherever such third-party notices normally appear. The contents of
+the NOTICE file are for informational purposes only and do not modify the
+License. You may add Your own attribution notices within Derivative Works that
+You distribute, alongside or as an addendum to the NOTICE text from the Work,
+provided that such additional attribution notices cannot be construed as
+modifying the License.
+You may add Your own copyright statement to Your modifications and may provide
+additional or different license terms and conditions for use, reproduction, or
+distribution of Your modifications, or for any such Derivative Works as a whole,
+provided Your use, reproduction, and distribution of the Work otherwise complies
+with the conditions stated in this License.
+
+5. Submission of Contributions.
+
+Unless You explicitly state otherwise, any Contribution intentionally submitted
+for inclusion in the Work by You to the Licensor shall be under the terms and
+conditions of this License, without any additional terms or conditions.
+Notwithstanding the above, nothing herein shall supersede or modify the terms of
+any separate license agreement you may have executed with Licensor regarding
+such Contributions.
+
+6. Trademarks.
+
+This License does not grant permission to use the trade names, trademarks,
+service marks, or product names of the Licensor, except as required for
+reasonable and customary use in describing the origin of the Work and
+reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty.
+
+Unless required by applicable law or agreed to in writing, Licensor provides the
+Work (and each Contributor provides its Contributions) on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied,
+including, without limitation, any warranties or conditions of TITLE,
+NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A PARTICULAR PURPOSE. You are
+solely responsible for determining the appropriateness of using or
+redistributing the Work and assume any risks associated with Your exercise of
+permissions under this License.
+
+8. Limitation of Liability.
+
+In no event and under no legal theory, whether in tort (including negligence),
+contract, or otherwise, unless required by applicable law (such as deliberate
+and grossly negligent acts) or agreed to in writing, shall any Contributor be
+liable to You for damages, including any direct, indirect, special, incidental,
+or consequential damages of any character arising as a result of this License or
+out of the use or inability to use the Work (including but not limited to
+damages for loss of goodwill, work stoppage, computer failure or malfunction, or
+any and all other commercial damages or losses), even if such Contributor has
+been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability.
+
+While redistributing the Work or Derivative Works thereof, You may choose to
+offer, and charge a fee for, acceptance of support, warranty, indemnity, or
+other liability obligations and/or rights consistent with this License. However,
+in accepting such obligations, You may act only on Your own behalf and on Your
+sole responsibility, not on behalf of any other Contributor, and only if You
+agree to indemnify, defend, and hold each Contributor harmless for any liability
+incurred by, or claims asserted against, such Contributor by reason of your
+accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work
+
+To apply the Apache License to your work, attach the following boilerplate
+notice, with the fields enclosed by brackets "[]" replaced with your own
+identifying information. (Don't include the brackets!) The text should be
+enclosed in the appropriate comment syntax for the file format. We also
+recommend that a file or class name and description of purpose be included on
+the same "printed page" as the copyright notice for easier identification within
+third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
 ```
 
 ### shebang-command@2.0.0

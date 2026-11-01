@@ -42,16 +42,26 @@ function licenseText(dir) {
   return file ? readFileSync(join(dir, file), "utf8").trim() : null
 }
 
-/** The release's packages from a lockfile: name, version, license, its notice text. */
+/**
+ * The release's packages from a lockfile: name, version, license, its notice
+ * text. Packages npm installs only on some systems (an `os` or `cpu` field)
+ * are listed with that platform but without a copied text: which of them a
+ * machine has depends on the machine, and this file must come out the same
+ * everywhere. Each carries its own license file wherever npm installs it.
+ */
 export function releasePackages(lock, root = ROOT) {
   return Object.entries(lock.packages ?? {})
     .filter(([path, entry]) => path.startsWith("node_modules/") && !entry.dev && !entry.link)
-    .map(([path, entry]) => ({
-      name: entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length),
-      version: entry.version,
-      license: entry.license ?? null,
-      text: licenseText(join(root, path)),
-    }))
+    .map(([path, entry]) => {
+      const platform = [entry.os, entry.cpu].filter(Boolean).flat().join(", ") || null
+      return {
+        name: entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length),
+        version: entry.version,
+        license: entry.license ?? null,
+        platform,
+        text: platform ? null : licenseText(join(root, path)),
+      }
+    })
     .sort((a, b) => a.name.localeCompare(b.name) || String(a.version).localeCompare(String(b.version)))
 }
 
@@ -76,10 +86,14 @@ ${dsh?.text ?? "(license text missing)"}
 
 ## Packages
 
-| Package | Version | License |
-| --- | --- | --- |
+Packages marked with a platform are installed by npm only on that system
+and carry their own license file there.
+
+| Package | Version | License | Platform |
+| --- | --- | --- | --- |
 `
-  for (const pkg of packages) markdown += `| ${pkg.name} | ${pkg.version} | ${pkg.license ?? "unknown"} |\n`
+  for (const pkg of packages)
+    markdown += `| ${pkg.name} | ${pkg.version} | ${pkg.license ?? "unknown"} | ${pkg.platform ?? "all"} |\n`
   markdown += "\n## License texts\n"
   // One copy of each distinct text, with every package that ships it
   const texts = new Map()

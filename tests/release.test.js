@@ -61,3 +61,27 @@ test("HT-REL-02: licenses outside the allow-list, or unknown, block a release", 
   // A recorded exception (an owner decision) clears exactly that package and version
   assert.deepEqual(buildNotices(lock, { "odd@2.0.0": "reason", "mystery@3.0.0": "reason" }, "/nonexistent", []).problems, [])
 })
+
+test("HT-REL-01: the notices come out the same on every system", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const lock = {
+    packages: {
+      "": {},
+      "node_modules/everywhere": { version: "1.0.0", license: "MIT" },
+      "node_modules/mac-only": { version: "1.0.0", license: "MIT", os: ["darwin"], cpu: ["arm64"] },
+    },
+  }
+  const install = (withMacOnly) => {
+    const root = mkdtempSync(join(tmpdir(), "kriya-notices-"))
+    for (const name of withMacOnly ? ["everywhere", "mac-only"] : ["everywhere"]) {
+      mkdirSync(join(root, "node_modules", name), { recursive: true })
+      writeFileSync(join(root, "node_modules", name, "LICENSE"), `License of ${name}`)
+    }
+    return buildNotices(lock, {}, root, []).markdown
+  }
+  const onMac = install(true)
+  assert.equal(onMac, install(false))
+  assert.match(onMac, /\| mac-only \| 1\.0\.0 \| MIT \| darwin, arm64 \|/)
+  assert.doesNotMatch(onMac, /License of mac-only/)
+})
