@@ -69,7 +69,7 @@ test("an unreachable Kriya is a plain network error, not a stack", async () => {
 })
 
 test("the contract covers every route this client calls", () => {
-  const called = new Set(["POST /device/code", "POST /device/token", "GET /me", "GET /models", "DELETE /device", "POST /chat/completions", "POST /approvals", "GET /approvals/{id}", "DELETE /approvals/{id}"])
+  const called = new Set(["POST /device/code", "POST /device/token", "GET /me", "GET /models", "DELETE /device", "POST /chat/completions", "POST /approvals", "GET /approvals/{id}", "DELETE /approvals/{id}", "POST /sessions", "POST /sessions/{id}/turns"])
   const known = new Set(contract.routes.map((r) => `${r.method} ${r.path}`))
   for (const name of called) assert.ok(known.has(name), name)
   assert.equal(contract.basePath, "/api/harness/v1")

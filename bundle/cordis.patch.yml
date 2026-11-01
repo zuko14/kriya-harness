@@ -68,6 +68,13 @@
     - id: kriya-approvals
       name: '@kriya-ai/harness-approvals'
 
+# H6 (HD-09): a summary of each turn in a Kriya thread, only when the person
+# turned the mirror on for this device in Kriya (plugins/mirror). Local
+# history stays DSH's own
+- insert:
+    - id: kriya-mirror
+      name: '@kriya-ai/harness-mirror'
+
 # DSH's first-run "Preview Notice" speaks for DeepSeek Harness; Kriya shows
 # its own beta notice at first run (bin/kriya.js) and in SAFETY.md, which
 # say DSH is an unaudited preview. Marked as seen with DSH's own

@@ -63,6 +63,17 @@ export async function call(url, method, path, { token, body, signal } = {}) {
   return data
 }
 
+/**
+ * Inside DSH: the signed-in device, from the variables the launcher sets
+ * (src/launch.js), for the Kriya plugins. Null when signed out.
+ */
+export function deviceFromEnv(env = process.env) {
+  const token = env.KRIYA_DEVICE_TOKEN
+  const gateway = env.KRIYA_GATEWAY_URL
+  if (!token || !gateway?.endsWith(BASE_PATH)) return null
+  return { token, url: gateway.slice(0, -BASE_PATH.length) }
+}
+
 /** @param {string} url @param {{ deviceName: string, platform: string }} device */
 export const deviceCode = (url, device) =>
   call(url, "POST", "/device/code", { body: { ...device, clientVersion: CLIENT_VERSION } })
