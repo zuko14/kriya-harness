@@ -67,6 +67,9 @@ export async function login(url, io = {}) {
     } catch (error) {
       if (!(error instanceof KriyaError)) throw error
       if (error.code === "pending") continue
+      // Kriya restarting (a deploy) while the person approves: keep waiting
+      // until the code expires
+      if (error.code === "network" || error.status >= 500) continue
       // Polled too fast: back off by the interval, as the device flow asks
       if (error.code === "rate_limited") {
         interval += code.interval * 1000

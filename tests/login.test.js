@@ -53,6 +53,19 @@ test("a denied sign-in stops with a plain message and stores nothing", async () 
   }
 })
 
+test("a deploy while waiting (dropped connections, 503s) doesn't end the sign-in", async () => {
+  freshHome()
+  const fake = await startFakeKriya({ tokenResets: 2, tokenOutages: 2, approveAfter: 5 })
+  try {
+    const lines = []
+    await login(fake.url, quick(lines))
+    assert.equal(lines.at(-1), "Signed in as Asha · working as Arjun.")
+    assert.ok(readDevice())
+  } finally {
+    await fake.close()
+  }
+})
+
 test("an old client gets Kriya's upgrade message", async () => {
   freshHome()
   const fake = await startFakeKriya({ minVersion: "9.0.0" })

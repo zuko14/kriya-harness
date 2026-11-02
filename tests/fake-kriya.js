@@ -125,6 +125,10 @@ export async function startFakeKriya(script = {}) {
       if (!code) return fail(410, "expired", "This code has expired.")
       if (script.deny) return fail(403, "denied", "Sign-in was denied.")
       code.polls++
+      // A deploy while the person approves: dropped connections, then 503s
+      if (code.polls <= (script.tokenResets ?? 0)) return req.socket.destroy()
+      if (code.polls <= (script.tokenResets ?? 0) + (script.tokenOutages ?? 0))
+        return fail(503, "unavailable", "Kriya is restarting.")
       if (code.polls <= (script.approveAfter ?? 1)) return fail(428, "pending", "Waiting for approval.")
       state.codes.delete(body.deviceCode)
       const token = b64(32)

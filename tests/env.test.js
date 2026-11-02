@@ -3,7 +3,7 @@ import { createRequire } from "node:module"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { launchEnv, TOKEN_ENV } from "../src/launch.js"
+import { launchEnv, startTier, TOKEN_ENV } from "../src/launch.js"
 import { freshHome, ROOT } from "./helpers.js"
 
 // The device token reaches DSH only as a launch variable, and DSH removes
@@ -41,6 +41,21 @@ test("launch variables: the sign-in's token and gateway only, telemetry off", ()
   const signedOut = launchEnv(null, { KRIYA_DEVICE_TOKEN: "from-shell", KRIYA_GATEWAY_URL: "https://evil.example" })
   assert.equal(signedOut.KRIYA_DEVICE_TOKEN, undefined)
   assert.equal(signedOut.KRIYA_GATEWAY_URL, undefined)
+})
+
+test("the session starts on balanced, or the best tier the plan allows", async () => {
+  const device = { url: "https://k.example", token: "t1" }
+  const plan = (...ids) => async () => ({ data: ids.map((id) => ({ id })) })
+  assert.equal(await startTier(device, plan("budget")), "budget")
+  assert.equal(await startTier(device, plan("budget", "balanced")), "balanced")
+  assert.equal(await startTier(device, plan("escalation")), "escalation")
+  assert.equal(await startTier(device, plan()), "balanced")
+  assert.equal(await startTier(device, async () => { throw new Error("offline") }), "balanced")
+  assert.equal(await startTier(null), "balanced")
+  // Never from the shell, never an unknown alias
+  assert.equal(launchEnv(device, { KRIYA_START_TIER: "escalation" }).KRIYA_START_TIER, "balanced")
+  assert.equal(launchEnv(device, {}, undefined, "budget").KRIYA_START_TIER, "budget")
+  assert.equal(launchEnv(device, {}, undefined, "gpt-5").KRIYA_START_TIER, "balanced")
 })
 
 test("every refusal code in the contract has a plain sentence for kriya run", async () => {

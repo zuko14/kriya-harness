@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
 
-import { BASE_PATH } from "./api.js"
+import { BASE_PATH, models } from "./api.js"
 import { DEFAULT_MODE, modeEnv } from "./modes.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
 import { ensureProfile } from "./profiles.js"
@@ -13,8 +13,25 @@ import { ensureProfile } from "./profiles.js"
 
 export const TOKEN_ENV = "KRIYA_DEVICE_TOKEN"
 
+// Kriya's tier aliases in the order a session starts on them. A free plan may
+// allow only budget; starting on a tier the plan lacks fails every request
+// with tier_not_allowed
+export const START_TIERS = ["balanced", "budget", "escalation"]
+
+/** The first of START_TIERS the plan allows; balanced when Kriya can't be asked. */
+export async function startTier(device, list = models) {
+  if (!device) return START_TIERS[0]
+  try {
+    const allowed = new Set((await list(device.url, device.token)).data.map((model) => model.id))
+    return START_TIERS.find((tier) => allowed.has(tier)) ?? START_TIERS[0]
+  } catch {
+    // Kriya answers the first request with the reason if it's refused
+    return START_TIERS[0]
+  }
+}
+
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0]) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -23,6 +40,7 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE) {
     // Telemetry exporters are disabled rows in the kriya bundle; this is DSH's own switch too
     DSH_TELEMETRY_DISABLED: "1",
     KRIYA_CLIENT_VERSION: CLIENT_VERSION,
+    KRIYA_START_TIER: START_TIERS.includes(tier) ? tier : START_TIERS[0],
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -77,13 +95,14 @@ export function explain(line) {
 }
 
 /** Runs DSH in the foreground, passing the terminal through; resolves with its exit code. */
-export function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
+export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
+  const tier = await startTier(device)
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device, process.env, mode),
+      env: launchEnv(device, process.env, mode, tier),
     })
     let explained = null
     if (headless) {

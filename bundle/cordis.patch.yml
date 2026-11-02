@@ -27,10 +27,12 @@
           - id: escalation
             name: Kriya escalation
 
+# The starting tier: balanced, or the best tier the plan allows, chosen by
+# the launcher from GET /models (src/launch.js startTier)
 - id: agent-default-model
   config:
     provider: kriya
-    model: balanced
+    model: !!js process.env.KRIYA_START_TIER ?? 'balanced'
 
 # H11 (HD-13): ACP sessions start on the same route. dsh-acp-app's row names
 # DeepSeek's own provider and model; this replaces its config (only the
@@ -38,7 +40,7 @@
 - id: acp
   config:
     provider: kriya
-    model: balanced
+    model: !!js process.env.KRIYA_START_TIER ?? 'balanced'
 
 # DeepSeek's own account, models and web search need a DeepSeek sign-in or
 # key; the Kriya Harness uses Kriya's gateway instead

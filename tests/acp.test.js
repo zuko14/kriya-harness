@@ -125,10 +125,10 @@ test("kriya acp signed out: a message on stderr, nothing on stdout, exit 1", asy
   assert.match(out.stderr, /run `kriya login` to connect your Kriya account/)
 })
 
-test("the kriya-acp profile is dsh-base, DSH's ACP app and the kriya bundle; ACP sessions start on Kriya's balanced tier", () => {
+test("the kriya-acp profile is dsh-base, DSH's ACP app and the kriya bundle; ACP sessions start on the launcher's start tier (balanced if unset)", () => {
   assert.deepEqual(PROFILES["kriya-acp"], ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-acp-app", "@kriya-ai/harness"])
   const dump = readFileSync(join(ROOT, "expected", "kriya-acp.dump.yml"), "utf8")
-  assert.match(dump, /- id: acp\n {2}name: '@deepseek-ai\/dsh-acp'\n {2}inject:\n {4}- acpAppStartup\n {2}config:\n {4}provider: kriya\n {4}model: balanced\n/)
+  assert.match(dump, /- id: acp\n {2}name: '@deepseek-ai\/dsh-acp'\n {2}inject:\n {4}- acpAppStartup\n {2}config:\n {4}provider: kriya\n {4}model: !!js process\.env\.KRIYA_START_TIER \?\? 'balanced'\n/)
   // DeepSeek's model route is gone (its web-search row stays, disabled, as in every profile)
   assert.doesNotMatch(dump, /\n {4}provider: deepseek-official\n|deepseek-v4-flash/)
   for (const id of ["kriya-approvals", "kriya-mirror", "kriya-tools"]) assert.match(dump, new RegExp(`- id: ${id}\n`))

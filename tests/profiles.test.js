@@ -37,9 +37,9 @@ for (const profile of Object.keys(PROFILES)) {
       assert.ok(rows.has(id), `${id} row present (and so disabled, not just missing)`)
   })
 
-  test(`${profile}: the default model is Kriya's balanced tier through the Kriya route`, () => {
+  test(`${profile}: the default model is the launcher's start tier (balanced if unset) through the Kriya route`, () => {
     const yaml = dumpOf(profile)
-    assert.match(yaml, /- id: agent-default-model\n {2}name: '@deepseek-ai\/dsh-agent-default-model'\n {2}config:\n {4}provider: kriya\n {4}model: balanced\n/)
+    assert.match(yaml, /- id: agent-default-model\n {2}name: '@deepseek-ai\/dsh-agent-default-model'\n {2}config:\n {4}provider: kriya\n {4}model: !!js process\.env\.KRIYA_START_TIER \?\? 'balanced'\n/)
     assert.match(yaml, /baseURL: !!js process\.env\.KRIYA_GATEWAY_URL/)
     assert.match(yaml, /apiKeyEnv: KRIYA_DEVICE_TOKEN/)
     assert.match(yaml, /X-Kriya-Harness: !!js process\.env\.KRIYA_CLIENT_VERSION/)
