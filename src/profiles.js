@@ -31,13 +31,14 @@ function manifest(name, bundles) {
 
 // Packages of this repository a profile resolves by name: the bundle itself
 // and the plugins the bundle mounts (the Web UI brand, approvals from the
-// phone, the session mirror, Kriya skills and memory)
+// phone, the session mirror, Kriya skills and memory, the Skills page)
 export const LINKED = {
   "@kriya-ai/harness": PACKAGE_ROOT,
   "@kriya-ai/harness-brand": join(PACKAGE_ROOT, "plugins", "brand"),
   "@kriya-ai/harness-approvals": join(PACKAGE_ROOT, "plugins", "approvals"),
   "@kriya-ai/harness-mirror": join(PACKAGE_ROOT, "plugins", "mirror"),
   "@kriya-ai/harness-tools": join(PACKAGE_ROOT, "plugins", "kriya-tools"),
+  "@kriya-ai/harness-skills": join(PACKAGE_ROOT, "plugins", "skills"),
 }
 
 function link(dir, name, target) {

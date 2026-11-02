@@ -1,6 +1,19 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, unlinkSync } from "node:fs"
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { createRequire } from "node:module"
-import { join, resolve } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 
 import { PACKAGE_ROOT, kriyaHome } from "./paths.js"
 
@@ -117,4 +130,146 @@ export function unlinkSkill(name) {
     )
   }
   unlinkSync(at)
+}
+
+/* ─────────────────────── the Skills page (plugins/skills) ─────────────────────── */
+
+/** A skill name as DSH accepts it: kebab-case. */
+export const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** The largest SKILL.md the Skills page saves. */
+export const MAX_SKILL_BYTES = 64 * 1024
+
+const named = (name) => {
+  if (typeof name !== "string" || !SKILL_NAME.test(name)) throw new SkillsError("That isn't a skill name.")
+  return name
+}
+
+// linked: a link into ~/.kriya/skills or a project root (editing would change
+// its source, a plugin or a repository); yours: a real folder you own
+function describe(skill) {
+  const folder = skill.locator?.directory ?? dirname(skill.locator?.path ?? "")
+  const linked = isLink(folder)
+  return {
+    name: skill.name,
+    description: skill.description.replace(/\s+/g, " ").trim(),
+    where: SKILL_ROOTS[skill.source] ?? skill.source,
+    source: skill.source,
+    path: skill.locator?.path ?? null,
+    linked,
+    linkTarget: linked ? safeRealpath(folder) : null,
+    // A link in ~/.kriya/skills can become your own copy; elsewhere it can't
+    canCopy: linked && skill.source === "user-dsh",
+    editable: !linked && Boolean(skill.locator?.path),
+    modelInvocable: skill.invocation?.modelInvocable !== false,
+    userInvocable: skill.invocation?.userInvocable !== false,
+  }
+}
+
+function safeRealpath(path) {
+  try {
+    return realpathSync(path)
+  } catch {
+    return null
+  }
+}
+
+/** Everything the Skills page shows for the folder the agent works in. */
+export async function skillsPage(cwd, roots = {}) {
+  const seen = await visibleSkills(cwd, roots)
+  return {
+    skills: seen.skills.map(describe),
+    shadowed: seen.shadowed.map(describe),
+    broken: seen.broken,
+    warnings: seen.warnings,
+    catalogChars: seen.catalogChars,
+    catalogTokens: Math.round(seen.catalogChars / 4),
+    heavy: seen.catalogChars > HEAVY_CATALOG,
+    skillsDir: skillsDir(),
+  }
+}
+
+async function find(cwd, name, roots) {
+  const { skills } = await visibleSkills(cwd, roots)
+  const skill = skills.find((s) => s.name === named(name))
+  if (!skill) throw new SkillsError(`No skill named ${name} here.`)
+  return skill
+}
+
+/** One skill's SKILL.md, found through the catalog (never a path from the caller). */
+export async function readSkillFile(cwd, name, roots = {}) {
+  const skill = await find(cwd, name, roots)
+  return { ...describe(skill), content: readFileSync(skill.locator.path, "utf8") }
+}
+
+const frontmatterName = (content) => /^---\r?\n[\s\S]*?^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m.exec(content)?.[1]
+
+/**
+ * Saves a skill you own. DSH's parser checks the result: if it would drop the
+ * skill (bad frontmatter), the old file goes back and its warning is returned.
+ */
+export async function saveSkillFile(cwd, name, content, roots = {}) {
+  if (typeof content !== "string") throw new SkillsError("Nothing to save.")
+  if (Buffer.byteLength(content) > MAX_SKILL_BYTES) throw new SkillsError("A skill can be at most 64 KB.")
+  const skill = await find(cwd, name, roots)
+  const info = describe(skill)
+  if (!info.editable) {
+    throw new SkillsError(
+      info.canCopy
+        ? "This skill is linked from elsewhere. Make your own copy first, so the source stays as it is."
+        : "This skill is linked from elsewhere; edit it where it comes from."
+    )
+  }
+  if (frontmatterName(content) !== name) {
+    throw new SkillsError(`Keep "name: ${name}" in the frontmatter; to rename, create a new skill.`)
+  }
+  // The file must really live in the skill's own folder (no link out of it)
+  const file = skill.locator.path
+  const real = safeRealpath(file)
+  if (!real || relative(safeRealpath(dirname(file)), real).startsWith("..")) {
+    throw new SkillsError("This skill's file is a link; edit it where it comes from.")
+  }
+  const before = readFileSync(file, "utf8")
+  const temp = `${file}.kriya-saving`
+  writeFileSync(temp, content)
+  renameSync(temp, file)
+  const after = await visibleSkills(cwd, roots)
+  if (!after.skills.some((s) => s.name === name)) {
+    writeFileSync(temp, before)
+    renameSync(temp, file)
+    const why = after.warnings.find((w) => w.includes(file) || w.includes(name)) ?? after.warnings[0]
+    throw new SkillsError(`Not saved: the agent couldn't read it${why ? ` (${why})` : ""}. Your previous version is kept.`)
+  }
+  return readSkillFile(cwd, name, roots)
+}
+
+/** Turns a link in ~/.kriya/skills into your own folder, a copy of its source. */
+export async function copySkill(cwd, name, roots = {}) {
+  const at = join(skillsDir(), named(name))
+  if (!isLink(at)) throw new SkillsError(`${name} isn't a linked skill in ${skillsDir()}.`)
+  const source = safeRealpath(at)
+  if (!source) throw new SkillsError(`${name}'s source folder is gone; unlink it.`)
+  const temp = join(skillsDir(), `.${name}.kriya-copy`)
+  rmSync(temp, { recursive: true, force: true })
+  cpSync(source, temp, { recursive: true, dereference: true })
+  unlinkSync(at)
+  renameSync(temp, at)
+  return readSkillFile(cwd, name, roots)
+}
+
+/** A new skill of yours in ~/.kriya/skills, with a starting outline. */
+export async function createSkill(cwd, name, description, roots = {}) {
+  named(name)
+  const text = typeof description === "string" ? description.replace(/\s+/g, " ").trim() : ""
+  if (text.length < 10) throw new SkillsError("Say when the agent should use it (at least 10 characters).")
+  if (text.length > 1000) throw new SkillsError("Keep the description under 1,000 characters.")
+  const { skills } = await visibleSkills(cwd, roots)
+  if (skills.some((s) => s.name === name)) throw new SkillsError(`There's already a skill named ${name}.`)
+  const folder = join(skillsDir(), name)
+  if (existsSync(folder) || isLink(folder)) throw new SkillsError(`${folder} already exists.`)
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(
+    join(folder, "SKILL.md"),
+    `---\nname: ${name}\ndescription: ${JSON.stringify(text)}\n---\n\n# ${name}\n\nWrite how to do this job well: the steps, what to check, and what to avoid.\n`
+  )
+  return readSkillFile(cwd, name, roots)
 }
