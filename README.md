@@ -25,6 +25,7 @@ node bin/kriya.js login --url https://<your Kriya address>
 | `kriya acp` | The same agent for editors that speak ACP v1 (Agent Client Protocol): your editor starts it and talks over stdin/stdout |
 | `kriya handoff ["<note>"]` | Hands this repository's uncommitted work (HEAD must be on GitHub) to your Kriya agent in a cloud workspace; prints the thread's link |
 | `kriya pull [<workspace id>]` | Brings a workspace's latest changes back on a new branch `kriya/pull-<id>` at its base commit (default: your last handoff) |
+| `kriya serve [folder]` | Lets your Kriya agents' cloud tasks work on this machine, in new subfolders of `<folder>` (default: this folder), while it runs; see SAFETY.md |
 | `kriya doctor` | Checks Node, the profiles, the sign-in and the gateway |
 | `kriya logout` | Signs out here and revokes the device in Kriya |
 | `kriya --version` | Versions of Kriya Harness and DeepSeek Harness |
@@ -70,6 +71,11 @@ plan decides which are allowed and its monthly limit.
   cloud workspace starts from GitHub at HEAD and applies it. A pull checks
   the sha256, needs a clean tree and changes nothing if the patch doesn't
   apply.
+- `src/world.js` is `kriya serve` (H10, HD-12): one outbound WebSocket to
+  kriya-relay, whose frames go to track C's own runner
+  (`src/runner.bundle.js`, generated from the Kriya repository's
+  `runner/index.ts`; the rebuild command is its first line), one per
+  workspace, each in its own fresh subfolder.
 - `kriya acp` is DeepSeek Harness's ACP app (`dsh-acp-app`) with the same
   Kriya bundle: sessions start on Kriya's `balanced` tier (the editor's
   model picker lists Kriya's three tiers only), with the same tools,
