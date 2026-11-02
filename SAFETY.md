@@ -17,19 +17,28 @@ notice the first time it runs.
 
 ## What it can do on this machine
 
-The agent reads and changes files and runs commands under DeepSeek Harness's
-permission settings. Every Kriya profile (`kriya`, `kriya run`, `kriya acp`)
-keeps DeepSeek Harness's defaults:
+The agent reads and changes files and runs commands under the mode you
+start it in (`kriya --mode <mode>`, `kriya run --mode <mode>`; in the Web
+UI, the Permissions control or `/permission`). Every mode is one of
+DeepSeek Harness's sandbox modes plus one approval policy, set by Kriya's
+bundle; the shell's own variables can't change it.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| Sandbox | `workspace-write` | Commands run in DeepSeek Harness's sandbox (macOS and Linux) and may write only inside the folder you opened |
-| Approvals | `ask` | Anything outside that needs your answer before it runs |
+| Mode | Sandbox | Approvals | What it means |
+| --- | --- | --- | --- |
+| `ask` (default) | this folder | ask | Writes inside the folder you opened; anything beyond it needs your answer first |
+| `auto` | this folder | never | Works inside the folder without asking; anything that would need your answer is refused, never allowed |
+| `read` | read-only | never | Reads and answers; changes no file |
+| `plan` (`kriya run` only) | read-only | never | Writes a step-by-step plan and changes no file. In the Web UI, type `/plan` |
+| `full` | none | never | Runs commands and changes files anywhere you can, without asking. Kriya prints a warning each time |
 
-The presets are `read-only`, `workspace-write` and `danger-full-access`. The
-last turns approvals off (`never`). DeepSeek Harness reads
-`DSH_PERMISSION_MODE` from your environment; **don't set it to
-`danger-full-access`** unless the folder is disposable.
+What the sandbox covers, so you can choose well:
+
+- It governs **file changes**. Network access and which programs run aren't
+  limited by it, in any mode.
+- "This folder" also includes the platform's temporary areas, which
+  DeepSeek Harness leaves writable on purpose.
+- `DSH_PERMISSION_MODE` from your environment is no longer read; the mode
+  comes only from `--mode` (default `ask`).
 
 Read what it asks to run before you approve it. You can answer in the
 terminal, the Web UI or your editor, or in Kriya on your phone: the first

@@ -8,6 +8,7 @@ import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { login } from "../src/login.js"
+import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob } from "../src/modes.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
 import { deleteDevice, ensureHome, kriyaUrl, readDevice } from "../src/store.js"
 
@@ -18,9 +19,10 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run "<job>"     run one job and print the answer (--json for events)
+  kriya run [--mode <mode>] "<job>"
+                        run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
                         (your editor starts it; kriya acp --help for details)
   kriya handoff ["<note>"]
@@ -35,6 +37,13 @@ Usage:
   kriya doctor          check this machine, the sign-in and the gateway
   kriya logout          sign this device out
   kriya --version
+
+Modes (--mode; default ask):
+${Object.entries(MODES)
+  .map(([name, mode]) => `  ${name.padEnd(6)}${mode.what}`)
+  .join("\n")}
+  In the app, switch with the Permissions control or /permission, and type
+  /plan to plan first. plan as a --mode is for kriya run.
 
 Run it in a folder you can afford to change; see SAFETY.md.`
 
@@ -172,8 +181,13 @@ async function main(argv) {
       return 0
     }
     case "run": {
+      const mode = parseMode(option(args, "--mode"))
       const device = signedIn()
-      return runDsh("kriya-run", args, device)
+      if (mode === "full") process.stderr.write(`${FULL_ACCESS_WARNING}\n`)
+      // The job is the first argument that isn't a flag; plan asks for a plan
+      const job = args.findIndex((arg) => !arg.startsWith("-"))
+      if (mode === "plan" && job !== -1) args[job] = planJob(args[job])
+      return runDsh("kriya-run", args, device, mode)
     }
     case "acp": {
       // Stdout carries only ACP frames (newline-delimited JSON-RPC), so
@@ -196,11 +210,18 @@ async function main(argv) {
       return runDsh("kriya-acp", [], device)
     }
     case undefined:
+    case "--mode":
     case "--no-open":
     case "--port": {
       // Only these Web UI flags pass through; never --host, so the UI stays on 127.0.0.1
       const flags = command === undefined ? [] : [command, ...args]
       const port = option(flags, "--port")
+      const mode = option(flags, "--mode")
+      if (mode === "plan") {
+        say("In the app, type /plan to plan first. --mode plan is for kriya run.")
+        return 1
+      }
+      const chosen = parseMode(mode, APP_MODES)
       if (port !== undefined && !/^\d{2,5}$/.test(port)) {
         say("--port takes a number, e.g. --port 8080.")
         return 1
@@ -210,7 +231,8 @@ async function main(argv) {
         return 1
       }
       const device = signedIn()
-      return runDsh("kriya", [...flags, ...(port ? ["--port", port] : [])], device)
+      if (chosen === "full") process.stderr.write(`${FULL_ACCESS_WARNING}\n`)
+      return runDsh("kriya", [...flags, ...(port ? ["--port", port] : [])], device, chosen)
     }
     default:
       say(`Unknown command ${command}.\n\n${HELP}`)
@@ -221,7 +243,11 @@ async function main(argv) {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error) => {
-    const known = error instanceof KriyaError || error instanceof HandoffError || error instanceof ServeError
+    const known =
+      error instanceof KriyaError ||
+      error instanceof HandoffError ||
+      error instanceof ServeError ||
+      error instanceof ModeError
     process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }
