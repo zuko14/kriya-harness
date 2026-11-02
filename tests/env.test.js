@@ -3,7 +3,7 @@ import { createRequire } from "node:module"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { launchEnv, TOKEN_ENV } from "../src/launch.js"
+import { htmlFilter, launchEnv, startTier, TOKEN_ENV } from "../src/launch.js"
 import { freshHome, ROOT } from "./helpers.js"
 
 // The device token reaches DSH only as a launch variable, and DSH removes
@@ -41,6 +41,44 @@ test("launch variables: the sign-in's token and gateway only, telemetry off", ()
   const signedOut = launchEnv(null, { KRIYA_DEVICE_TOKEN: "from-shell", KRIYA_GATEWAY_URL: "https://evil.example" })
   assert.equal(signedOut.KRIYA_DEVICE_TOKEN, undefined)
   assert.equal(signedOut.KRIYA_GATEWAY_URL, undefined)
+})
+
+test("the session starts on balanced, or the best tier the plan allows", async () => {
+  const device = { url: "https://k.example", token: "t1" }
+  const plan = (...ids) => async () => ({ data: ids.map((id) => ({ id })) })
+  assert.equal(await startTier(device, plan("budget")), "budget")
+  assert.equal(await startTier(device, plan("budget", "balanced")), "balanced")
+  assert.equal(await startTier(device, plan("escalation")), "escalation")
+  assert.equal(await startTier(device, plan()), "balanced")
+  assert.equal(await startTier(device, async () => { throw new Error("offline") }), "balanced")
+  assert.equal(await startTier(null), "balanced")
+  // Never from the shell, never an unknown alias
+  assert.equal(launchEnv(device, { KRIYA_START_TIER: "escalation" }).KRIYA_START_TIER, "balanced")
+  assert.equal(launchEnv(device, {}, undefined, "budget").KRIYA_START_TIER, "budget")
+  assert.equal(launchEnv(device, {}, undefined, "gpt-5").KRIYA_START_TIER, "balanced")
+})
+
+test("kriya run drops a host's HTML error page, in any chunking, and keeps every other line", () => {
+  const page = 'dsh: SERVER: 503 <!DOCTYPE html>\n<html lang="en">\n<body>Down</body>\n</html>\n'
+  const text = "dsh: reasoning: fixing\n" + page + "after the page\nlast"
+  for (const size of [1, 7, text.length]) {
+    let out = ""
+    const filter = htmlFilter((t) => (out += t))
+    for (let i = 0; i < text.length; i += size) filter.push(text.slice(i, i + size))
+    filter.end()
+    assert.equal(out, "dsh: reasoning: fixing\nafter the page\nlast", `chunks of ${size}`)
+    assert.match(filter.explained, /HTTP 503/)
+  }
+  // A one-line page, and Kriya's own JSON refusals pass through untouched
+  let out = ""
+  const filter = htmlFilter((t) => (out += t))
+  filter.push('dsh: SERVER: 502 <html><body>x</body></html>\nPI_AI_ERROR: 402 "cap_reached"\n')
+  filter.end()
+  assert.equal(out, 'PI_AI_ERROR: 402 "cap_reached"\n')
+  assert.match(filter.explained, /HTTP 502/)
+  const quiet = htmlFilter(() => {})
+  quiet.push("dsh: ok\n")
+  assert.equal(quiet.explained, null)
 })
 
 test("every refusal code in the contract has a plain sentence for kriya run", async () => {

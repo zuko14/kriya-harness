@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
 
-import { BASE_PATH } from "./api.js"
+import { BASE_PATH, models } from "./api.js"
 import { DEFAULT_MODE, modeEnv } from "./modes.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
 import { ensureProfile } from "./profiles.js"
@@ -13,8 +13,25 @@ import { ensureProfile } from "./profiles.js"
 
 export const TOKEN_ENV = "KRIYA_DEVICE_TOKEN"
 
+// Kriya's tier aliases in the order a session starts on them. A free plan may
+// allow only budget; starting on a tier the plan lacks fails every request
+// with tier_not_allowed
+export const START_TIERS = ["balanced", "budget", "escalation"]
+
+/** The first of START_TIERS the plan allows; balanced when Kriya can't be asked. */
+export async function startTier(device, list = models) {
+  if (!device) return START_TIERS[0]
+  try {
+    const allowed = new Set((await list(device.url, device.token)).data.map((model) => model.id))
+    return START_TIERS.find((tier) => allowed.has(tier)) ?? START_TIERS[0]
+  } catch {
+    // Kriya answers the first request with the reason if it's refused
+    return START_TIERS[0]
+  }
+}
+
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0]) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -23,6 +40,7 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE) {
     // Telemetry exporters are disabled rows in the kriya bundle; this is DSH's own switch too
     DSH_TELEMETRY_DISABLED: "1",
     KRIYA_CLIENT_VERSION: CLIENT_VERSION,
+    KRIYA_START_TIER: START_TIERS.includes(tier) ? tier : START_TIERS[0],
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -76,22 +94,66 @@ export function explain(line) {
   return code && Object.hasOwn(REFUSALS, code) ? REFUSALS[code] : null
 }
 
+const HTML_ERROR = /^dsh: \w+: (\d{3}) <(!DOCTYPE|html)/i
+
+/**
+ * Passes DSH's stderr through line by line, except a web page as an error
+ * body: when Kriya's host answers with its own error page (a deploy, an
+ * outage), DSH prints the whole HTML. That page is dropped and `explained`
+ * says what happened instead.
+ * @param {(text: string) => void} write
+ */
+export function htmlFilter(write) {
+  let partial = ""
+  let inPage = false
+  const state = {
+    /** @type {string | null} */
+    explained: null,
+    push(text) {
+      const lines = (partial + text).split("\n")
+      partial = lines.pop() ?? ""
+      for (const line of lines) {
+        if (inPage) {
+          if (/<\/html>/i.test(line)) inPage = false
+          continue
+        }
+        const page = HTML_ERROR.exec(line)
+        if (page) {
+          inPage = !/<\/html>/i.test(line)
+          state.explained = `Kriya didn't answer (HTTP ${page[1]}); it may be restarting. Changes made so far stay in this folder; try again in a minute.`
+          continue
+        }
+        write(`${line}\n`)
+      }
+    },
+    end() {
+      if (partial && !inPage) write(partial)
+      partial = ""
+    },
+  }
+  return state
+}
+
 /** Runs DSH in the foreground, passing the terminal through; resolves with its exit code. */
-export function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
+export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
+  const tier = await startTier(device)
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device, process.env, mode),
+      env: launchEnv(device, process.env, mode, tier),
     })
     let explained = null
+    const filter = htmlFilter((text) => process.stderr.write(text))
     if (headless) {
       let buffered = ""
+      // Whole characters per chunk, so a split one never reaches the filter
+      child.stderr.setEncoding("utf8")
       child.stderr.on("data", (chunk) => {
-        process.stderr.write(chunk)
+        filter.push(chunk)
         buffered = (buffered + chunk).slice(-4096)
-        explained ??= explain(buffered)
+        explained ??= explain(buffered) ?? filter.explained
       })
     }
     // Ctrl-C reaches the child directly (same process group): forwarding it
@@ -100,7 +162,10 @@ export function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
     process.on("SIGINT", () => {})
     for (const signal of ["SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal))
     child.on("error", fail)
-    child.on("exit", (code, signal) => {
+    // close, not exit: stderr may still hold the last lines when DSH exits
+    child.on("close", (code, signal) => {
+      filter.end()
+      explained ??= filter.explained
       if (explained) process.stderr.write(`kriya: ${explained}\n`)
       done(code ?? (signal ? 1 : 0))
     })

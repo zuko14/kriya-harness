@@ -56,7 +56,7 @@
   name: '@deepseek-ai/dsh-agent-default-model'
   config:
     provider: kriya
-    model: balanced
+    model: !!js process.env.KRIYA_START_TIER ?? 'balanced'
 # == @deepseek-ai/dsh-base
 - id: jobs
   name: '@deepseek-ai/dsh-jobs-local'
