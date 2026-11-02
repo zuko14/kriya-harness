@@ -240,12 +240,25 @@ export async function serve({ device, folder, say = () => {}, signal, WebSocketI
       if (signal?.aborted) break
       if (outcome.code === 4000) throw new ServeError("Another kriya serve took over for this device.")
       if (outcome.code === 4001) throw new ServeError("This device was signed out; run kriya login.")
-      // Refused at the door: find out why (signed out, switched off) before retrying
-      if (!outcome.opened) await where()
-      else say("Lost the connection to Kriya; reconnecting…")
+      // Refused at the door: find out why (signed out, switched off) before
+      // retrying. Kriya being unreachable is no answer: try again later
+      if (!outcome.opened) {
+        try {
+          await where()
+        } catch (error) {
+          if (error instanceof ServeError) throw error
+        }
+      } else say("Lost the connection to Kriya; reconnecting…")
       await new Promise((resume) => {
-        const timer = setTimeout(resume, delay)
-        signal?.addEventListener("abort", () => (clearTimeout(timer), resume()), { once: true })
+        const wake = () => {
+          clearTimeout(timer)
+          resume()
+        }
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", wake)
+          resume()
+        }, delay)
+        signal?.addEventListener("abort", wake, { once: true })
       })
       delay = Math.min(delay * 2, 30_000)
     }

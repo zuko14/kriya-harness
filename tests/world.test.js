@@ -170,8 +170,8 @@ before(async () => {
 })
 after(() => fake.close())
 
-const until = async (check) => {
-  for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 10))
+const until = async (check, ms = 2000) => {
+  for (let i = 0; i < ms / 10 && !check(); i++) await new Promise((r) => setTimeout(r, 10))
   assert.ok(check())
 }
 
@@ -217,6 +217,36 @@ test("serve: a refused handshake re-checks the sign-in; switched off or signed o
   // Closed before it opened: the relay refused the token
   FakeSocket.made[0].close(1006)
   await assert.rejects(serving, /signed out; run kriya login/)
+  rmSync(folder, { recursive: true, force: true })
+})
+
+test("serve: an unreachable Kriya during a reconnect is retried, not fatal", async () => {
+  fake.state.relayUrl = "https://relay.kriya.example"
+  const device = { url: fake.url, token: fake.issueToken() }
+  const folder = temp()
+  FakeSocket.made = []
+  let warnings = 0
+  const onWarning = (warning) => warning.name === "MaxListenersExceededWarning" && warnings++
+  process.on("warning", onWarning)
+  const stop = new AbortController()
+  const serving = serve({ device, folder, signal: stop.signal, WebSocketImpl: FakeSocket, backoffMs: 1 })
+  await until(() => FakeSocket.made.length === 1)
+  // Kriya can't be reached: refused handshakes keep being retried (12: past
+  // Node's 10-listener leak warning if each wait left one behind)
+  const reachable = device.url
+  device.url = "http://127.0.0.1:9"
+  for (let i = 0; i < 12; i++) {
+    await until(() => FakeSocket.made.length === i + 1, 5000)
+    FakeSocket.made[i].close(1006)
+  }
+  await until(() => FakeSocket.made.length === 13, 5000)
+  // Back, and this device signed out: now it stops
+  device.url = reachable
+  fake.state.revoked.add(device.token)
+  FakeSocket.made[12].close(1006)
+  await assert.rejects(serving, /signed out; run kriya login/)
+  process.off("warning", onWarning)
+  assert.equal(warnings, 0)
   rmSync(folder, { recursive: true, force: true })
 })
 
