@@ -52,6 +52,13 @@
   disabled: true
 - id: web-deepseek-api
   disabled: true
+# The session-log field rides only official DeepSeek API requests (above,
+# disabled); off outright, with its "Help improve DeepSeek models" switch in
+# the Web UI's Settings → General
+- id: session-log-deepseek
+  disabled: true
+- id: ui-settings-session-log
+  disabled: true
 # The Web UI's DeepSeek account page and its controller (which would wait
 # forever for the disabled account service); no-ops in the headless profile
 - id: account-controller

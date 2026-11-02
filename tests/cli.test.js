@@ -102,3 +102,15 @@ test("unknown commands and --version", async () => {
   assert.equal(unknown.code, 1)
   assert.match(unknown.stdout, /Unknown command fly/)
 })
+
+// HD-02: the attribution lives in --version, the README and the beta notice;
+// help and the doctor's report speak only of Kriya
+test("help and doctor name Kriya only", async () => {
+  freshHome()
+  const help = await kriya(["--help"])
+  assert.match(help.stdout, /^Kriya Harness \(beta\)\n/)
+  assert.doesNotMatch(help.stdout, /deepseek|\bdsh\b/i)
+  const doctor = await kriya(["doctor"])
+  assert.match(doctor.stdout, /ok {4}Kriya Harness 0\.1\.0\n/)
+  assert.doesNotMatch(doctor.stdout, /deepseek|\bdsh\b/i)
+})

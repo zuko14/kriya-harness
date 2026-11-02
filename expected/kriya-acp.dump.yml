@@ -20,8 +20,11 @@
   name: '@deepseek-ai/dsh-deepseek-llm-api-extensions'
 - id: session
   name: '@deepseek-ai/dsh-session'
+# == @deepseek-ai/dsh-base, patched by @kriya-ai/harness
 - id: session-log-deepseek
   name: '@deepseek-ai/dsh-session-log-deepseek'
+  disabled: true
+# == @deepseek-ai/dsh-base
 - id: typert
   name: '@deepseek-ai/dsh-typert-registry'
 - id: typert-loader

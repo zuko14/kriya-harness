@@ -14,7 +14,7 @@ import { deleteDevice, ensureHome, kriyaUrl, readDevice } from "../src/store.js"
 // `kriya`: the Kriya Harness command (DSH_DISTRIBUTION §2). It signs in,
 // picks a Kriya profile and hands over to DSH's own launcher.
 
-const HELP = `Kriya Harness (beta), built on DeepSeek Harness
+const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
