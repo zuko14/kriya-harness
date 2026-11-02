@@ -285,6 +285,13 @@ export async function startFakeKriya(script = {}) {
     }
     if (req.method === "POST" && path === "/chat/completions") {
       if (script.chatError) return fail(script.chatError.status, script.chatError.error, script.chatError.message)
+      // A hosting proxy's own error page during a deploy, not Kriya's JSON
+      if (script.chatHtml) {
+        record.status = script.chatHtml
+        return res
+          .writeHead(script.chatHtml, { "content-type": "text/html" })
+          .end('<!DOCTYPE html>\n<html lang="en">\n<head><title>Bad Gateway</title></head>\n<body>\n<footer><svg viewBox="0 0 10 10"><path d="M0 0h10v10H0z"/></svg></footer>\n</body>\n</html>\n')
+      }
       if (!["budget", "balanced", "escalation"].includes(body?.model))
         return fail(400, "tier_not_allowed", "That model isn't on your plan.")
       record.status = 200

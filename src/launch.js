@@ -94,6 +94,46 @@ export function explain(line) {
   return code && Object.hasOwn(REFUSALS, code) ? REFUSALS[code] : null
 }
 
+const HTML_ERROR = /^dsh: \w+: (\d{3}) <(!DOCTYPE|html)/i
+
+/**
+ * Passes DSH's stderr through line by line, except a web page as an error
+ * body: when Kriya's host answers with its own error page (a deploy, an
+ * outage), DSH prints the whole HTML. That page is dropped and `explained`
+ * says what happened instead.
+ * @param {(text: string) => void} write
+ */
+export function htmlFilter(write) {
+  let partial = ""
+  let inPage = false
+  const state = {
+    /** @type {string | null} */
+    explained: null,
+    push(text) {
+      const lines = (partial + text).split("\n")
+      partial = lines.pop() ?? ""
+      for (const line of lines) {
+        if (inPage) {
+          if (/<\/html>/i.test(line)) inPage = false
+          continue
+        }
+        const page = HTML_ERROR.exec(line)
+        if (page) {
+          inPage = !/<\/html>/i.test(line)
+          state.explained = `Kriya didn't answer (HTTP ${page[1]}); it may be restarting. Changes made so far stay in this folder; try again in a minute.`
+          continue
+        }
+        write(`${line}\n`)
+      }
+    },
+    end() {
+      if (partial && !inPage) write(partial)
+      partial = ""
+    },
+  }
+  return state
+}
+
 /** Runs DSH in the foreground, passing the terminal through; resolves with its exit code. */
 export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
@@ -105,12 +145,15 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       env: launchEnv(device, process.env, mode, tier),
     })
     let explained = null
+    const filter = htmlFilter((text) => process.stderr.write(text))
     if (headless) {
       let buffered = ""
+      // Whole characters per chunk, so a split one never reaches the filter
+      child.stderr.setEncoding("utf8")
       child.stderr.on("data", (chunk) => {
-        process.stderr.write(chunk)
+        filter.push(chunk)
         buffered = (buffered + chunk).slice(-4096)
-        explained ??= explain(buffered)
+        explained ??= explain(buffered) ?? filter.explained
       })
     }
     // Ctrl-C reaches the child directly (same process group): forwarding it
@@ -119,7 +162,10 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
     process.on("SIGINT", () => {})
     for (const signal of ["SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal))
     child.on("error", fail)
-    child.on("exit", (code, signal) => {
+    // close, not exit: stderr may still hold the last lines when DSH exits
+    child.on("close", (code, signal) => {
+      filter.end()
+      explained ??= filter.explained
       if (explained) process.stderr.write(`kriya: ${explained}\n`)
       done(code ?? (signal ? 1 : 0))
     })

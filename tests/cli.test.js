@@ -93,6 +93,21 @@ test("a gateway refusal ends the run with exit 1 and a plain sentence", { timeou
   }
 })
 
+test("a host error page during a deploy ends the run with one plain sentence, not HTML", { timeout: 300_000 }, async () => {
+  freshHome()
+  const fake = await startFakeKriya({ approveAfter: 0, chatHtml: 502 })
+  try {
+    assert.equal((await kriya(["login", "--url", fake.url, "--no-browser"])).code, 0)
+    const workspace = mkdtempSync(join(tmpdir(), "kriya-ws-"))
+    const run = await kriya(["run", "Say hello"], { cwd: workspace })
+    assert.equal(run.code, 1)
+    assert.doesNotMatch(run.stderr, /<html|<!DOCTYPE|<svg/i)
+    assert.match(run.stderr, /kriya: Kriya didn't answer \(HTTP 502\); it may be restarting\./)
+  } finally {
+    await fake.close()
+  }
+})
+
 test("unknown commands and --version", async () => {
   freshHome()
   const version = await kriya(["--version"])
