@@ -1,6 +1,6 @@
 import { models, me } from "./api.js"
 import { dumpConfig } from "./launch.js"
-import { CLIENT_VERSION, DSH_VERSION } from "./paths.js"
+import { CLIENT_VERSION } from "./paths.js"
 import { PROFILES } from "./profiles.js"
 import { readDevice } from "./store.js"
 
@@ -21,9 +21,11 @@ export const MUST_BE_DISABLED = [
   "llm-deepseek-account",
   "web-search-deepseek",
   "web-deepseek-api",
+  "session-log-deepseek",
   "otel",
   "session-telemetry-otel",
   // Web UI profile only
+  "ui-settings-session-log",
   "account-controller",
   "ui-settings-account",
   "desktop-product-telemetry",
@@ -60,7 +62,7 @@ export async function doctor(io = {}) {
     `Node ${process.versions.node} (needs ${MIN_NODE.join(".")} or later)`,
     "install Node 24.9 or later from nodejs.org"
   )
-  say(`ok    Kriya Harness ${CLIENT_VERSION}, built on DeepSeek Harness ${DSH_VERSION}`)
+  say(`ok    Kriya Harness ${CLIENT_VERSION}`)
 
   for (const profile of Object.keys(PROFILES)) {
     try {

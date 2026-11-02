@@ -46,10 +46,13 @@ test("launch variables: the sign-in's token and gateway only, telemetry off", ()
 test("every refusal code in the contract has a plain sentence for kriya run", async () => {
   const { REFUSALS, explain } = await import("../src/launch.js")
   const { contract } = await import("./helpers.js")
-  const codes = contract.error.properties.error.enum.filter(
-    (code) => !["not_found", "bad_request", "pending", "denied", "expired", "server_error"].includes(code)
-  )
-  for (const code of codes) assert.ok(REFUSALS[code], code)
+  // The device sign-in's own codes; kriya login words those itself
+  const codes = contract.error.properties.error.enum.filter((code) => !["pending", "denied", "expired"].includes(code))
+  for (const code of codes) {
+    assert.ok(REFUSALS[code], code)
+    // Kriya's words only: no upstream name, status line or raw code
+    assert.doesNotMatch(REFUSALS[code], /deepseek|\bdsh\b|PI_AI|HTTP \d|[a-z]+_[a-z]+/i, code)
+  }
   assert.equal(explain('dsh: PI_AI_ERROR: 429 "rate_limited"'), REFUSALS.rate_limited)
   assert.equal(explain('dsh: PI_AI_ERROR: 500 "something_else"'), null)
   assert.equal(explain("no error here"), null)

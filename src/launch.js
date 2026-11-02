@@ -51,6 +51,9 @@ export const REFUSALS = {
   unauthorized: "This device is signed out. Run kriya login.",
   suspended: "This Kriya account is paused.",
   upgrade: "Update Kriya Harness (npm install -g @kriya-ai/harness).",
+  not_found: "Kriya Harness isn't available on this Kriya address; check it with kriya doctor.",
+  bad_request: "Kriya couldn't read that request; update Kriya Harness and try again.",
+  server_error: "Something went wrong in Kriya; try again shortly.",
   // H6: the mirror's refusals (the plugin handles them; listed for completeness)
   no_agent: "Choose the agent this computer works as in Kriya, Account → Devices.",
   mirror_summary_only: "This computer mirrors summaries only.",
