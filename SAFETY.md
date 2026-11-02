@@ -63,6 +63,15 @@ unreachable, the request expired), the action is refused.
   your Kriya account. Make sure `.env` files and other secrets are ignored
   by git before you hand off. `kriya pull` applies a workspace's changes on
   a new branch `kriya/pull-<id>` and never touches your own branch.
+- **`kriya serve [folder]`** lets your Kriya agents' cloud tasks run
+  commands and change files **on this machine, as you, with your network**:
+  there is no sandbox, firewall or registry-only network here. Each task
+  works in a new subfolder `<folder>/<workspace id>-<generation>` (never in
+  files already there), and Kriya deletes that subfolder when it closes the
+  workspace; a command can still reach anything your account can. It runs
+  only while `kriya serve` does (Ctrl-C stops it) and only when your Kriya
+  has the device world turned on. Signing the device out in Kriya (Account →
+  Devices) disconnects it within minutes.
 
 ## What Kriya Harness keeps on this machine
 

@@ -44,6 +44,8 @@ export async function startFakeKriya(script = {}) {
     handoffError: null,
     /** H8: serve checkpoints with a wrong X-Kriya-Sha256 */
     corruptCheckpoint: false,
+    /** H10: the device world's relay address; null answers 404 (switched off) */
+    relayUrl: null,
   }
   const settle = (id, status) => {
     const approval = state.approvals.get(id)
@@ -142,6 +144,10 @@ export async function startFakeKriya(script = {}) {
         agent: { id: "agent-1", name: "Arjun" },
         minClientVersion: script.minVersion ?? "0.0.0",
       })
+    if (req.method === "GET" && path === "/world")
+      return state.relayUrl
+        ? send(200, { deviceId: "11111111-2222-4333-8444-555555555555", relayUrl: state.relayUrl })
+        : fail(404, "not_found", "Not found.")
     if (req.method === "DELETE" && path === "/device") {
       state.revoked.add(auth)
       return send(204)

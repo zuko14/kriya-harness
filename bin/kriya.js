@@ -6,6 +6,7 @@ import { handoff, HandoffError, pull } from "../plugins/kriya-handoff/index.js"
 import { KriyaError, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
+import { serve, servedFolder, ServeError } from "../src/world.js"
 import { login } from "../src/login.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
 import { deleteDevice, ensureHome, kriyaUrl, readDevice } from "../src/store.js"
@@ -28,6 +29,9 @@ Usage:
   kriya pull [<workspace id>]
                         bring a workspace's changes back on a new branch
                         kriya/pull-<id> (default: your last handoff)
+  kriya serve [folder]  let your Kriya agents work on this machine: cloud tasks
+                        run commands and change files in new subfolders of
+                        <folder> (default: this folder) while it runs
   kriya doctor          check this machine, the sign-in and the gateway
   kriya logout          sign this device out
   kriya --version
@@ -46,6 +50,13 @@ const NOTICE = `Kriya Harness is a beta built on DeepSeek Harness, a developer p
 hasn't had a security audit. The agent can read and change files and run
 commands on this machine, starting in the folder you open it in. Use a
 folder you can afford to lose, keep backups, and read SAFETY.md.
+`
+
+const SERVE_NOTICE = `kriya serve lets your Kriya agents' cloud tasks run commands and change
+files on this machine, as you, with your network: there is no sandbox. They
+work only in new subfolders of the folder you serve, but a command can reach
+anything you can. Serve a folder on a machine you can afford to change, and
+stop with Ctrl-C when you're done.
 `
 
 const say = (line) => process.stdout.write(`${line}\n`)
@@ -145,6 +156,21 @@ async function main(argv) {
       say("Review them with git diff HEAD, then commit or merge as you like.")
       return 0
     }
+    case "serve": {
+      if (args.length > 1 || args[0]?.startsWith("-")) {
+        say("Usage: kriya serve [folder]")
+        return 1
+      }
+      const device = signedIn()
+      const folder = await servedFolder(args[0] ?? process.cwd())
+      process.stderr.write(`${SERVE_NOTICE}\n`)
+      const stop = new AbortController()
+      process.once("SIGINT", () => stop.abort())
+      process.once("SIGTERM", () => stop.abort())
+      await serve({ device, folder, say, signal: stop.signal })
+      say("Stopped serving.")
+      return 0
+    }
     case "run": {
       const device = signedIn()
       return runDsh("kriya-run", args, device)
@@ -195,7 +221,7 @@ async function main(argv) {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error) => {
-    const known = error instanceof KriyaError || error instanceof HandoffError
+    const known = error instanceof KriyaError || error instanceof HandoffError || error instanceof ServeError
     process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }
