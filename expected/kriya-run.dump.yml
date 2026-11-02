@@ -163,11 +163,16 @@
   name: '@deepseek-ai/dsh-subprocess-local'
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'
+# == @deepseek-ai/dsh-base, patched by @kriya-ai/harness
 - id: sandbox-policy
   name: '@deepseek-ai/dsh-sandbox-policy'
   config:
-    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    mode: !!js >-
+      ['read-only', 'workspace-write',
+      'danger-full-access'].includes(process.env.KRIYA_SANDBOX) ?
+      process.env.KRIYA_SANDBOX : 'workspace-write'
     workspaceRoot: !!js process.cwd()
+# == @deepseek-ai/dsh-base
 - id: bash-sandbox
   name: '@deepseek-ai/dsh-bash-sandbox'
   disabled: !!js process.platform === 'win32'
@@ -176,25 +181,46 @@
 - id: pwsh-sandbox
   name: '@deepseek-ai/dsh-pwsh-sandbox'
   disabled: !!js process.platform !== 'win32'
+# == @deepseek-ai/dsh-base, patched by @kriya-ai/harness
 - id: approval
   name: '@deepseek-ai/dsh-user-approval'
   config:
-    policy: !!js >-
-      (process.env.DSH_PERMISSION_MODE ?? 'workspace-write') ===
-      'danger-full-access' ? 'never' : 'ask'
+    policy: !!js 'process.env.KRIYA_APPROVAL === ''never'' ? ''never'' : ''ask'''
 - id: permission
   name: '@deepseek-ai/dsh-permission-presets'
   config:
     presets:
-      read-only:
-        sandbox: read-only
-        approval: ask
-      workspace-write:
+      ask:
         sandbox: workspace-write
         approval: ask
-      danger-full-access:
+        name: Ask
+        description: >-
+          Works in this folder and asks before anything beyond it, here or in
+          Kriya on your phone.
+      folder-auto:
+        sandbox: workspace-write
+        approval: never
+        name: Auto
+        description: >-
+          Works in this folder without asking; anything that would need your OK
+          is refused instead.
+      read-only:
+        sandbox: read-only
+        approval: never
+        name: Read only
+        description: Reads and answers; changes no file.
+      full-access:
         sandbox: danger-full-access
         approval: never
+        name: Full access
+        description: >-
+          No sandbox and no questions. Only on a machine you can afford to
+          change.
+    defaultPreset: !!js >-
+      ['ask', 'folder-auto', 'read-only',
+      'full-access'].includes(process.env.KRIYA_PRESET) ?
+      process.env.KRIYA_PRESET : 'ask'
+# == @deepseek-ai/dsh-base
 - id: shell-env
   name: '@deepseek-ai/dsh-shell-env'
 - id: tool-bash

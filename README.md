@@ -20,8 +20,8 @@ node bin/kriya.js login --url https://<your Kriya address>
 | Command | What it does |
 | --- | --- |
 | `kriya login [--url …] [--no-browser]` | Signs this device in: shows a code, opens Kriya's connect page, waits for you to approve it there |
-| `kriya [--no-open] [--port <n>]` | DeepSeek Harness's Web UI on `127.0.0.1`, with Kriya's models |
-| `kriya run "<job>" [--json]` | One job; prints the answer; exit 0 done, 1 failed |
+| `kriya [--mode <mode>] [--no-open] [--port <n>]` | DeepSeek Harness's Web UI on `127.0.0.1`, with Kriya's models |
+| `kriya run [--mode <mode>] "<job>" [--json]` | One job; prints the answer; exit 0 done, 1 failed |
 | `kriya acp` | The same agent for editors that speak ACP v1 (Agent Client Protocol): your editor starts it and talks over stdin/stdout |
 | `kriya handoff ["<note>"]` | Hands this repository's uncommitted work (HEAD must be on GitHub) to your Kriya agent in a cloud workspace; prints the thread's link |
 | `kriya pull [<workspace id>]` | Brings a workspace's latest changes back on a new branch `kriya/pull-<id>` at its base commit (default: your last handoff) |
@@ -29,6 +29,13 @@ node bin/kriya.js login --url https://<your Kriya address>
 | `kriya doctor` | Checks Node, the profiles, the sign-in and the gateway |
 | `kriya logout` | Signs out here and revokes the device in Kriya |
 | `kriya --version` | Versions of Kriya Harness and DeepSeek Harness |
+
+Modes (`--mode`, default `ask`): `ask` works in this folder and asks before
+anything beyond it; `auto` works in this folder without asking and refuses
+the rest; `read` changes nothing; `plan` (`kriya run`) answers with a plan
+and changes nothing; `full` has no sandbox and asks nothing. Details and
+limits in [SAFETY.md](SAFETY.md). In the Web UI, switch with the Permissions
+control or `/permission`, and plan first with `/plan`.
 
 Models are Kriya's tiers: `balanced` (default), `budget`, `escalation`. Your
 plan decides which are allowed and its monthly limit.
