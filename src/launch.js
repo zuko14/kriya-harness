@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process"
 
 import { BASE_PATH } from "./api.js"
+import { DEFAULT_MODE, modeEnv } from "./modes.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
 import { ensureProfile } from "./profiles.js"
 
@@ -13,9 +14,11 @@ import { ensureProfile } from "./profiles.js"
 export const TOKEN_ENV = "KRIYA_DEVICE_TOKEN"
 
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE) {
   const env = {
     ...base,
+    // The mode always comes from `--mode` (or the default), never the shell
+    ...modeEnv(mode),
     DSH_HOME: kriyaHome(),
     // Telemetry exporters are disabled rows in the kriya bundle; this is DSH's own switch too
     DSH_TELEMETRY_DISABLED: "1",
@@ -51,6 +54,9 @@ export const REFUSALS = {
   unauthorized: "This device is signed out. Run kriya login.",
   suspended: "This Kriya account is paused.",
   upgrade: "Update Kriya Harness (npm install -g @kriya-ai/harness).",
+  not_found: "Kriya Harness isn't available on this Kriya address; check it with kriya doctor.",
+  bad_request: "Kriya couldn't read that request; update Kriya Harness and try again.",
+  server_error: "Something went wrong in Kriya; try again shortly.",
   // H6: the mirror's refusals (the plugin handles them; listed for completeness)
   no_agent: "Choose the agent this computer works as in Kriya, Account → Devices.",
   mirror_summary_only: "This computer mirrors summaries only.",
@@ -71,13 +77,13 @@ export function explain(line) {
 }
 
 /** Runs DSH in the foreground, passing the terminal through; resolves with its exit code. */
-export function runDsh(profile, rest, device) {
+export function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device),
+      env: launchEnv(device, process.env, mode),
     })
     let explained = null
     if (headless) {
@@ -102,10 +108,10 @@ export function runDsh(profile, rest, device) {
 }
 
 /** Composes a profile without booting it (`--dump-config`); returns the YAML. */
-export function dumpConfig(profile, device = null) {
+export function dumpConfig(profile, device = null, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const result = spawnSync(process.execPath, args(profile, ["--dump-config"]), {
-    env: launchEnv(device),
+    env: launchEnv(device, process.env, mode),
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   })

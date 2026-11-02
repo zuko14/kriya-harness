@@ -126,13 +126,17 @@ test("HG-6: SAFETY.md's defaults are the composed profiles' defaults, and it cov
   const safety = readFileSync(join(ROOT, "SAFETY.md"), "utf8")
   for (const profile of ["kriya", "kriya-run", "kriya-acp"]) {
     const dump = readFileSync(join(ROOT, "expected", `${profile}.dump.yml`), "utf8")
-    assert.match(dump, /mode: !!js process\.env\.DSH_PERMISSION_MODE \?\? 'workspace-write'/, profile)
-    assert.match(dump, /'danger-full-access' \? 'never' : 'ask'/, profile)
+    // Kriya modes: without --mode, the folder sandbox and approvals ask
+    assert.match(dump, /process\.env\.KRIYA_SANDBOX : 'workspace-write'/, profile)
+    assert.match(dump, /process\.env\.KRIYA_APPROVAL === ''never'' \? ''never'' : ''ask''/, profile)
+    assert.match(dump, /process\.env\.KRIYA_PRESET : 'ask'/, profile)
   }
   for (const fact of [
     /has not had a\nsecurity audit/,
-    /\| Sandbox \| `workspace-write` \|/,
-    /\| Approvals \| `ask` \|/,
+    /\| `ask` \(default\) \| this folder \| ask \|/,
+    /\| `full` \| none \| never \|/,
+    /Network access and which programs run aren't\s+limited by it, in any mode/,
+    /temporary areas/,
     /DSH_PERMISSION_MODE/,
     /Never start it in `\/`, your home folder/,
     /\*\*unconfirmed\*\* until you confirm them/,

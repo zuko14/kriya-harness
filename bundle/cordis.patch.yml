@@ -52,6 +52,13 @@
   disabled: true
 - id: web-deepseek-api
   disabled: true
+# The session-log field rides only official DeepSeek API requests (above,
+# disabled); off outright, with its "Help improve DeepSeek models" switch in
+# the Web UI's Settings → General
+- id: session-log-deepseek
+  disabled: true
+- id: ui-settings-session-log
+  disabled: true
 # The Web UI's DeepSeek account page and its controller (which would wait
 # forever for the disabled account service); no-ops in the headless profile
 - id: account-controller
@@ -68,6 +75,48 @@
 - insert:
     - id: ui-brand-kriya
       name: '@kriya-ai/harness-brand'
+
+# Kriya modes (src/modes.js): the launcher sets KRIYA_SANDBOX,
+# KRIYA_APPROVAL and KRIYA_PRESET from `--mode`; anything else falls back
+# to Ask (the HD-02 default: workspace-write, approvals ask). DSH's `never`
+# refuses what would need approval, so Auto and Read only never escalate.
+# The preset table is the Web UI's Permissions selector and /permission
+- id: sandbox-policy
+  config:
+    mode: !!js >-
+      ['read-only', 'workspace-write', 'danger-full-access'].includes(process.env.KRIYA_SANDBOX)
+      ? process.env.KRIYA_SANDBOX : 'workspace-write'
+    workspaceRoot: !!js process.cwd()
+- id: approval
+  config:
+    policy: !!js >-
+      process.env.KRIYA_APPROVAL === 'never' ? 'never' : 'ask'
+- id: permission
+  config:
+    presets:
+      ask:
+        sandbox: workspace-write
+        approval: ask
+        name: Ask
+        description: Works in this folder and asks before anything beyond it, here or in Kriya on your phone.
+      folder-auto:
+        sandbox: workspace-write
+        approval: never
+        name: Auto
+        description: Works in this folder without asking; anything that would need your OK is refused instead.
+      read-only:
+        sandbox: read-only
+        approval: never
+        name: Read only
+        description: Reads and answers; changes no file.
+      full-access:
+        sandbox: danger-full-access
+        approval: never
+        name: Full access
+        description: No sandbox and no questions. Only on a machine you can afford to change.
+    defaultPreset: !!js >-
+      ['ask', 'folder-auto', 'read-only', 'full-access'].includes(process.env.KRIYA_PRESET)
+      ? process.env.KRIYA_PRESET : 'ask'
 
 # H5 (HD-08): DSH's approval requests also go to Kriya, so the person can
 # answer on their phone; first answer wins, no answer fails closed. Both
