@@ -7,6 +7,7 @@ import { KriyaError, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
+import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
 import { login } from "../src/login.js"
 import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob } from "../src/modes.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
@@ -34,6 +35,12 @@ Usage:
   kriya serve [folder]  let your Kriya agents work on this machine: cloud tasks
                         run commands and change files in new subfolders of
                         <folder> (default: this folder) while it runs
+  kriya skills          the SKILL.md skills your agent sees in this folder
+  kriya skills link <folder> [--only <a,b>]
+                        add a folder of skills (superpowers, ponytail, ECC, your
+                        own) to ~/.kriya/skills, as links
+  kriya skills unlink <name>
+                        remove a linked skill
   kriya doctor          check this machine, the sign-in and the gateway
   kriya logout          sign this device out
   kriya --version
@@ -144,6 +151,34 @@ async function main(argv) {
     }
     case "doctor":
       return (await doctor()) ? 0 : 1
+    case "skills": {
+      const [action, target] = args
+      if (action === "link") {
+        if (!target) throw new SkillsError("Which folder? kriya skills link <folder> [--only <a,b>]")
+        const only = option(args, "--only")?.split(",").filter(Boolean)
+        const { linked, kept } = linkSkills(target, only)
+        const left = kept.length > 10 ? `${kept.length} names` : kept.join(", ")
+        say(`Linked ${linked.length} skill(s) into ${skillsDir()}${kept.length ? `; already there, left alone: ${left}` : ""}.`)
+      } else if (action === "unlink") {
+        if (!target) throw new SkillsError("Which skill? kriya skills unlink <name>")
+        unlinkSkill(target)
+        say(`Unlinked ${target}.`)
+      } else if (action) {
+        say(`Unknown skills command ${action}.\n\n${HELP}`)
+        return 1
+      }
+      const { skills, shadowed, catalogChars, broken, warnings } = await visibleSkills(process.cwd())
+      const where = (skill) => SKILL_ROOTS[skill.source] ?? skill.source
+      for (const skill of skills) say(`  ${skill.name.padEnd(36)} ${where(skill)}`)
+      for (const skill of shadowed) say(`  ${skill.name.padEnd(36)} ${where(skill)} (hidden by the one above)`)
+      for (const name of broken) say(`  ${name.padEnd(36)} broken link: its folder is gone (kriya skills unlink ${name})`)
+      for (const warning of warnings) say(`  not loaded: ${warning}`)
+      // The agent gets the catalog once per session and resends it with every request
+      say(`${skills.length} skill(s); the catalog is about ${Math.round(catalogChars / 4)} tokens on every request.`)
+      if (catalogChars > HEAVY_CATALOG) say("That's a lot for every request: unlink the skills you don't use.")
+      say("Your Kriya agent's own skills come on top of these.")
+      return 0
+    }
     case "handoff": {
       const device = signedIn()
       const done = await handoff(device, process.cwd(), args.join(" "))
@@ -247,7 +282,8 @@ main(process.argv.slice(2)).then(
       error instanceof KriyaError ||
       error instanceof HandoffError ||
       error instanceof ServeError ||
-      error instanceof ModeError
+      error instanceof ModeError ||
+      error instanceof SkillsError
     process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }

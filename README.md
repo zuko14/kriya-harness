@@ -26,6 +26,7 @@ node bin/kriya.js login --url https://<your Kriya address>
 | `kriya handoff ["<note>"]` | Hands this repository's uncommitted work (HEAD must be on GitHub) to your Kriya agent in a cloud workspace; prints the thread's link |
 | `kriya pull [<workspace id>]` | Brings a workspace's latest changes back on a new branch `kriya/pull-<id>` at its base commit (default: your last handoff) |
 | `kriya serve [folder]` | Lets your Kriya agents' cloud tasks work on this machine, in new subfolders of `<folder>` (default: this folder), while it runs; see SAFETY.md |
+| `kriya skills [link <folder> [--only a,b] \| unlink <name>]` | Lists the `SKILL.md` skills the agent sees in this folder and the catalog's size; links a folder of skills into `~/.kriya/skills` |
 | `kriya doctor` | Checks Node, the profiles, the sign-in and the gateway |
 | `kriya logout` | Signs out here and revokes the device in Kriya |
 | `kriya --version` | Versions of Kriya Harness and DeepSeek Harness |
@@ -37,8 +38,25 @@ and changes nothing; `full` has no sandbox and asks nothing. Details and
 limits in [SAFETY.md](SAFETY.md). In the Web UI, switch with the Permissions
 control or `/permission`, and plan first with `/plan`.
 
-Models are Kriya's tiers: `balanced` (default), `budget`, `escalation`. Your
-plan decides which are allowed and its monthly limit.
+Models are Kriya's tiers: `balanced`, `budget`, `escalation`. A session
+starts on `balanced`, or on the best tier your plan allows. Your plan decides
+which are allowed and its monthly limit.
+
+Skills: any folder of `<name>/SKILL.md` skills works, including the ones
+written for Claude Code (superpowers, ponytail, ECC), without conversion:
+
+```bash
+kriya skills link ~/.claude/plugins/cache/ponytail/ponytail/<version>/skills
+kriya skills
+```
+
+The agent sees a catalog (each skill's name and description) and loads a
+skill when it needs it; type `/<name>` to use one directly. The catalog goes
+with every request, so link the skills you use: `kriya skills` shows its
+size. Skills are guidance only; Claude Code hooks and slash commands don't
+carry over, and a skill never adds a tool or skips an approval. Skills in a
+project's `.dsh/skills` or `.agents/skills`, and in `~/.agents/skills`, are
+read too; your Kriya agent's own skills come on top.
 
 ## How it's put together
 

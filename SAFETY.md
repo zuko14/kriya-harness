@@ -45,6 +45,15 @@ terminal, the Web UI or your editor, or in Kriya on your phone: the first
 answer wins and the other is withdrawn. With no answer from either (Kriya
 unreachable, the request expired), the action is refused.
 
+## Skills you add
+
+A skill you link (`kriya skills link`) or keep in a project's `.dsh/skills`
+or `.agents/skills` is instructions the agent follows, like a prompt you
+wrote. It can't add a tool or skip an approval, and your mode still applies,
+but it can ask the agent to run its scripts or commands. Link skills only
+from sources you trust, and read new ones first. Their names and descriptions
+go to the model with every request.
+
 ## What leaves this machine
 
 - **Model calls.** Your prompts, the files and command output the agent
