@@ -51,7 +51,10 @@ A skill you link (`kriya skills link`) or keep in a project's `.dsh/skills`
 or `.agents/skills` is instructions the agent follows, like a prompt you
 wrote. It can't add a tool or skip an approval, and your mode still applies,
 but it can ask the agent to run its scripts or commands. Link skills only
-from sources you trust, and read new ones first. Their names and descriptions
+from sources you trust, and read new ones first. The Skills page in the
+browser saves only skills you own (in `~/.kriya/skills`, `~/.agents/skills`
+or the project) and only through the browser you signed in with: its routes
+sit behind DeepSeek Harness's sign-in cookie and its same-origin checks. Their names and descriptions
 go to the model with every request.
 
 ## What leaves this machine

@@ -1,0 +1,23 @@
+{
+  "name": "@kriya-ai/harness-skills",
+  "description": "The Skills page of the Kriya Harness Web UI: see, add, copy and edit the agent's SKILL.md skills",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "UNLICENSED"
+}

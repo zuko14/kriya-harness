@@ -51,7 +51,14 @@ kriya skills
 ```
 
 The agent sees a catalog (each skill's name and description) and loads a
-skill when it needs it; type `/<name>` to use one directly. The catalog goes
+skill when it needs it; type `/<name>` to use one directly. In the browser
+(`kriya`), the **Skills** page in the sidebar lists every skill the agent
+sees, where it comes from and what the list costs per request. It edits the
+skills you own (each save is checked by DeepSeek Harness's own parser and
+undone if the agent couldn't read it), turns a linked skill into your own
+copy (its source stays untouched), creates new ones and unlinks.
+`node scripts/skill-eval.js` measures automatic selection on the real
+client (it spends your allowance). The catalog goes
 with every request, so link the skills you use: `kriya skills` shows its
 size. Skills are guidance only; Claude Code hooks and slash commands don't
 carry over, and a skill never adds a tool or skips an approval. Skills in a
