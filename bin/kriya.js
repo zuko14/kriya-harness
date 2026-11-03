@@ -8,6 +8,8 @@ import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
+import { CheckpointError, listCheckpoints, repoRoot, undo } from "../src/checkpoints.js"
+import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, VerifyError } from "../src/verify.js"
 import { projectRoot, setSkillSwitch, SwitchError } from "../src/skill-switches.js"
 import { login } from "../src/login.js"
 import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob } from "../src/modes.js"
@@ -21,9 +23,9 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--mode <mode>] [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--loop] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run [--mode <mode>] "<job>"
+  kriya run [--mode <mode>] [--loop] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
                         (your editor starts it; kriya acp --help for details)
@@ -46,6 +48,15 @@ Usage:
                         (or everywhere), so it costs no tokens; nothing is deleted
   kriya skills on <name>
                         remove a linked skill
+  kriya verify          this project's check and the ones it defines
+  kriya verify use <number> | "<command>"
+                        confirm the check the agent runs with --loop: its exit
+                        code alone says whether the work passes
+  kriya verify clear    forget this project's check
+  kriya undo            put this repository's files back one step (with --loop
+                        the agent saves a checkpoint before each change)
+  kriya undo --list     the checkpoints, newest first
+  kriya undo <number>   go back to one of them; what an undo replaces is kept
   kriya doctor          check this machine, the sign-in and the gateway
   kriya logout          sign this device out
   kriya --version
@@ -56,6 +67,12 @@ ${Object.entries(MODES)
   .join("\n")}
   In the app, switch with the Permissions control or /permission, and type
   /plan to plan first. plan as a --mode is for kriya run.
+
+--loop (beta): the agent checks its own work with kriya_verify, which runs
+  the check you confirmed (kriya verify use) and reports pass, fail, or
+  blocked after ${MAX_ATTEMPTS} failed runs, from the exit code alone. Before each
+  change it saves a checkpoint on Kriya's own git ref (kriya undo); your
+  branches, index and stash are never touched.
 
 Run it in a folder you can afford to change; see SAFETY.md.`
 
@@ -99,6 +116,15 @@ function option(args, name) {
   const value = args[at + 1]
   args.splice(at, 2)
   return value
+}
+
+// --loop turns the Kriya loop's verify step on for this run (the bundle's
+// kriya-loop row reads KRIYA_LOOP); without it the agent is as before
+function useLoop(args) {
+  const at = args.indexOf("--loop")
+  if (at === -1) return
+  args.splice(at, 1)
+  process.env.KRIYA_LOOP = "on"
 }
 
 function signedIn() {
@@ -199,6 +225,62 @@ async function main(argv) {
       say("Your Kriya agent's own skills come on top of these.")
       return 0
     }
+    case "verify": {
+      const [action, ...rest] = args
+      if (action === "use") {
+        const suggestions = discoverChecks(process.cwd())
+        const pick = rest.join(" ").trim()
+        const chosen = /^\d+$/.test(pick) ? suggestions[Number(pick) - 1]?.command : pick
+        if (/^\d+$/.test(pick) && !chosen) throw new VerifyError(`There's no check ${pick}; kriya verify lists them.`)
+        const { root, command } = confirmCheck(process.cwd(), chosen)
+        say(`Confirmed for ${root}: ${command}`)
+        say("With kriya --loop, the agent's work passes only when this exits 0.")
+        return 0
+      }
+      if (action === "clear") {
+        say(clearCheck(process.cwd()) ? "Forgot this project's check; work here is \"not checked\" again." : "This project had no check.")
+        return 0
+      }
+      if (action !== undefined) {
+        say(`Unknown verify command ${action}.\n\n${HELP}`)
+        return 1
+      }
+      const check = confirmedCheck(process.cwd())
+      say(check ? `Check for ${check.root}: ${check.command} (confirmed ${check.confirmedAt})` : "No check confirmed for this project: with --loop, work here ends \"not checked\".")
+      const suggestions = discoverChecks(process.cwd())
+      if (suggestions.length) {
+        say("\nThis project defines:")
+        suggestions.forEach((s, i) => say(`  ${i + 1}. ${s.command.padEnd(28)} ${s.source}`))
+        say("\nkriya verify use <number> to confirm one, or kriya verify use \"<command>\".")
+      } else say('This project defines no check Kriya recognises; kriya verify use "<command>" sets one.')
+      return 0
+    }
+    case "undo": {
+      const [arg, ...rest] = args
+      if (rest.length || (arg !== undefined && arg !== "--list" && !/^\d+$/.test(arg))) {
+        say(`kriya undo takes --list or a number.\n\n${HELP}`)
+        return 1
+      }
+      if (arg === "--list") {
+        const root = await repoRoot(process.cwd())
+        if (!root) throw new CheckpointError("This folder isn't a git repository, so there are no checkpoints.")
+        const list = await listCheckpoints(root)
+        if (!list.length) {
+          say("No checkpoints yet: kriya --loop saves one before each change the agent makes.")
+          return 0
+        }
+        list.forEach((c, i) => say(`  ${String(i + 1).padStart(3)}. ${c.at.replace("T", " ").slice(0, 19)}  ${c.kind === "undone" ? "(saved by an undo) " : ""}${c.label}`))
+        say("\nkriya undo <number> goes back to one; kriya undo goes back one step.")
+        return 0
+      }
+      const { restored, changed, saved } = await undo(process.cwd(), { target: arg === undefined ? undefined : Number(arg) })
+      if (!changed) say(`The files already match "${restored.label}".`)
+      else {
+        say(`Back to "${restored.label}" (${changed} file${changed === 1 ? "" : "s"} changed).`)
+        say("What it replaced is kept: kriya undo --list shows it as saved by an undo.")
+      }
+      return 0
+    }
     case "handoff": {
       const device = signedIn()
       const done = await handoff(device, process.cwd(), args.join(" "))
@@ -236,6 +318,7 @@ async function main(argv) {
       return 0
     }
     case "run": {
+      useLoop(args)
       const mode = parseMode(option(args, "--mode"))
       const device = signedIn()
       if (mode === "full") process.stderr.write(`${FULL_ACCESS_WARNING}\n`)
@@ -266,10 +349,12 @@ async function main(argv) {
     }
     case undefined:
     case "--mode":
+    case "--loop":
     case "--no-open":
     case "--port": {
       // Only these Web UI flags pass through; never --host, so the UI stays on 127.0.0.1
       const flags = command === undefined ? [] : [command, ...args]
+      useLoop(flags)
       const port = option(flags, "--port")
       const mode = option(flags, "--mode")
       if (mode === "plan") {
@@ -303,7 +388,9 @@ main(process.argv.slice(2)).then(
       error instanceof HandoffError ||
       error instanceof ServeError ||
       error instanceof ModeError ||
-      error instanceof SkillsError
+      error instanceof SkillsError ||
+      error instanceof VerifyError ||
+      error instanceof CheckpointError
     process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }

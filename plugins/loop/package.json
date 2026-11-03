@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-loop",
+  "description": "The Kriya loop's verify step for Kriya Harness: kriya_verify runs the project's confirmed check and reports pass, fail or blocked from its exit code",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

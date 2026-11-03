@@ -61,6 +61,28 @@ function loadClient() {
     theme.layers.push({ source, tokens })
     return () => {}
   }
+  // DSH's locale runtime: a catalog, per-namespace dictionaries, the
+  // active locale and its subscribers (dsh-client-locale)
+  const locale = { languages: ["zh", "en"], dicts: [], active: "zh", listeners: new Set() }
+  locale.addLanguage = (def) => {
+    locale.languages.push(def.id)
+    locale.definition = def
+    return () => (locale.languages = locale.languages.filter((id) => id !== def.id))
+  }
+  locale.register = (ns, id, dict) => {
+    locale.dicts.push({ ns, id, dict })
+    return () => {}
+  }
+  locale.getSnapshot = () => ({ active: locale.active })
+  locale.setLocale = (id) => {
+    if (!locale.languages.includes(id)) throw new Error(`unknown locale ${id}`)
+    locale.active = id
+    for (const fn of [...locale.listeners]) fn()
+  }
+  locale.subscribe = (fn) => {
+    locale.listeners.add(fn)
+    return () => locale.listeners.delete(fn)
+  }
   const styles = []
   const link = { href: "favicon.svg" }
   const document = {
@@ -92,15 +114,15 @@ function loadClient() {
   vm.runInNewContext(readFileSync(join(ROOT, "plugins", "brand", "client.js"), "utf8"), context)
   const exports = loaded.factory((name) => (name === "react" ? react : { jsx, jsxs: jsx }))
   const effects = []
-  exports.apply({ slots, theme, effect: (fn, label) => effects.push({ label, dispose: fn() }) })
-  return { loaded, exports, slots, theme, styles, document, link, observed, effects }
+  exports.apply({ slots, theme, locale, effect: (fn, label) => effects.push({ label, dispose: fn() }) })
+  return { loaded, exports, slots, theme, locale, styles, document, link, observed, effects }
 }
 
 test("the browser half registers the theme layer, the brand slots and its styles", () => {
   const { loaded, exports, slots, theme, styles, document, link, observed, effects } = loadClient()
   assert.equal(loaded.id, "@kriya-ai/harness-brand")
   // Copied: arrays from the vm's own realm
-  assert.deepEqual([...exports.inject], ["slots", "theme"])
+  assert.deepEqual([...exports.inject], ["slots", "theme", "locale"])
   assert.deepEqual(
     slots.registered.map((r) => r.name).sort(),
     ["conversation.hero.brand.mark", "sidebar.brand.mark", "sidebar.brand.name"]
@@ -137,6 +159,43 @@ test("the start screen asks a plain question and says what's true", () => {
   assert.match(text, /What are we working on\?/)
   assert.match(text, /Runs in this folder on your computer\. Model use counts toward your Kriya plan\./)
   assert.doesNotMatch(text, /DeepSeek/)
+})
+
+test("Kriya Harness speaks one language, Kriya's English, and keeps to it", () => {
+  const { locale, exports } = loadClient()
+  assert.equal(locale.definition.id, "en-IN")
+  assert.equal(locale.definition.fallback, "en")
+  // Picked at once, over a stored or browser-derived 中文
+  assert.equal(locale.active, "en-IN")
+  // The Host's stored preference arriving later is switched back
+  locale.setLocale("zh")
+  assert.equal(locale.active, "en-IN")
+  locale.setLocale("en")
+  assert.equal(locale.active, "en-IN")
+  // Every override is for Kriya's language, and none names DSH or DeepSeek
+  assert.ok(locale.dicts.length >= 5)
+  for (const { ns, id, dict } of locale.dicts) {
+    assert.equal(id, "en-IN", ns)
+    for (const [key, text] of Object.entries(dict)) assert.doesNotMatch(text, /\b(DSH|DeepSeek)\b/, `${ns}.${key}`)
+  }
+  assert.deepEqual(Object.keys(exports.COPY).sort(), locale.dicts.map((d) => d.ns).sort())
+  // With one language there's nothing to choose: DSH's Language row is hidden
+  assert.match(exports.CSS, /\.hVGvvW_row \{ display: none; \}/)
+})
+
+// Each overridden key must still be one DSH's English has, in the same
+// namespace; a DSH bump that renames one fails here, not on screen
+test("every key Kriya's English overrides exists in the pinned DSH's English", () => {
+  const { exports } = loadClient()
+  const scope = join(require.resolve("@deepseek-ai/dsh/package.json"), "..", "..")
+  const dsh = readdirSync(scope)
+    .map((name) => join(scope, name, "lib", "client.js"))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n")
+  for (const [ns, dict] of Object.entries(exports.COPY))
+    for (const key of Object.keys(dict))
+      assert.ok(dsh.includes(`"${key}":`) || dsh.includes(`\t${key}:`) || dsh.includes(` ${key}:`), `${ns}.${key} is gone from the pinned DSH`)
 })
 
 // WCAG contrast of the theme's text tokens on its surfaces (DESIGN.md rules)

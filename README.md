@@ -38,6 +38,44 @@ and changes nothing; `full` has no sandbox and asks nothing. Details and
 limits in [SAFETY.md](SAFETY.md). In the Web UI, switch with the Permissions
 control or `/permission`, and plan first with `/plan`.
 
+The Kriya loop's verify step (beta, H14a): `kriya --loop` or `kriya run
+--loop` gives the agent `kriya_verify`, which runs the check you confirmed
+for the project and reports pass, fail, or blocked after 4 failed runs, from
+its exit code alone. The agent is told never to say the work passes without
+it. `kriya verify` lists the checks the project defines (package.json
+scripts, Makefile, cargo, go, pytest…), `kriya verify use <number>` (or a
+command in quotes) confirms one, and `kriya verify clear` forgets it. The
+tool takes no command, so the model can't change what passing means; the
+check runs like any bash command, in the session's folder under its mode's
+sandbox. Without a confirmed check nothing runs and the work is "not
+checked". Every run is recorded per session in
+`~/.kriya/progress/<project>/<session>.md` (never in the project). Without
+`--loop` the agent is exactly as before.
+
+Plans and steps (H14c, with `--loop`): for a task with several parts the
+agent records a plan with `kriya_plan` (a goal and at most 7 ordered steps,
+each with what is true when it's done), then runs each with `kriya_step`. A
+step is built by a fresh agent that sees only the goal, the plan and its own
+step; the harness then runs the check; on a failure a new builder gets the
+check's real output, up to 4 runs, then the step is blocked and the agent
+stops. Steps run in order, builders can't plan or run steps themselves, and
+a session makes at most 3 plans (a new plan can't wipe out "blocked"
+forever). The plan and every run are in the session's progress file. For a
+single run, `KRIYA_VERIFY_CHECK="<command>"` in your shell sets the check
+without `kriya verify use` (benchmarks use it with the visible tests).
+
+Step checkpoints (H14b, with `--loop`): before each tool call that can
+change files (write, edit, bash and the like), the working tree, tracked and
+untracked files but never ignored ones, is saved as a commit on Kriya's own
+ref, `refs/kriya/checkpoints/<session>/<n>`. `kriya undo` puts the files
+back one step, `kriya undo --list` shows the checkpoints and `kriya undo
+<number>` goes to one. Your branches, tags, stash, HEAD and index are never
+touched (Kriya stages into its own index file under `~/.kriya`), so it works
+mid-rebase too; what an undo replaces is saved first, so an undo can be
+undone. Not in Read only, where nothing changes; outside a git repository
+there are no checkpoints. The newest 100 per session are kept, and
+`refs/kriya/*` isn't pushed by a normal `git push`.
+
 Models are Kriya's tiers: `balanced`, `budget`, `escalation`. A session
 starts on `balanced`, or on the best tier your plan allows. Your plan decides
 which are allowed and its monthly limit.
@@ -87,6 +125,20 @@ read too; your Kriya agent's own skills come on top.
   name), the start screen where the K is stitched in, and Kriya's tab title
   and icon. The bundle turns DeepSeek's official brand row off. Edit
   `plugins/brand/src/client.js`, then `npm run build:brand`.
+- `plugins/projects/` is the **Projects** page in the sidebar: the folders
+  on this computer that look like projects (a `.git`, `package.json`,
+  `pyproject.toml`, `Cargo.toml`, `go.mod` and similar) in `~/Developer`,
+  `~/Projects`, `~/code` and the other usual places, one level of group
+  folders deep, plus the folder you started `kriya` in. **Open** makes the
+  folder a workspace and starts a session there. macOS asks before an app
+  reads Desktop, Documents or Downloads, so those are searched only when
+  you name them: `KRIYA_PROJECT_ROOTS=~/Documents:~/work kriya`. Read-only;
+  it lists names, paths and times.
+- One product, one language: the bundle turns off DeepSeek Harness's
+  Creator mode (which writes DSH plugins), its Plugins page and Settings →
+  Built-in plugins, and the brand plugin pins Kriya's English (`en-IN`, a
+  language pack over DSH's English with Kriya's own words where DSH names
+  itself); DSH's 中文 is not offered.
 - `plugins/changes/` is the **Changes** tab in the right sidebar (next to
   DeepSeek Harness's own Workspace files, Terminal and Browser): every file
   changed in the session's folder against HEAD (staged, unstaged and

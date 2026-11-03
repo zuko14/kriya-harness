@@ -442,6 +442,11 @@
 # == @kriya-ai/harness
 - id: ui-brand-kriya
   name: '@kriya-ai/harness-brand'
+- id: kriya-projects
+  name: '@kriya-ai/harness-projects'
+- id: kriya-loop
+  name: '@kriya-ai/harness-loop'
+  disabled: !!js process.env.KRIYA_LOOP !== 'on'
 - id: kriya-skills
   name: '@kriya-ai/harness-skills'
 - id: kriya-changes

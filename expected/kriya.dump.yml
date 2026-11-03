@@ -621,10 +621,14 @@
 # == @deepseek-ai/dsh-web-app
 - id: ui-settings-models
   name: '@deepseek-ai/dsh-client-ui-settings-models'
+# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
 - id: ui-plugin-manager
   name: '@deepseek-ai/dsh-client-ui-plugin-manager'
+  disabled: true
 - id: ui-settings-plugin-inventory
   name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
+  disabled: true
+# == @deepseek-ai/dsh-web-app
 - id: ui-conversation
   name: '@deepseek-ai/dsh-client-ui-conversation'
 - id: ui-approval
@@ -640,8 +644,11 @@
   name: '@deepseek-ai/dsh-client-ui-attachment'
 - id: ui-tool
   name: '@deepseek-ai/dsh-client-ui-tool'
+# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
 - id: ui-cordis
   name: '@deepseek-ai/dsh-client-ui-cordis'
+  disabled: true
+# == @deepseek-ai/dsh-web-app
 - id: ui-deliverables
   name: '@deepseek-ai/dsh-client-ui-deliverables'
 - id: workspace-changes
@@ -678,15 +685,17 @@
   name: '@deepseek-ai/dsh-client-ui-permission-presets'
 - id: ui-agent-preset
   name: '@deepseek-ai/dsh-client-ui-agent-preset'
+# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
 - id: entry-customization
   name: '@deepseek-ai/dsh-client-ui-entry-customization'
-# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
+  disabled: true
 - id: ui-settings-session-log
   name: '@deepseek-ai/dsh-client-ui-settings-session-log'
   disabled: true
-# == @deepseek-ai/dsh-web-app
 - id: ui-settings-plugins
   name: '@deepseek-ai/dsh-client-ui-settings-plugins'
+  disabled: true
+# == @deepseek-ai/dsh-web-app
 - id: ui-settings-shell
   name: '@deepseek-ai/dsh-client-ui-settings-shell'
 - id: ui-settings-agent-loop
@@ -1136,6 +1145,7 @@
 
                 * Please run long lived commands in the background, e.g.
                 'Start-Job' or start a server with Start-Process.
+# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
 - id: preset-cordis
   name: '@deepseek-ai/dsh-agent-preset'
   config:
@@ -1307,9 +1317,15 @@
       - id: tool-plugin-market
         name: '@deepseek-ai/dsh-plugin-market/tools'
         disabled: !!js '!ctx.get(''profileContext'')'
+  disabled: true
 # == @kriya-ai/harness
 - id: ui-brand-kriya
   name: '@kriya-ai/harness-brand'
+- id: kriya-projects
+  name: '@kriya-ai/harness-projects'
+- id: kriya-loop
+  name: '@kriya-ai/harness-loop'
+  disabled: !!js process.env.KRIYA_LOOP !== 'on'
 - id: kriya-skills
   name: '@kriya-ai/harness-skills'
 - id: kriya-changes
