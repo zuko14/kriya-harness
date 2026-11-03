@@ -98,13 +98,12 @@
         apiKeyEnv: KRIYA_DEVICE_TOKEN
         headers:
           X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
-        models:
-          - id: balanced
-            name: Kriya balanced
-          - id: budget
-            name: Kriya budget
-          - id: escalation
-            name: Kriya escalation
+        models: !!js >-
+          [['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'],
+          ['escalation', 'Kriya escalation']] .filter(([id]) =>
+          (process.env.KRIYA_ALLOWED_TIERS ||
+          'balanced,budget,escalation').split(',').includes(id)) .map(([id,
+          name]) => ({ id, name }))
 # == @deepseek-ai/dsh-base
 - id: session-persistence-jsonl
   name: '@deepseek-ai/dsh-session-persistence-jsonl'

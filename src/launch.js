@@ -18,20 +18,33 @@ export const TOKEN_ENV = "KRIYA_DEVICE_TOKEN"
 // with tier_not_allowed
 export const START_TIERS = ["balanced", "budget", "escalation"]
 
-/** The first of START_TIERS the plan allows; balanced when Kriya can't be asked. */
-export async function startTier(device, list = models) {
-  if (!device) return START_TIERS[0]
+/**
+ * The tiers the plan allows (GET /models), in START_TIERS order, and the
+ * one a session starts on. The model picker offers only these, so a tier
+ * the plan refuses (tier_not_allowed on every request) can't be chosen.
+ * When Kriya can't be asked, all of them: the gateway still refuses what
+ * the plan lacks, and a short outage mustn't leave the picker empty.
+ */
+export async function planTiers(device, list = models) {
+  const all = { start: START_TIERS[0], allowed: [...START_TIERS] }
+  if (!device) return all
   try {
-    const allowed = new Set((await list(device.url, device.token)).data.map((model) => model.id))
-    return START_TIERS.find((tier) => allowed.has(tier)) ?? START_TIERS[0]
+    const offered = new Set((await list(device.url, device.token)).data.map((model) => model.id))
+    const allowed = START_TIERS.filter((tier) => offered.has(tier))
+    return allowed.length ? { start: allowed[0], allowed } : all
   } catch {
     // Kriya answers the first request with the reason if it's refused
-    return START_TIERS[0]
+    return all
   }
 }
 
+/** The first of START_TIERS the plan allows; balanced when Kriya can't be asked. */
+export async function startTier(device, list = models) {
+  return (await planTiers(device, list)).start
+}
+
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0]) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -41,6 +54,8 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
     DSH_TELEMETRY_DISABLED: "1",
     KRIYA_CLIENT_VERSION: CLIENT_VERSION,
     KRIYA_START_TIER: START_TIERS.includes(tier) ? tier : START_TIERS[0],
+    // Read by the kriya provider row: the models the picker offers. Never from the shell
+    KRIYA_ALLOWED_TIERS: (allowed.filter((t) => START_TIERS.includes(t)).length ? allowed.filter((t) => START_TIERS.includes(t)) : START_TIERS).join(","),
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -64,7 +79,7 @@ function args(profile, rest) {
 export const REFUSALS = {
   cap_reached: "This month's Kriya Harness limit is reached. It resets on the 1st (India time), or raise it in your plan.",
   plan_not_allowed: "Kriya Harness isn't part of your plan.",
-  tier_not_allowed: "That model tier isn't on your plan.",
+  tier_not_allowed: "That model tier isn't on your plan; choose another in the model picker, or restart kriya to see only your plan's tiers.",
   harness_off: "Kriya Harness is switched off for now.",
   rate_limited: "Too many requests; wait a minute and try again.",
   upstream_unavailable: "Kriya's model provider isn't answering; try again shortly.",
@@ -138,11 +153,11 @@ export function htmlFilter(write) {
 export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
-  const tier = await startTier(device)
+  const tiers = await planTiers(device)
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device, process.env, mode, tier),
+      env: launchEnv(device, process.env, mode, tiers.start, tiers.allowed),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(text))

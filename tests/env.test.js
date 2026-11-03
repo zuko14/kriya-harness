@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { htmlFilter, launchEnv, startTier, TOKEN_ENV } from "../src/launch.js"
+import { explain, htmlFilter, launchEnv, planTiers, startTier, TOKEN_ENV } from "../src/launch.js"
 import { freshHome, ROOT } from "./helpers.js"
 
 // The device token reaches DSH only as a launch variable, and DSH removes
@@ -94,4 +95,28 @@ test("every refusal code in the contract has a plain sentence for kriya run", as
   assert.equal(explain('dsh: PI_AI_ERROR: 429 "rate_limited"'), REFUSALS.rate_limited)
   assert.equal(explain('dsh: PI_AI_ERROR: 500 "something_else"'), null)
   assert.equal(explain("no error here"), null)
+})
+
+test("the model picker offers only the plan's tiers, so none fails with tier_not_allowed", async () => {
+  const device = { url: "https://k.example", token: "t1" }
+  const plan = (...ids) => async () => ({ data: ids.map((id) => ({ id })) })
+  assert.deepEqual(await planTiers(device, plan("budget")), { start: "budget", allowed: ["budget"] })
+  assert.deepEqual(await planTiers(device, plan("escalation", "budget", "balanced")), { start: "balanced", allowed: ["balanced", "budget", "escalation"] })
+  // Unknown aliases are dropped; nothing usable, or Kriya unreachable: all three (the gateway still refuses)
+  assert.deepEqual((await planTiers(device, plan("gpt-5"))).allowed, ["balanced", "budget", "escalation"])
+  assert.deepEqual((await planTiers(device, async () => { throw new Error("offline") })).allowed, ["balanced", "budget", "escalation"])
+  assert.equal(launchEnv(device, {}, undefined, "budget", ["budget"]).KRIYA_ALLOWED_TIERS, "budget")
+  // Never from the shell
+  assert.equal(launchEnv(device, { KRIYA_ALLOWED_TIERS: "escalation" }).KRIYA_ALLOWED_TIERS, "balanced,budget,escalation")
+  assert.equal(launchEnv(device, {}, undefined, "budget", ["budget", "gpt-5"]).KRIYA_ALLOWED_TIERS, "budget")
+  assert.match(explain('PI_AI_ERROR: 400 "tier_not_allowed"'), /model picker/)
+})
+
+test("the kriya provider row lists exactly the allowed tiers", () => {
+  const dump = readFileSync(join(ROOT, "expected", "kriya.dump.yml"), "utf8")
+  const expr = /models: !!js >-\n((?: {10}.*\n)+)/.exec(dump)[1].replace(/\n {10}/g, " ").trim()
+  const list = (tiers) => new Function("process", `return ${expr}`)({ env: tiers === undefined ? {} : { KRIYA_ALLOWED_TIERS: tiers } })
+  assert.deepEqual(list("budget"), [{ id: "budget", name: "Kriya budget" }])
+  assert.deepEqual(list("balanced,escalation").map((m) => m.id), ["balanced", "escalation"])
+  assert.deepEqual(list(undefined).map((m) => m.id), ["balanced", "budget", "escalation"])
 })

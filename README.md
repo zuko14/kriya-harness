@@ -78,7 +78,10 @@ there are no checkpoints. The newest 100 per session are kept, and
 
 Models are Kriya's tiers: `balanced`, `budget`, `escalation`. A session
 starts on `balanced`, or on the best tier your plan allows. Your plan decides
-which are allowed and its monthly limit.
+which are allowed and its monthly limit, and the model picker offers only
+those (read from Kriya when `kriya` starts; restart it after a plan change).
+A session saved on a tier your plan no longer has shows "Select model":
+pick one of your plan's tiers and carry on.
 
 Skills: any folder of `<name>/SKILL.md` skills works, including the ones
 written for Claude Code (superpowers, ponytail, ECC), without conversion:

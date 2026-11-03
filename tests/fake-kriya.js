@@ -15,7 +15,7 @@ import { createHash, randomBytes } from "node:crypto"
 const b64 = (n) => randomBytes(n).toString("base64url")
 
 /**
- * @param {{ answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } }) }} [script]
+ * @param {{ models?: string[], answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } }) }} [script]
  */
 export async function startFakeKriya(script = {}) {
   const state = {
@@ -159,7 +159,7 @@ export async function startFakeKriya(script = {}) {
     if (req.method === "GET" && path === "/models")
       return send(200, {
         object: "list",
-        data: ["budget", "balanced", "escalation"].map((id) => ({ id, object: "model", owned_by: "kriya" })),
+        data: (script.models ?? ["budget", "balanced", "escalation"]).map((id) => ({ id, object: "model", owned_by: "kriya" })),
       })
     if (req.method === "POST" && path === "/approvals") {
       if (script.approvalsError)
@@ -292,7 +292,8 @@ export async function startFakeKriya(script = {}) {
           .writeHead(script.chatHtml, { "content-type": "text/html" })
           .end('<!DOCTYPE html>\n<html lang="en">\n<head><title>Bad Gateway</title></head>\n<body>\n<footer><svg viewBox="0 0 10 10"><path d="M0 0h10v10H0z"/></svg></footer>\n</body>\n</html>\n')
       }
-      if (!["budget", "balanced", "escalation"].includes(body?.model))
+      // A plan's tiers (script.models), as the gateway refuses the others
+      if (!(script.models ?? ["budget", "balanced", "escalation"]).includes(body?.model))
         return fail(400, "tier_not_allowed", "That model isn't on your plan.")
       record.status = 200
       // A scripted turn: plain text, or one tool call for the agent to run
