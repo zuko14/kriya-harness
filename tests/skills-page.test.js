@@ -128,6 +128,7 @@ test("routes go on DSH's fenced /api channel: GET for reads, POST for writes; an
       ["/api/kriya.skill.copy", "POST", "buffered"],
       ["/api/kriya.skill.create", "POST", "buffered"],
       ["/api/kriya.skill.save", "POST", "buffered"],
+      ["/api/kriya.skill.switch", "POST", "buffered"],
       ["/api/kriya.skill.unlink", "POST", "buffered"],
       ["/api/kriya.skills", "GET", "buffered"],
     ]

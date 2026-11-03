@@ -1312,6 +1312,8 @@
   name: '@kriya-ai/harness-brand'
 - id: kriya-skills
   name: '@kriya-ai/harness-skills'
+- id: kriya-changes
+  name: '@kriya-ai/harness-changes'
 - id: kriya-approvals
   name: '@kriya-ai/harness-approvals'
 - id: kriya-mirror

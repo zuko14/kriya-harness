@@ -16,6 +16,7 @@ import { createRequire } from "node:module"
 import { dirname, join, relative, resolve } from "node:path"
 
 import { PACKAGE_ROOT, kriyaHome } from "./paths.js"
+import { offFor, projectRoot } from "./skill-switches.js"
 
 // `kriya skills`: local SKILL.md skills (superpowers, ponytail, ECC, your
 // own) for the agent on this machine. DSH reads them from the folder's
@@ -74,15 +75,18 @@ export async function visibleSkills(cwd, roots = {}) {
   const skills = []
   const shadowed = []
   for (const skill of found) (skills.some((s) => s.name === skill.name) ? shadowed : skills).push(skill)
-  const catalogChars = skills
-    .filter((s) => s.invocation?.modelInvocable !== false)
-    .reduce((n, s) => n + s.name.length + Math.min(s.description.replace(/\s+/g, " ").trim().length, CATALOG_DESCRIPTION), 0)
+  // Turned off (src/skill-switches.js): listed, but out of the catalog
+  const off = offFor(cwd)
+  const chars = (s) => s.name.length + Math.min(s.description.replace(/\s+/g, " ").trim().length, CATALOG_DESCRIPTION)
+  const invocable = skills.filter((s) => s.invocation?.modelInvocable !== false)
+  const catalogChars = invocable.filter((s) => !off.has(s.name)).reduce((n, s) => n + chars(s), 0)
+  const offChars = invocable.filter((s) => off.has(s.name)).reduce((n, s) => n + chars(s), 0)
   // Links in ~/.kriya/skills whose target is gone (a plugin updated or moved)
   const dir = skillsDir()
   const broken = existsSync(dir)
     ? readdirSync(dir).filter((name) => isLink(join(dir, name)) && !existsSync(join(dir, name)))
     : []
-  return { skills, shadowed, catalogChars, broken, warnings }
+  return { skills, shadowed, catalogChars, offChars, off, broken, warnings }
 }
 
 export class SkillsError extends Error {}
@@ -146,7 +150,7 @@ const named = (name) => {
 
 // linked: a link into ~/.kriya/skills or a project root (editing would change
 // its source, a plugin or a repository); yours: a real folder you own
-function describe(skill) {
+function describe(skill, off = new Map()) {
   const folder = skill.locator?.directory ?? dirname(skill.locator?.path ?? "")
   const linked = isLink(folder)
   return {
@@ -162,6 +166,8 @@ function describe(skill) {
     editable: !linked && Boolean(skill.locator?.path),
     modelInvocable: skill.invocation?.modelInvocable !== false,
     userInvocable: skill.invocation?.userInvocable !== false,
+    // "on", "off-here" (this project) or "off-everywhere"
+    state: off.has(skill.name) ? `off-${off.get(skill.name)}` : "on",
   }
 }
 
@@ -177,12 +183,15 @@ function safeRealpath(path) {
 export async function skillsPage(cwd, roots = {}) {
   const seen = await visibleSkills(cwd, roots)
   return {
-    skills: seen.skills.map(describe),
-    shadowed: seen.shadowed.map(describe),
+    skills: seen.skills.map((s) => describe(s, seen.off)),
+    shadowed: seen.shadowed.map((s) => describe(s, seen.off)),
     broken: seen.broken,
     warnings: seen.warnings,
     catalogChars: seen.catalogChars,
     catalogTokens: Math.round(seen.catalogChars / 4),
+    // What the skills turned off would cost on every request
+    offTokens: Math.round(seen.offChars / 4),
+    project: projectRoot(cwd),
     heavy: seen.catalogChars > HEAVY_CATALOG,
     skillsDir: skillsDir(),
   }
@@ -198,7 +207,7 @@ async function find(cwd, name, roots) {
 /** One skill's SKILL.md, found through the catalog (never a path from the caller). */
 export async function readSkillFile(cwd, name, roots = {}) {
   const skill = await find(cwd, name, roots)
-  return { ...describe(skill), content: readFileSync(skill.locator.path, "utf8") }
+  return { ...describe(skill, offFor(cwd)), content: readFileSync(skill.locator.path, "utf8") }
 }
 
 const frontmatterName = (content) => /^---\r?\n[\s\S]*?^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m.exec(content)?.[1]

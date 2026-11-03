@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
       copy: "api/kriya.skill.copy",
       create: "api/kriya.skill.create",
       unlink: "api/kriya.skill.unlink",
+      switch: "api/kriya.skill.switch",
     }
     const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
@@ -49,7 +50,24 @@ window.__ModuleLoader__.load({
 .kh-sk-detail { min-height: 0; overflow: auto; padding: 20px 28px 28px; display: flex; flex-direction: column; gap: 12px; }
 .kh-sk-search { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l3); background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; margin-bottom: 8px; }
 .kh-sk-group { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary); margin: 14px 8px 6px; }
-.kh-sk-row { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; font: inherit; padding: 9px 10px; border-radius: 10px; cursor: pointer; min-height: 44px; }
+.kh-sk-item { display: flex; align-items: center; gap: 4px; border-radius: 10px; }
+.kh-sk-item.off .kh-sk-name, .kh-sk-item.off .kh-sk-desc { opacity: 0.55; }
+.kh-sk-switch { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 0; background: transparent; cursor: pointer; border-radius: 10px; padding: 0; }
+.kh-sk-switch:disabled { cursor: default; opacity: 0.5; }
+.kh-sk-switch:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
+.kh-sk-track { width: 32px; height: 18px; border-radius: 999px; background: var(--dsw-alias-border-l3); position: relative; transition: background 120ms; }
+.kh-sk-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--dsw-alias-bg-base); box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); transition: transform 120ms; }
+.kh-sk-switch[aria-checked="true"] .kh-sk-track { background: var(--dsw-alias-button-info-fill, var(--dsw-alias-link)); }
+.kh-sk-switch[aria-checked="true"] .kh-sk-track::after { transform: translateX(14px); }
+.kh-sk-seg { flex: none; align-self: flex-start; display: inline-flex; flex-wrap: wrap; border: 1px solid var(--dsw-alias-border-l3); border-radius: 10px; overflow: hidden; }
+.kh-sk-seg button { min-height: 36px; padding: 0 12px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.kh-sk-seg button + button { border-left: 1px solid var(--dsw-alias-border-l3); }
+.kh-sk-seg button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-2); font-weight: 600; }
+.kh-sk-seg button:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
+.kh-sk-filter { display: flex; gap: 6px; margin: 0 0 6px; }
+.kh-sk-filter button { min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12.5px; cursor: pointer; }
+.kh-sk-filter button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.kh-sk-row { display: block; flex: 1; min-width: 0; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; font: inherit; padding: 9px 10px; border-radius: 10px; cursor: pointer; min-height: 44px; }
 .kh-sk-row:hover { background: var(--dsw-specific-sidebar-nav-item-hover, var(--dsw-alias-bg-layer-1)); }
 .kh-sk-row[aria-current="true"] { background: var(--dsw-specific-sidebar-nav-item-active, var(--dsw-alias-bg-layer-2)); }
 .kh-sk-row:focus-visible, .kh-sk-btn:focus-visible, .kh-sk-search:focus-visible, .kh-sk-input:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: 1px; }
@@ -102,8 +120,16 @@ window.__ModuleLoader__.load({
 
     /* ──────────────────────────────── page ──────────────────────────────── */
 
+    const STATES = [
+      ["on", "On"],
+      ["off-here", "Off in this project"],
+      ["off-everywhere", "Off everywhere"],
+    ]
+
     function tags(skill) {
       const out = []
+      if (skill.state === "off-here") out.push("off in this project")
+      if (skill.state === "off-everywhere") out.push("off everywhere")
       if (skill.linked) out.push("linked")
       else if (skill.source === "project-dsh" || skill.source === "project-agents") out.push("this project")
       else out.push("yours")
@@ -116,6 +142,8 @@ window.__ModuleLoader__.load({
       const [page, setPage] = useState(null)
       const [loadError, setLoadError] = useState(null)
       const [query, setQuery] = useState("")
+      const [filter, setFilter] = useState("all")
+      const [switching, setSwitching] = useState(null)
       const [selected, setSelected] = useState(null)
       const [file, setFile] = useState(null)
       const [mode, setMode] = useState("view")
@@ -170,6 +198,29 @@ window.__ModuleLoader__.load({
         [load]
       )
 
+      // One skill's switch; the list (and its cost) reloads, the open file too
+      const flip = useCallback(
+        async (name, state) => {
+          setSwitching(name)
+          setError(null)
+          try {
+            await call(API.switch, { name, state })
+            await load()
+            if (selected === name) setFile((f) => (f ? { ...f, state } : f))
+            setNotice(
+              state === "on"
+                ? `${name} is on: the agent sees it from its next step.`
+                : `${name} is off ${state === "off-here" ? "in this project" : "everywhere"}: it leaves the agent's list from its next step.`
+            )
+          } catch (e) {
+            setError(e.message)
+          } finally {
+            setSwitching(null)
+          }
+        },
+        [load, selected]
+      )
+
       const save = () =>
         act(
           () => call(API.save, { name: selected, content: draft }),
@@ -220,8 +271,13 @@ window.__ModuleLoader__.load({
       const shown = useMemo(() => {
         if (!page) return []
         const q = query.trim().toLowerCase()
-        return page.skills.filter((s) => !q || s.name.includes(q) || s.description.toLowerCase().includes(q))
-      }, [page, query])
+        return page.skills.filter(
+          (s) =>
+            (!q || s.name.includes(q) || s.description.toLowerCase().includes(q)) &&
+            (filter === "all" || (filter === "on") === (s.state === "on"))
+        )
+      }, [page, query, filter])
+      const offCount = page ? page.skills.filter((s) => s.state !== "on").length : 0
       const groups = useMemo(() => {
         const out = new Map()
         for (const s of shown) out.set(s.where, [...(out.get(s.where) ?? []), s])
@@ -244,9 +300,11 @@ window.__ModuleLoader__.load({
             h(
               "div",
               { className: page.heavy ? "kh-sk-meter heavy" : "kh-sk-meter" },
-              `${page.skills.length} skills · the list costs about ${page.catalogTokens.toLocaleString()} tokens on every request`,
-              page.heavy ? " · that's a lot: remove the ones you don't use" : ""
-            )
+              `${page.skills.length - offCount} on, ${offCount} off · the list costs about ${page.catalogTokens.toLocaleString()} tokens on every request`,
+              page.offTokens > 0 ? ` · turning skills off saves about ${page.offTokens.toLocaleString()}` : "",
+              page.heavy ? " · that's a lot: turn off the ones this project doesn't need" : ""
+            ),
+          page && h("div", { className: "kh-sk-path" }, `Project: ${page.project}`)
         ),
         h(
           "button",
@@ -274,6 +332,19 @@ window.__ModuleLoader__.load({
           value: query,
           onChange: (e) => setQuery(e.target.value),
         }),
+        page &&
+          page.skills.length > 0 &&
+          h(
+            "div",
+            { className: "kh-sk-filter", role: "group", "aria-label": "Show" },
+            ...[
+              ["all", "All"],
+              ["on", "On"],
+              ["off", `Off (${offCount})`],
+            ].map(([key, label]) =>
+              h("button", { key, type: "button", "aria-pressed": filter === key ? "true" : "false", onClick: () => setFilter(key) }, label)
+            )
+          ),
         loadError && h("div", { className: "kh-sk-error" }, loadError, " ", h("button", { className: "kh-sk-btn", type: "button", onClick: load }, "Try again")),
         !page && !loadError && h("div", { className: "kh-sk-empty" }, "Loading skills…"),
         page && page.skills.length === 0 &&
@@ -286,10 +357,28 @@ window.__ModuleLoader__.load({
             h("div", { className: "kh-sk-group" }, where),
             ...skills.map((s) =>
               h(
-                "button",
-                { key: s.name, type: "button", className: "kh-sk-row", "aria-label": `${s.name}: ${s.description}`, "aria-current": selected === s.name ? "true" : undefined, onClick: () => open(s.name) },
-                h("div", { className: "kh-sk-name" }, s.name),
-                h("div", { className: "kh-sk-desc" }, s.description)
+                "div",
+                { key: s.name, className: s.state === "on" ? "kh-sk-item" : "kh-sk-item off" },
+                h(
+                  "button",
+                  { type: "button", className: "kh-sk-row", "aria-label": `${s.name}: ${s.description}`, "aria-current": selected === s.name ? "true" : undefined, onClick: () => open(s.name) },
+                  h("div", { className: "kh-sk-name" }, s.name),
+                  h("div", { className: "kh-sk-desc" }, s.state === "on" ? s.description : `${s.state === "off-here" ? "Off in this project" : "Off everywhere"} · ${s.description}`)
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    role: "switch",
+                    className: "kh-sk-switch",
+                    "aria-checked": s.state === "on" ? "true" : "false",
+                    "aria-label": `${s.name} ${s.state === "on" ? "on" : "off"}`,
+                    title: s.state === "on" ? "On: turn off for this project" : "Off: turn on",
+                    disabled: switching === s.name,
+                    onClick: () => flip(s.name, s.state === "on" ? "off-here" : "on"),
+                  },
+                  h("span", { className: "kh-sk-track", "aria-hidden": true })
+                )
               )
             )
           )
@@ -330,7 +419,7 @@ window.__ModuleLoader__.load({
         detail = h(
           "section",
           { className: "kh-sk-detail" },
-          h("p", { className: "kh-sk-note" }, "Choose a skill to read it. Skills you own can be edited here; a linked one (from a plugin or a repository) can become your own copy first, so its source stays untouched."),
+          h("p", { className: "kh-sk-note" }, "Choose a skill to read it. Turn off the skills this project doesn't need: each one on costs tokens on every request, and a skill that's off is out of the agent's list until you turn it on. Skills you own can be edited here; a linked one (from a plugin or a repository) can become your own copy first, so its source stays untouched."),
           notice && h("div", { className: "kh-sk-note", role: "status" }, notice),
           error && h("div", { className: "kh-sk-error", role: "alert" }, error)
         )
@@ -342,6 +431,18 @@ window.__ModuleLoader__.load({
           h("h2", { className: "kh-sk-title kh-sk-name" }, selected),
           info && h("div", { className: "kh-sk-tags" }, ...tags(info).map((t) => h("span", { key: t, className: "kh-sk-tag" }, t)), h("span", { className: "kh-sk-tag" }, info.where)),
           info && h("div", { className: "kh-sk-path" }, info.linked ? `${info.path} → ${info.linkTarget ?? "missing"}` : info.path),
+          info &&
+            h(
+              "div",
+              { className: "kh-sk-seg", role: "group", "aria-label": `${selected}: on or off` },
+              ...STATES.map(([state, label]) =>
+                h(
+                  "button",
+                  { key: state, type: "button", "aria-pressed": info.state === state ? "true" : "false", disabled: switching === selected, onClick: () => info.state !== state && flip(selected, state) },
+                  label
+                )
+              )
+            ),
           info &&
             h(
               "div",

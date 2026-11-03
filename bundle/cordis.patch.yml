@@ -85,6 +85,13 @@
     - id: kriya-skills
       name: '@kriya-ai/harness-skills'
 
+# The Changes tab (plugins/changes): a right-sidebar page with every file
+# changed in the session's folder against HEAD and its diff, read-only, on
+# routes inside Connection's fence. Without the web server it doesn't start
+- insert:
+    - id: kriya-changes
+      name: '@kriya-ai/harness-changes'
+
 # Kriya modes (src/modes.js): the launcher sets KRIYA_SANDBOX,
 # KRIYA_APPROVAL and KRIYA_PRESET from `--mode`; anything else falls back
 # to Ask (the HD-02 default: workspace-write, approvals ask). DSH's `never`
