@@ -78,6 +78,44 @@
     - id: ui-brand-kriya
       name: '@kriya-ai/harness-brand'
 
+# Kriya Harness is one product: its features come from Kriya, not from
+# DeepSeek Harness's plugin ecosystem. Off: Creator mode (the `cordis`
+# preset, which writes DSH plugins), its panel, the "Create a DSH plugin"
+# menu entries, the sidebar Plugins page (installs DSH bundles and could
+# switch Kriya's own rows off) and Settings → Built-in plugins (a list of
+# DSH packages). DSH hides its own "create a preset" button when the
+# `cordis` preset is absent. In profiles without these rows they're no-ops
+- id: preset-cordis
+  disabled: true
+- id: ui-cordis
+  disabled: true
+- id: entry-customization
+  disabled: true
+- id: ui-plugin-manager
+  disabled: true
+- id: ui-settings-plugins
+  disabled: true
+- id: ui-settings-plugin-inventory
+  disabled: true
+
+# The Projects page (plugins/projects): the folders on this computer that
+# look like projects, each opened as a workspace and a session in a click.
+# One read-only route inside Connection's fence; without the web server it
+# doesn't start
+- insert:
+    - id: kriya-projects
+      name: '@kriya-ai/harness-projects'
+
+# H14a, the Kriya loop's verify step (plugins/loop): kriya_verify runs the
+# project's check the person confirmed (`kriya verify use`) under the
+# session's own sandbox and reports pass, fail or blocked from its exit
+# code. Off unless kriya was started with --loop (KRIYA_LOOP=on): off, the
+# agent's prompt and tools are exactly as before
+- insert:
+    - id: kriya-loop
+      name: '@kriya-ai/harness-loop'
+      disabled: !!js process.env.KRIYA_LOOP !== 'on'
+
 # The Skills page (plugins/skills): a sidebar row and page listing the
 # agent's SKILL.md skills, with editing for the ones you own, on routes inside
 # Connection's fence. In profiles without the web server it doesn't start

@@ -552,6 +552,10 @@ ${G} .Sixlwa_bubble {
 }
 ${G} .xzv4MW_timeStart { font-variant-numeric: tabular-nums; }
 
+/* Settings → General's Language row: Kriya Harness has one language (see
+   speakKriya), so there's nothing to choose */
+${G} .hVGvvW_row { display: none; }
+
 /* The agent at work: a running stitch in saffron thread instead of
    DeepSeek's whale */
 ${G} .EvIC1a_runningWhaleAnimated,
@@ -742,9 +746,58 @@ ${GLASS_CSS}
       return () => observer.disconnect()
     }
 
+    /* ──────────────────────────── the language ───────────────────────── */
+
+    // Kriya Harness speaks one language: Kriya's English for India, a
+    // language pack (DSH's documented seam) that falls back to DSH's English
+    // for every key, with Kriya's own words where DSH speaks of itself or of
+    // DeepSeek. It is the only language: DSH's 中文 can't be chosen (the
+    // Language row is hidden while there's one language) and a stored or
+    // browser-derived choice of another switches back.
+    const LOCALE = "en-IN"
+    const SESSION_IN_USE =
+      "This session is already open in another Kriya Harness window or process. Close the other one and try again."
+    const COPY = {
+      common: { "brand.localBuild": "Kriya Harness local build" },
+      "settings.agentPreset": {
+        sectionIntro: "Choose the agent’s tools and how it works. Standard mode suits everyday tasks.",
+      },
+      chat: {
+        "message.failure.accountSignedOut": "Stopped because this computer was signed out of Kriya.",
+        "message.failure.interrupted":
+          "Kriya Harness exited before this turn finished (for example, it was killed, crashed, or timed out while shutting down), so the turn was closed when it restarted. Unfinished tool calls have unknown outcomes.",
+        "message.failure.accountSignInRequired": "Sign this computer in to Kriya (kriya login) and try again.",
+      },
+      conversation: { "error.sessionInUse": SESSION_IN_USE },
+      model: { "error.sessionInUse": SESSION_IN_USE, "provider.account": "Kriya" },
+      "settings.models": {
+        deepSeekAccount: "Kriya",
+        onboardingDescription: "Sign this computer in to Kriya (kriya login) to start building.",
+      },
+      sidebarOffice: {
+        unavailable:
+          "Office previews are unavailable. Enable the document preview service on the computer running Kriya Harness.",
+      },
+    }
+
+    function speakKriya(locale) {
+      const disposers = [locale.addLanguage({ id: LOCALE, label: "English", fallback: "en" })]
+      for (const [ns, dict] of Object.entries(COPY)) disposers.push(locale.register(ns, LOCALE, dict))
+      const keep = () => {
+        if (locale.getSnapshot().active !== LOCALE) locale.setLocale(LOCALE)
+      }
+      keep()
+      // The Host's stored preference arrives after activation and replaces
+      // the active locale live
+      disposers.push(locale.subscribe(keep))
+      return () => {
+        for (const dispose of disposers.reverse()) dispose()
+      }
+    }
+
     /* ─────────────────────────────── apply ───────────────────────────── */
 
-    const inject = ["slots", "theme"]
+    const inject = ["slots", "theme", "locale"]
 
     function apply(ctx) {
       if (typeof document !== "undefined") {
@@ -752,6 +805,7 @@ ${GLASS_CSS}
         ctx.effect(keepTitleAndIcon, "kriya: title and icon")
       }
       ctx.effect(() => ctx.theme.overrideTokens(PLUGIN, overrides()), "kriya: theme tokens")
+      ctx.effect(() => speakKriya(ctx.locale), "kriya: language")
       // One declaration-aware set, as dsh-client-ui-brand-official registers its own
       ctx.slots.inject("sidebar.brand.mark", () =>
         ctx.slots.inject("sidebar.brand.name", function* () {
@@ -764,6 +818,6 @@ ${GLASS_CSS}
       })
     }
 
-    return { apply, inject, kriyaTitle, TOKENS, CSS }
+    return { apply, inject, kriyaTitle, TOKENS, CSS, COPY, LOCALE }
   },
 })
