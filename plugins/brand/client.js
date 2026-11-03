@@ -176,11 +176,16 @@ window.__ModuleLoader__.load({
       "M30 39.5c9.5 0.5 17 4.5 22 11.5H41.5c-4.5-3.5-8.5-7.2-11.5-11.5z",
     ]
     const LEAF = "M33.5 36.5c4.6-3.6 10-4.8 15.5-3.8-4.4 4-9.8 5.3-15.5 3.8z"
+    // The K's strokes span x 17–52.5 and y 13–51: its optical centre is
+    // (34.75, 32), not the 64-unit tile's (32, 32). Every placement below
+    // centres that box, so the mark sits true in the tile and on the start
+    // screen (it used to sit 2.2 units right of centre)
+    const K_TILE = "translate(4.2 6.4) scale(0.8)"
 
     const tileSvg = () =>
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
       '<rect width="64" height="64" rx="18" fill="#1F4F50"/>' +
-      '<g transform="translate(6.4 6.4) scale(0.8)" fill="#FCE6C6">' +
+      `<g transform="${K_TILE}" fill="#FCE6C6">` +
       K_PATHS.map((d) => `<path d="${d}"/>`).join("") +
       `<path d="${LEAF}" fill="#E09A62"/></g></svg>`
 
@@ -196,7 +201,7 @@ window.__ModuleLoader__.load({
         children: [
           jsx("rect", { width: 64, height: 64, rx: 18, fill: "#1F4F50" }),
           jsxs("g", {
-            transform: "translate(6.4 6.4) scale(0.8)",
+            transform: K_TILE,
             fill: "#FCE6C6",
             children: [
               ...K_PATHS.map((d) => jsx("path", { d }, d)),
@@ -237,7 +242,8 @@ window.__ModuleLoader__.load({
       const parts = [...K_PATHS, LEAF]
       return jsxs("svg", {
         className: `kh-stitch${animate ? " kh-stitch-play" : ""}`,
-        viewBox: "8 8 50 48",
+        // 50 × 48 around the K's centre (34.75, 32)
+        viewBox: "9.75 8 50 48",
         role: "img",
         "aria-label": "Kriya",
         children: [
