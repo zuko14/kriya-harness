@@ -1,6 +1,7 @@
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
 import { call, deviceFromEnv } from "../../src/api.js"
+import { switchProvider } from "../../src/skill-switches.js"
 
 // Kriya's skills and memory inside DeepSeek Harness (H7, HD-10):
 // - a skill source in DSH's registry (`ctx.skills`): the device agent's
@@ -9,7 +10,9 @@ import { call, deviceFromEnv } from "../../src/api.js"
 // - `kriya_memory_search`: the notes the device's agent can see in Kriya;
 // - `kriya_memory_save`: a note saved to Kriya, always unconfirmed until
 //   the person confirms it there (what runs on this machine is untrusted to
-//   Kriya).
+//   Kriya);
+// - the skill switches (src/skill-switches.js): skills the person turned off
+//   for a project or everywhere leave the catalog, in every profile.
 // No connector tools: those run only in Kriya's own worker (invariant 5).
 
 export const name = "kriya-tools"
@@ -180,6 +183,7 @@ export const memorySave = defineTool({
 
 export function apply(ctx) {
   ctx.skills.registerProvider(() => kriyaSkills())
+  ctx.skills.registerProvider((control) => switchProvider(control))
   ctx.tools.register(memorySearch)
   ctx.tools.register(memorySave)
 }

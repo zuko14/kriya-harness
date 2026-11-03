@@ -26,7 +26,7 @@ node bin/kriya.js login --url https://<your Kriya address>
 | `kriya handoff ["<note>"]` | Hands this repository's uncommitted work (HEAD must be on GitHub) to your Kriya agent in a cloud workspace; prints the thread's link |
 | `kriya pull [<workspace id>]` | Brings a workspace's latest changes back on a new branch `kriya/pull-<id>` at its base commit (default: your last handoff) |
 | `kriya serve [folder]` | Lets your Kriya agents' cloud tasks work on this machine, in new subfolders of `<folder>` (default: this folder), while it runs; see SAFETY.md |
-| `kriya skills [link <folder> [--only a,b] \| unlink <name>]` | Lists the `SKILL.md` skills the agent sees in this folder and the catalog's size; links a folder of skills into `~/.kriya/skills` |
+| `kriya skills [link <folder> [--only a,b] \| unlink <name> \| off <name> [--everywhere] \| on <name>]` | Lists the `SKILL.md` skills the agent sees in this folder, which are off and the catalog's size; links a folder of skills into `~/.kriya/skills`; turns a skill off for this project (or everywhere) or back on |
 | `kriya doctor` | Checks Node, the profiles, the sign-in and the gateway |
 | `kriya logout` | Signs out here and revokes the device in Kriya |
 | `kriya --version` | Versions of Kriya Harness and DeepSeek Harness |
@@ -59,8 +59,14 @@ undone if the agent couldn't read it), turns a linked skill into your own
 copy (its source stays untouched), creates new ones and unlinks.
 `node scripts/skill-eval.js` measures automatic selection on the real
 client (it spends your allowance). The catalog goes
-with every request, so link the skills you use: `kriya skills` shows its
-size. Skills are guidance only; Claude Code hooks and slash commands don't
+with every request, so turn off what a project doesn't need: each row on
+the Skills page has a switch (on, off in this project, off everywhere;
+`kriya skills off <name>` in a terminal), and the page shows what the
+list costs and what the skills that are off save. A skill that's off is
+out of the agent's list, its `skill` tool and `/name` in every profile
+(browser, `kriya run`, editors), from the agent's next step; its files are
+never touched. Switches live in `~/.kriya/skill-switches.json`, per
+project (its git root). Skills are guidance only; Claude Code hooks and slash commands don't
 carry over, and a skill never adds a tool or skips an approval. Skills in a
 project's `.dsh/skills` or `.agents/skills`, and in `~/.agents/skills`, are
 read too; your Kriya agent's own skills come on top.
@@ -81,6 +87,13 @@ read too; your Kriya agent's own skills come on top.
   name), the start screen where the K is stitched in, and Kriya's tab title
   and icon. The bundle turns DeepSeek's official brand row off. Edit
   `plugins/brand/src/client.js`, then `npm run build:brand`.
+- `plugins/changes/` is the **Changes** tab in the right sidebar (next to
+  DeepSeek Harness's own Workspace files, Terminal and Browser): every file
+  changed in the session's folder against HEAD (staged, unstaged and
+  untracked, renames and binaries too) with lines added and removed, and
+  each file's diff, refreshed every few seconds while it's on screen.
+  Read-only; the browser names a session, never a folder, and a diff is
+  only made for a file git lists as changed.
 - `contract/contract.json` is the Kriya Harness API contract, copied from
   the Kriya repository ([contract/SOURCE.md](contract/SOURCE.md)).
 - `plugins/approvals/` sends DeepSeek Harness's approval questions to Kriya

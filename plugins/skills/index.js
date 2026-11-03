@@ -7,6 +7,7 @@ import {
   SkillsError,
   unlinkSkill,
 } from "../../src/local-skills.js"
+import { setSkillSwitch, SwitchError } from "../../src/skill-switches.js"
 
 // The Skills page, node half: routes on DSH's shared /api channel, inside
 // Connection's fence (Host/Origin checks, the signed browser cookie, owner
@@ -24,6 +25,7 @@ export const ROUTES = {
   copy: "/api/kriya.skill.copy",
   create: "/api/kriya.skill.create",
   unlink: "/api/kriya.skill.unlink",
+  switch: "/api/kriya.skill.switch",
 }
 
 const reply = (body, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } })
@@ -61,6 +63,12 @@ export function handlers(cwd, roots = {}) {
       unlinkSkill(typeof name === "string" ? name : "")
       return { ok: true }
     },
+    // On, off for this project, or off everywhere; the agent's next step
+    // gets the new catalog
+    [ROUTES.switch]: async (request) => {
+      const { name, state } = await body(request)
+      return setSkillSwitch(cwd(), name, state)
+    },
   }
 }
 
@@ -69,7 +77,7 @@ export async function answer(handler, request, log = () => {}) {
   try {
     return reply(await handler(request))
   } catch (error) {
-    if (error instanceof SkillsError) return reply({ error: error.message }, 400)
+    if (error instanceof SkillsError || error instanceof SwitchError) return reply({ error: error.message }, 400)
     log(error)
     return reply({ error: "Kriya couldn't do that; see the terminal for details." }, 500)
   }

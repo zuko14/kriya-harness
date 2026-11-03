@@ -86,7 +86,7 @@ test("kriya skills prints each skill, where it comes from, and the catalog cost"
   assert.equal(link.status, 0, link.stderr)
   assert.match(link.stdout, /Linked 2 skill\(s\) into /)
   assert.match(link.stdout, /^ {2}alpha-skill +~\/\.kriya\/skills$/m)
-  assert.match(link.stdout, /2 skill\(s\); the catalog is about \d+ tokens on every request\./)
+  assert.match(link.stdout, /2 skill\(s\) on, 0 off; the catalog is about \d+ tokens on every request\./)
   // A heavy catalog gets a warning
   const big = temp("kriya-skill-big-")
   for (let i = 0; i < 90; i++) skill(big, `big-${i}`, "x".repeat(480))
