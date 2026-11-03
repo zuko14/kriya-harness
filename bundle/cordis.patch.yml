@@ -21,11 +21,14 @@
           X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
         # Only the tiers the plan allows (the launcher reads GET /models into
         # KRIYA_ALLOWED_TIERS): a tier the plan refuses would fail every
-        # request with tier_not_allowed. Unset, all three
+        # request with tier_not_allowed. Unset, all three. Each is named
+        # after the model the owner routes it to (KRIYA_MODEL_NAMES, from the
+        # same answer), else "Kriya <tier>"
         models: !!js >-
-          [['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'], ['escalation', 'Kriya escalation']]
+          ((names) => [['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'], ['escalation', 'Kriya escalation']]
           .filter(([id]) => (process.env.KRIYA_ALLOWED_TIERS || 'balanced,budget,escalation').split(',').includes(id))
-          .map(([id, name]) => ({ id, name }))
+          .map(([id, name]) => ({ id, name: typeof names[id] === 'string' && names[id] ? names[id] : name })))
+          ((() => { try { return JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {} } })())
 
 # The starting tier: balanced, or the best tier the plan allows, chosen by
 # the launcher from GET /models (src/launch.js startTier)

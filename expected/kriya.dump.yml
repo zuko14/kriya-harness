@@ -94,11 +94,14 @@
         headers:
           X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
         models: !!js >-
-          [['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'],
-          ['escalation', 'Kriya escalation']] .filter(([id]) =>
+          ((names) => [['balanced', 'Kriya balanced'], ['budget', 'Kriya
+          budget'], ['escalation', 'Kriya escalation']] .filter(([id]) =>
           (process.env.KRIYA_ALLOWED_TIERS ||
           'balanced,budget,escalation').split(',').includes(id)) .map(([id,
-          name]) => ({ id, name }))
+          name]) => ({ id, name: typeof names[id] === 'string' && names[id] ?
+          names[id] : name }))) ((() => { try { return
+          JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {}
+          } })())
 # == @deepseek-ai/dsh-base
 - id: session-persistence-jsonl
   name: '@deepseek-ai/dsh-session-persistence-jsonl'

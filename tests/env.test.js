@@ -4,7 +4,7 @@ import { createRequire } from "node:module"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { explain, htmlFilter, launchEnv, planTiers, startTier, TOKEN_ENV } from "../src/launch.js"
+import { explain, htmlFilter, launchEnv, modelNames, planTiers, startTier, TOKEN_ENV } from "../src/launch.js"
 import { freshHome, ROOT } from "./helpers.js"
 
 // The device token reaches DSH only as a launch variable, and DSH removes
@@ -100,8 +100,8 @@ test("every refusal code in the contract has a plain sentence for kriya run", as
 test("the model picker offers only the plan's tiers, so none fails with tier_not_allowed", async () => {
   const device = { url: "https://k.example", token: "t1" }
   const plan = (...ids) => async () => ({ data: ids.map((id) => ({ id })) })
-  assert.deepEqual(await planTiers(device, plan("budget")), { start: "budget", allowed: ["budget"] })
-  assert.deepEqual(await planTiers(device, plan("escalation", "budget", "balanced")), { start: "balanced", allowed: ["balanced", "budget", "escalation"] })
+  assert.deepEqual(await planTiers(device, plan("budget")), { start: "budget", allowed: ["budget"], names: {} })
+  assert.deepEqual(await planTiers(device, plan("escalation", "budget", "balanced")), { start: "balanced", allowed: ["balanced", "budget", "escalation"], names: {} })
   // Unknown aliases are dropped; nothing usable, or Kriya unreachable: all three (the gateway still refuses)
   assert.deepEqual((await planTiers(device, plan("gpt-5"))).allowed, ["balanced", "budget", "escalation"])
   assert.deepEqual((await planTiers(device, async () => { throw new Error("offline") })).allowed, ["balanced", "budget", "escalation"])
@@ -112,11 +112,29 @@ test("the model picker offers only the plan's tiers, so none fails with tier_not
   assert.match(explain('PI_AI_ERROR: 400 "tier_not_allowed"'), /model picker/)
 })
 
+test("the picker names each tier after the owner's model; the same model twice says which tier", () => {
+  const m = (id, name) => ({ id, object: "model", owned_by: "kriya", ...(name && { name }) })
+  assert.deepEqual(modelNames([m("budget", "DeepSeek V4.1 Flash")], ["budget"]), { budget: "DeepSeek V4.1 Flash" })
+  assert.deepEqual(
+    modelNames([m("budget", "DeepSeek V4.1 Flash"), m("balanced", "DeepSeek V4.1 Flash"), m("escalation", "Claude Sonnet")], ["budget", "balanced", "escalation"]),
+    { budget: "DeepSeek V4.1 Flash · budget", balanced: "DeepSeek V4.1 Flash · balanced", escalation: "Claude Sonnet" }
+  )
+  // Unnamed, unusable or not allowed: no name (the row keeps "Kriya <tier>")
+  assert.deepEqual(modelNames([m("budget"), m("balanced", "<b>x</b>"), m("escalation", "Fine")], ["budget", "balanced"]), {})
+  const env = launchEnv({ url: "https://k.example", token: "t" }, { KRIYA_MODEL_NAMES: '{"budget":"Evil"}' }, undefined, "budget", ["budget"], { budget: "DeepSeek V4.1 Flash", gpt: "x" })
+  assert.equal(env.KRIYA_MODEL_NAMES, '{"budget":"DeepSeek V4.1 Flash"}')
+  assert.equal(launchEnv(null, { KRIYA_MODEL_NAMES: '{"budget":"Evil"}' }).KRIYA_MODEL_NAMES, "{}")
+})
+
 test("the kriya provider row lists exactly the allowed tiers", () => {
   const dump = readFileSync(join(ROOT, "expected", "kriya.dump.yml"), "utf8")
   const expr = /models: !!js >-\n((?: {10}.*\n)+)/.exec(dump)[1].replace(/\n {10}/g, " ").trim()
-  const list = (tiers) => new Function("process", `return ${expr}`)({ env: tiers === undefined ? {} : { KRIYA_ALLOWED_TIERS: tiers } })
+  const list = (tiers, names) =>
+    new Function("process", `return ${expr}`)({ env: { ...(tiers !== undefined && { KRIYA_ALLOWED_TIERS: tiers }), ...(names !== undefined && { KRIYA_MODEL_NAMES: names }) } })
   assert.deepEqual(list("budget"), [{ id: "budget", name: "Kriya budget" }])
   assert.deepEqual(list("balanced,escalation").map((m) => m.id), ["balanced", "escalation"])
   assert.deepEqual(list(undefined).map((m) => m.id), ["balanced", "budget", "escalation"])
+  assert.deepEqual(list("budget", '{"budget":"DeepSeek V4.1 Flash"}'), [{ id: "budget", name: "DeepSeek V4.1 Flash" }])
+  // A broken value never breaks the picker
+  assert.deepEqual(list("budget", "{not json"), [{ id: "budget", name: "Kriya budget" }])
 })

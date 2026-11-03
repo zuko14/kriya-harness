@@ -251,6 +251,10 @@
                 "owned_by": {
                   "type": "string",
                   "const": "kriya"
+                },
+                "name": {
+                  "type": "string",
+                  "pattern": "^[\\p{L}\\p{N} .()+\\/:_-]{1,60}$"
                 }
               },
               "required": ["id", "object", "owned_by"],

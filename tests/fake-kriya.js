@@ -15,7 +15,7 @@ import { createHash, randomBytes } from "node:crypto"
 const b64 = (n) => randomBytes(n).toString("base64url")
 
 /**
- * @param {{ models?: string[], answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } }) }} [script]
+ * @param {{ models?: string[], modelNames?: Record<string, string>, answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } }) }} [script]
  */
 export async function startFakeKriya(script = {}) {
   const state = {
@@ -159,7 +159,12 @@ export async function startFakeKriya(script = {}) {
     if (req.method === "GET" && path === "/models")
       return send(200, {
         object: "list",
-        data: (script.models ?? ["budget", "balanced", "escalation"]).map((id) => ({ id, object: "model", owned_by: "kriya" })),
+        data: (script.models ?? ["budget", "balanced", "escalation"]).map((id) => ({
+          id,
+          object: "model",
+          owned_by: "kriya",
+          ...(script.modelNames?.[id] && { name: script.modelNames[id] }),
+        })),
       })
     if (req.method === "POST" && path === "/approvals") {
       if (script.approvalsError)

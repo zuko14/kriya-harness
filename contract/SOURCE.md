@@ -7,9 +7,9 @@ again from Kriya and update the hash below in the same change.
 
 | Field | Value |
 | --- | --- |
-| Copied | 2026-11-02 (again, for H10: GET /world) |
-| From | Kriya repository `main` at `9a51a12` plus uncommitted work (the file isn't committed there yet) |
-| sha256 | `3fd77bd4afd73460d5f2bc7eda2abc2dd3ab34a34040c759d2a7453ca3f81257` |
+| Copied | 2026-11-03 (again: `name` on GET /models, the owner's model per tier) |
+| From | Kriya repository branch `feat/harness-loop-bench` plus uncommitted work (GET /models `name`) |
+| sha256 | `9b0e5a985292f53a82b76a8ec817b03818833a03af07c9514ab256971c0b1cc6` |
 
 When the Kriya side commits the file, replace "From" with that commit.
 `tests/contract.test.js` checks the hash, so a hand edit fails.

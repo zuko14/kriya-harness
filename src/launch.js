@@ -26,16 +26,33 @@ export const START_TIERS = ["balanced", "budget", "escalation"]
  * the plan lacks, and a short outage mustn't leave the picker empty.
  */
 export async function planTiers(device, list = models) {
-  const all = { start: START_TIERS[0], allowed: [...START_TIERS] }
+  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {} }
   if (!device) return all
   try {
-    const offered = new Set((await list(device.url, device.token)).data.map((model) => model.id))
+    const data = (await list(device.url, device.token)).data
+    const offered = new Set(data.map((model) => model.id))
     const allowed = START_TIERS.filter((tier) => offered.has(tier))
-    return allowed.length ? { start: allowed[0], allowed } : all
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed) } : all
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
   }
+}
+
+// The contract's own rule for a model name (contract/contract.json /models)
+const MODEL_NAME = /^[\p{L}\p{N} .()+\/:_-]{1,60}$/u
+
+/**
+ * What the picker shows per tier: the model the owner routes it to, as Kriya
+ * names it ("DeepSeek V4.1 Flash"), with the tier added where two tiers run
+ * on the same model. A tier without a usable name keeps "Kriya <tier>".
+ */
+export function modelNames(data, allowed) {
+  const named = Object.fromEntries(
+    data.filter((m) => allowed.includes(m.id) && typeof m.name === "string" && MODEL_NAME.test(m.name)).map((m) => [m.id, m.name])
+  )
+  const count = (name) => Object.values(named).filter((n) => n === name).length
+  return Object.fromEntries(Object.entries(named).map(([tier, name]) => [tier, count(name) > 1 ? `${name} · ${tier}` : name]))
 }
 
 /** The first of START_TIERS the plan allows; balanced when Kriya can't be asked. */
@@ -44,7 +61,7 @@ export async function startTier(device, list = models) {
 }
 
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -56,6 +73,8 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
     KRIYA_START_TIER: START_TIERS.includes(tier) ? tier : START_TIERS[0],
     // Read by the kriya provider row: the models the picker offers. Never from the shell
     KRIYA_ALLOWED_TIERS: (allowed.filter((t) => START_TIERS.includes(t)).length ? allowed.filter((t) => START_TIERS.includes(t)) : START_TIERS).join(","),
+    // The picker's name per tier (modelNames), as JSON. Never from the shell
+    KRIYA_MODEL_NAMES: JSON.stringify(Object.fromEntries(Object.entries(names).filter(([t, n]) => START_TIERS.includes(t) && typeof n === "string" && n.length <= 80))),
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -157,7 +176,7 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device, process.env, mode, tiers.start, tiers.allowed),
+      env: launchEnv(device, process.env, mode, tiers.start, tiers.allowed, tiers.names),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(text))
