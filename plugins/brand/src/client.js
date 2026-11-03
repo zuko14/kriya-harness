@@ -19,13 +19,16 @@ window.__ModuleLoader__.load({
     /* ───────────────────────────── palette ───────────────────────────── */
 
     // Kriya's colours (the Kriya app's globals.css) on DSH's tokens.
-    // [light, dark]; DSH picks the pair's half for the active scheme
+    // [light, dark]; DSH picks the pair's half for the active scheme.
+    // tint(rgbs)(alpha): a colour at one alpha, or at a [light, dark] pair
+    const tint = (rgbs) => (alpha) =>
+      rgbs.map((rgb, i) => `rgb(${rgb} / ${Array.isArray(alpha) ? alpha[i] : alpha})`)
     const INK = ["19 41 43", "242 234 223"]
-    const ink = (alpha) => INK.map((rgb) => `rgb(${rgb} / ${alpha})`)
+    const ink = tint(INK)
     const TEAL = ["#1F6362", "#6CC0B8"]
-    const teal = (alpha) => [`rgb(31 99 98 / ${alpha})`, `rgb(108 192 184 / ${alpha})`]
+    const teal = tint(["31 99 98", "108 192 184"])
     const SAFFRON = ["#B4622F", "#E7A46D"]
-    const saffron = (alpha) => [`rgb(180 98 47 / ${alpha})`, `rgb(231 164 109 / ${alpha})`]
+    const saffron = tint(["180 98 47", "231 164 109"])
 
     const PAPER = ["#F3EEE6", "#0A1213"]
     const SHEET = ["#FBF8F3", "#122021"]
@@ -50,11 +53,10 @@ window.__ModuleLoader__.load({
       "--dsw-alias-bg-skeleton": ink(0.05),
       "--dsw-specific-sidebar-fill": LOOM,
       "--dsw-specific-sidebar-nav-item-hover": ink(0.055),
-      "--dsw-specific-sidebar-nav-item-active": ink(0.085),
+      "--dsw-specific-sidebar-nav-item-active": ["rgb(255 255 255 / 0.62)", "rgb(242 234 223 / 0.08)"],
       "--dsw-specific-sidebar-nav-item-active-accent": teal(0.14),
       "--dsw-specific-input-major": SHEET_2,
       "--dsw-specific-login-input": SHEET,
-      "--dsw-specific-menu": ["rgb(251 248 243 / 0.92)", "rgb(18 32 33 / 0.9)"],
       "--dsw-alias-menu-group-header-fill": ["rgb(251 248 243 / 0.95)", "rgb(18 32 33 / 0.95)"],
       "--dsw-specific-selector": ink(0.05),
       "--dsw-specific-tip": ink(0.05),
@@ -63,7 +65,7 @@ window.__ModuleLoader__.load({
       "--dsw-specific-bubble-highlight": teal(0.2),
       "--dsw-alias-turn-trigger-bg": ["#EFE9DF", "#0F1C1D"],
       "--dsw-alias-turn-trigger-bg-hover": ink(0.07),
-      "--dsw-alias-settings-card-fill": SHEET_2,
+      "--dsw-alias-settings-card-fill": ["rgb(255 255 255 / 0.55)", "rgb(242 234 223 / 0.05)"],
       "--dsw-alias-settings-card-stroke": ink(0.14),
 
       // Text
@@ -152,6 +154,54 @@ window.__ModuleLoader__.load({
 
       // The start screen's thread: light on the dark K, dark on the cream K
       "--kh-thread": ["#E7A46D", "#9A5424"],
+
+      // Glass (DESIGN.md, Material): sheet tinted panes over a lit ground.
+      // The ground: paper lit teal from the top left, warm from the bottom right
+      "--kh-ground-a": teal([0.12, 0.1]),
+      "--kh-ground-b": saffron([0.09, 0.06]),
+      // The pool of light the start screen's K sits in
+      "--kh-halo": ["rgb(255 255 255 / 0.9)", "rgb(108 192 184 / 0.09)"],
+      // Panes: thin for the sidebar, thick where text is typed or read
+      "--kh-glass": ["rgb(251 248 243 / 0.55)", "rgb(18 32 33 / 0.5)"],
+      "--kh-glass-thick": ["rgb(253 251 247 / 0.76)", "rgb(21 37 38 / 0.74)"],
+      "--kh-blur": ["blur(28px) saturate(170%)", "blur(28px) saturate(140%)"],
+      // Light caught on a pane's top edge, and its hairline
+      "--kh-rim": [
+        "inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 0 0 0.5px rgb(19 41 43 / 0.1)",
+        "inset 0 1px 0 0 rgb(255 255 255 / 0.075), inset 0 0 0 0.5px rgb(242 234 223 / 0.1)",
+      ],
+      "--kh-edge": ink([0.1, 0.09]),
+      // Wells sit below the pane, chips sit on it
+      "--kh-well": ink([0.045, 0.05]),
+      "--kh-chip": ["rgb(255 255 255 / 0.7)", "rgb(242 234 223 / 0.075)"],
+      "--kh-chip-hover": ["rgb(255 255 255 / 0.92)", "rgb(242 234 223 / 0.11)"],
+      "--kh-shade": ["rgb(19 41 43 / 0.08)", "rgb(0 0 0 / 0.35)"],
+      // Lift: how far a pane floats above the ground
+      "--kh-lift": [
+        "0 1px 1px rgb(19 41 43 / 0.03), 0 6px 16px -4px rgb(19 41 43 / 0.08), 0 22px 44px -18px rgb(19 41 43 / 0.14)",
+        "0 1px 1px rgb(0 0 0 / 0.25), 0 10px 28px -6px rgb(0 0 0 / 0.42), 0 28px 56px -22px rgb(0 0 0 / 0.5)",
+      ],
+      "--kh-lift-high": [
+        "0 2px 4px rgb(19 41 43 / 0.04), 0 16px 40px -8px rgb(19 41 43 / 0.16), 0 44px 88px -24px rgb(19 41 43 / 0.2)",
+        "0 2px 4px rgb(0 0 0 / 0.3), 0 20px 48px -8px rgb(0 0 0 / 0.55), 0 48px 96px -24px rgb(0 0 0 / 0.6)",
+      ],
+      // Focus: a teal edge and a soft halo; approvals: the same in saffron
+      "--kh-focus-edge": teal([0.5, 0.55]),
+      "--kh-focus-halo": teal([0.12, 0.14]),
+      "--kh-warn-edge": saffron([0.45, 0.4]),
+      "--kh-warn-halo": saffron([0.1, 0.1]),
+      "--kh-bubble-rim": [
+        "inset 0 1px 0 0 rgb(255 255 255 / 0.55), inset 0 0 0 0.5px rgb(31 99 98 / 0.16)",
+        "inset 0 1px 0 0 rgb(255 255 255 / 0.06), inset 0 0 0 0.5px rgb(108 192 184 / 0.16)",
+      ],
+      "--kh-press-shadow": teal([0.35, 0.3]),
+
+      // DSH's own glass and radii, tuned to the panes above
+      "--dsw-specific-menu": ["rgb(252 250 246 / 0.8)", "rgb(22 38 39 / 0.8)"],
+      "--dsw-menu-backdrop-filter": ["blur(32px) saturate(180%)", "blur(32px) saturate(150%)"],
+      "--dsw-alias-bg-mask-1": ["rgb(19 41 43 / 0.16)", "rgb(2 6 7 / 0.55)"],
+      "--dsw-mask-blur": ["blur(8px)", "blur(8px)"],
+      "--dsw-radius-panel": ["24px", "24px"],
 
       // Type. A font chosen in Settings still comes first (DSH puts the
       // person's list ahead of these defaults)
@@ -310,6 +360,252 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /* ──────────────────────────── the material ───────────────────────── */
+
+    // Glass over cloth (DESIGN.md, Material). DSH's panes keep their layout
+    // and behaviour; these rules only change what they're made of. Every
+    // DSH class named here is checked against the pinned DSH
+    // (tests/brand.test.js), so a bump that renames one fails a test first.
+    // Rules sit under html[data-kh-glass] (set by installStyles): it outranks
+    // DSH's single-class rules whatever order the stylesheets load in.
+    //
+    // A pane's glass is drawn on its ::before, never on the pane: a
+    // backdrop-filter on the pane itself would trap DSH's position: fixed
+    // children (the collapsed sidebar's buttons) inside it.
+    const G = "html[data-kh-glass]"
+    const PANES = [
+      ".hHd-Xa_root:not(.hHd-Xa_collapsed)", // sidebar
+      ".uV2eYG_card", // composer
+      ".mna1RW_card", // approval
+      ".VOzbGW_panel", // settings
+    ]
+    // A plain selector list, not :is(): each pane keeps its own specificity,
+    // so a pane's own rule below wins over these shared ones
+    const panes = (suffix = "") => PANES.map((pane) => `${G} ${pane}${suffix}`).join(",\n")
+
+    // Fine grain on the ground, so the glass has something to bend
+    const GRAIN =
+      "data:image/svg+xml," +
+      encodeURIComponent(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'>" +
+          "<filter id='g'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/>" +
+          "<feColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 .09 0 0 0 0'/></filter>" +
+          "<rect width='100%' height='100%' filter='url(#g)'/></svg>"
+      )
+
+    const GLASS_CSS = `
+${G} body {
+  --kh-ease: cubic-bezier(.2, .8, .2, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+/* DSH's elevations, re-declared on every element as DSH does, so all its
+   other floating surfaces share the panes' lift */
+${G} body, ${G} body * {
+  --dsw-elevation-soft: var(--dsw-elevation-stroke), var(--kh-lift);
+  --dsw-elevation-panel: var(--dsw-elevation-stroke), var(--kh-lift);
+  --dsw-elevation-prominent: var(--dsw-elevation-stroke), var(--kh-lift-high);
+}
+
+/* ── The ground ── */
+${G} .pI_x6G_frame {
+  background-color: var(--dsw-alias-bg-base);
+  background-image:
+    url("${GRAIN}"),
+    radial-gradient(80vmax 60vmax at 30% -10%, var(--kh-ground-a), transparent 62%),
+    radial-gradient(70vmax 55vmax at 100% 100%, var(--kh-ground-b), transparent 60%);
+}
+${G} .pI_x6G_frame::before,
+${G} .pI_x6G_sidebarCol,
+${G} .pI_x6G_centerCol,
+${G} .pI_x6G_rightbarCol { background: transparent; }
+
+/* ── Panes ── */
+${panes()} {
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+  box-shadow: var(--kh-lift);
+  transition: box-shadow .24s var(--kh-ease);
+}
+${panes("::before")} {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--kh-pane, var(--kh-glass));
+  -webkit-backdrop-filter: var(--kh-blur);
+  backdrop-filter: var(--kh-blur);
+  box-shadow: var(--kh-rim);
+  transition: box-shadow .24s var(--kh-ease);
+}
+
+/* Sidebar: a pane floating on the ground, inset from the window's edges.
+   DSH sizes the sidebar inline (it resizes), so only the glass is inset
+   and the content padded to sit inside it */
+${G} .hHd-Xa_root:not(.hHd-Xa_collapsed) {
+  --dsh-sidebar-inline-padding: 20px;
+  padding-top: 16px;
+  padding-bottom: 14px;
+  box-shadow: none;
+}
+${G} .hHd-Xa_root:not(.hHd-Xa_collapsed)::before {
+  inset: 10px 6px 10px 10px;
+  border-radius: 22px;
+  box-shadow: var(--kh-rim), 0 1px 1px var(--kh-shade), 0 14px 32px -22px var(--kh-shade);
+}
+${G} .hHd-Xa_footArea { background: transparent; }
+/* The list's scroll fade is painted in DSH's solid sidebar colour, which
+   would show as a band on glass */
+${G} .bhn1Oq_fade { display: none; }
+${G} .YDXeBa_sessionRow { border-radius: 10px; }
+${G} .YDXeBa_sessionRow.YDXeBa_selected { background: var(--kh-chip); box-shadow: var(--kh-rim); }
+${G} .hHd-Xa_root:not(.hHd-Xa_collapsed) .hHd-Xa_newSession {
+  height: 40px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--kh-chip);
+  box-shadow: var(--kh-rim), 0 1px 2px var(--kh-shade), 0 6px 14px -8px var(--kh-shade);
+  transition: background-color .18s var(--kh-ease), transform .18s var(--kh-ease);
+}
+${G} .hHd-Xa_root:not(.hHd-Xa_collapsed) .hHd-Xa_newSession:hover { background: var(--kh-chip-hover); }
+${G} .hHd-Xa_root:not(.hHd-Xa_collapsed) .hHd-Xa_newSession svg { color: var(--dsw-alias-link); }
+${G} .hHd-Xa_panelRow { border-radius: 10px; transition: background-color .16s var(--kh-ease); }
+
+/* Composer: the thickest pane, where the person types; it lights teal
+   while it has focus */
+${G} .uV2eYG_card { --kh-pane: var(--kh-glass-thick); }
+${G} .uV2eYG_card:focus-within { box-shadow: 0 0 0 4px var(--kh-focus-halo), var(--kh-lift); }
+${G} .uV2eYG_card:focus-within::before { box-shadow: var(--kh-rim), inset 0 0 0 1px var(--kh-focus-edge); }
+${G} .uV2eYG_primary {
+  color: var(--dsw-alias-label-primary-foreground);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .28), inset 0 -1px 0 rgb(0 0 0 / .14), 0 6px 14px -5px var(--kh-press-shadow);
+  transition: background-color .18s var(--kh-ease), transform .18s var(--kh-ease), box-shadow .18s var(--kh-ease);
+}
+${G} .uV2eYG_primary:active:not(:disabled) { transform: translateY(-2px) scale(.93); }
+${G} .uV2eYG_primary:disabled {
+  opacity: 1;
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--kh-well);
+  box-shadow: inset 0 0 0 .5px var(--kh-edge);
+}
+
+/* Approval: the same pane, edged in saffron while it waits */
+${G} .mna1RW_card {
+  --kh-pane: var(--kh-glass-thick);
+  border-color: var(--kh-warn-edge);
+  box-shadow: 0 0 0 4px var(--kh-warn-halo), var(--kh-lift);
+}
+
+/* Settings: a pane over a blurred scrim, its sections on a quiet well */
+${G} .VOzbGW_panel { --kh-pane: var(--kh-glass-thick); box-shadow: var(--kh-lift-high); }
+${G} .VOzbGW_nav { background: var(--kh-well); box-shadow: inset -0.5px 0 0 var(--kh-edge); }
+${G} .VOzbGW_navTitle {
+  font-family: var(--dsw-font-family-brand);
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 440;
+  font-variation-settings: "opsz" 48, "SOFT" 60;
+  letter-spacing: -0.016em;
+}
+${G} .VOzbGW_navCell { border-radius: 10px; transition: background-color .16s var(--kh-ease); }
+${G} .VOzbGW_navCell.VOzbGW_active {
+  font-weight: 500;
+  background: var(--kh-chip);
+  box-shadow: var(--kh-rim), 0 1px 2px var(--kh-shade);
+}
+${G} .VOzbGW_navCell.VOzbGW_active svg { color: var(--dsw-alias-link); }
+${G} .VOzbGW_close { border-radius: 999px; }
+
+/* ── The conversation ── */
+${G} .wSkVaW_crumbCurrent { font-weight: 560; letter-spacing: -0.011em; }
+/* Chat and Trajectory: a segmented control instead of underlines */
+${G} .wSkVaW_viewTabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--kh-well);
+  box-shadow: inset 0 0 0 .5px var(--kh-edge);
+}
+${G} .wSkVaW_tab {
+  min-height: 26px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: var(--dsw-alias-label-secondary);
+  transition: color .16s var(--kh-ease), background-color .16s var(--kh-ease);
+}
+${G} .wSkVaW_tab:hover { color: var(--dsw-alias-label-primary); }
+${G} .wSkVaW_tab::after { display: none; }
+${G} .wSkVaW_tabActive {
+  color: var(--dsw-alias-label-primary);
+  background: var(--kh-chip);
+  box-shadow: var(--kh-rim), 0 1px 2px var(--kh-shade);
+}
+/* The person's message: a teal-dyed pane, its corner turned toward them */
+${G} .Sixlwa_bubble {
+  border-radius: 20px 20px 6px 20px;
+  box-shadow: var(--kh-bubble-rim);
+}
+${G} .xzv4MW_timeStart { font-variant-numeric: tabular-nums; }
+
+/* The agent at work: a running stitch in saffron thread instead of
+   DeepSeek's whale */
+${G} .EvIC1a_runningWhaleAnimated,
+${G} .EvIC1a_runningWhaleStill { display: none !important; }
+${G} .EvIC1a_runningIcon::before {
+  content: "";
+  position: absolute;
+  inset: calc(50% - 1px) 0;
+  border-radius: 1px;
+  background: repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 5.5px);
+  -webkit-mask: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+}
+
+/* ── The start screen ── */
+${G} .kh-hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -56px;
+  left: 50%;
+  width: min(440px, 100%);
+  height: 260px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: radial-gradient(closest-side, var(--kh-halo), transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  ${G} .EvIC1a_runningIcon::before { animation: kh-running 0.7s linear infinite; }
+  ${G} .hHd-Xa_root:not(.hHd-Xa_collapsed) .hHd-Xa_newSession:active { transform: scale(.985); }
+}
+@keyframes kh-running { to { background-position: 5.5px 0; } }
+
+/* Solid panes where transparency is turned down or glass isn't drawn */
+@media (prefers-reduced-transparency: reduce) {
+  ${G} body {
+    --kh-glass: var(--dsw-alias-bg-layer-1) !important;
+    --kh-glass-thick: var(--dsw-alias-bg-layer-2) !important;
+    --kh-blur: none !important;
+  }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  ${G} body {
+    --kh-glass: var(--dsw-alias-bg-layer-1) !important;
+    --kh-glass-thick: var(--dsw-alias-bg-layer-2) !important;
+  }
+}
+@media (prefers-contrast: more) {
+  ${G} body { --kh-edge: var(--dsw-alias-border-l4) !important; }
+  ${panes("::before")} { box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l4); }
+}
+`
+
     /* ────────────────────────────── styles ───────────────────────────── */
 
     const CSS = `
@@ -345,6 +641,8 @@ span:has(.kh-hero) + span { display: none !important; }
    must fit the column instead, down to phone width */
 span:has(> div > .kh-hero) { flex: 1 1 auto; min-width: 0; max-width: 100%; }
 .kh-hero {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -408,6 +706,7 @@ span:has(> div > .kh-hero) { flex: 1 1 auto; min-width: 0; max-width: 100%; }
   .kh-hero-question { font-size: 28px; line-height: 34px; }
   .kh-stitch { width: 64px; height: 64px; }
 }
+${GLASS_CSS}
 `
 
     function installStyles() {
@@ -415,7 +714,11 @@ span:has(> div > .kh-hero) { flex: 1 1 auto; min-width: 0; max-width: 100%; }
       tag.dataset.plugin = PLUGIN
       tag.textContent = CSS
       document.head.appendChild(tag)
-      return () => tag.remove()
+      document.documentElement.dataset.khGlass = ""
+      return () => {
+        tag.remove()
+        delete document.documentElement.dataset.khGlass
+      }
     }
 
     /* ─────────────────────────── title and icon ──────────────────────── */

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { lstatSync, readFileSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { join } from "node:path"
 import { test } from "node:test"
@@ -65,6 +65,7 @@ function loadClient() {
   const link = { href: "favicon.svg" }
   const document = {
     title: "DeepSeek Harness",
+    documentElement: { dataset: {} },
     head: { appendChild: (tag) => styles.push(tag) },
     querySelectorAll: () => [link],
     createElement: () => ({ dataset: {}, remove() {} }),
@@ -96,7 +97,7 @@ function loadClient() {
 }
 
 test("the browser half registers the theme layer, the brand slots and its styles", () => {
-  const { loaded, exports, slots, theme, styles, document, link, observed } = loadClient()
+  const { loaded, exports, slots, theme, styles, document, link, observed, effects } = loadClient()
   assert.equal(loaded.id, "@kriya-ai/harness-brand")
   // Copied: arrays from the vm's own realm
   assert.deepEqual([...exports.inject], ["slots", "theme"])
@@ -116,6 +117,10 @@ test("the browser half registers the theme layer, the brand slots and its styles
     assert.equal(typeof value.dark, "string", name)
   }
   assert.ok(styles.some((tag) => tag.textContent.includes(".kh-hero")))
+  // The material is on while the styles are, and off with them
+  assert.equal(document.documentElement.dataset.khGlass, "")
+  effects.find((e) => e.label === "kriya: styles and fonts").dispose()
+  assert.equal(document.documentElement.dataset.khGlass, undefined)
 
   assert.match(link.href, /^data:image\/svg\+xml,/)
   assert.equal(document.title, "Kriya Harness")
@@ -171,6 +176,55 @@ test("text contrast: body at least 7:1, secondary and action text at least 4.5:1
   // Text on the primary button
   assert.ok(contrast(T["--dsw-alias-label-primary-foreground"][0], T["--dsw-alias-button-primary-fill"][0]) >= 7)
   assert.ok(contrast(T["--dsw-alias-label-primary-foreground"][1], T["--dsw-alias-button-primary-fill"][1]) >= 7)
+})
+
+// Text on glass: a pane's tint laid over the ground it floats on (paper,
+// and paper under each of the ground's two lights)
+const over = (tint, hex) => {
+  const [r, g, b, a] = tint.match(/^rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)$/).slice(1).map(Number)
+  const base = hex.slice(1).match(/../g).map((h) => parseInt(h, 16))
+  return "#" + [r, g, b].map((c, i) => Math.round(c * a + base[i] * (1 - a)).toString(16).padStart(2, "0")).join("")
+}
+
+test("text contrast holds on every glass pane, over every part of the ground, in both schemes", () => {
+  const T = loadClient().exports.TOKENS
+  const rules = [
+    ["--dsw-alias-label-primary", 7],
+    ["--dsw-alias-label-secondary", 4.5],
+    ["--dsw-alias-label-tertiary", 4.5],
+    ["--dsw-alias-link", 4.5],
+  ]
+  for (const [scheme, i] of [["light", 0], ["dark", 1]]) {
+    const paper = T["--dsw-alias-bg-base"][i]
+    const grounds = [paper, over(T["--kh-ground-a"][i], paper), over(T["--kh-ground-b"][i], paper)]
+    for (const pane of ["--kh-glass", "--kh-glass-thick", "--dsw-specific-menu"])
+      for (const ground of grounds)
+        for (const [label, min] of rules) {
+          const ratio = contrast(T[label][i], over(T[pane][i], ground))
+          assert.ok(ratio >= min, `${label} on ${pane} over ${ground} (${scheme}): ${ratio.toFixed(2)} < ${min}`)
+        }
+  }
+})
+
+test("panes turn solid where transparency is reduced or glass can't be drawn", () => {
+  const { CSS } = loadClient().exports
+  assert.match(CSS, /@media \(prefers-reduced-transparency: reduce\)[^@]*--kh-blur: none !important/)
+  assert.match(CSS, /@supports not \(\(backdrop-filter: blur\(1px\)\)[^@]*--kh-glass: var\(--dsw-alias-bg-layer-1\) !important/)
+})
+
+// The material styles DSH's own elements by their (hashed) class names;
+// each must still exist in the pinned DSH
+test("every DSH class the material styles exists in the pinned DSH", () => {
+  const { CSS } = loadClient().exports
+  const scope = join(require.resolve("@deepseek-ai/dsh/package.json"), "..", "..")
+  const dsh = readdirSync(scope)
+    .map((name) => join(scope, name, "lib", "client.js"))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n")
+  const classes = new Set([...CSS.matchAll(/\.([A-Za-z0-9-]{6}_[A-Za-z][A-Za-z0-9]*)/g)].map((m) => m[1]))
+  assert.ok(classes.size >= 20, `found ${classes.size} DSH classes`)
+  for (const name of classes) assert.ok(dsh.includes(name), `${name} is gone from the pinned DSH`)
 })
 
 // What the theme relies on in the pinned DSH; a bump that moves any of
