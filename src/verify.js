@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
+import { checkpoint } from "./checkpoints.js"
+import { classify } from "./failure.js"
 import { kriyaHome } from "./paths.js"
+import { noteFailure } from "./rules.js"
 import { projectRoot } from "./skill-switches.js"
 
 // The Kriya loop's verify step (H14a, docs/kriya-harness/KRIYA_LOOP.md in
@@ -156,9 +159,9 @@ export function clearCheck(cwd) {
 // contents) is taken with read-only git commands (no objects written, no
 // index refresh), so Read only stays read-only. Outside a repository there
 // is none, and a pass stays a pass.
-const git = (cwd, args, input) =>
+const git = (cwd, args, input, encoding = "utf8") =>
   new Promise((done) => {
-    const child = execFile("git", args, { cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 64 * 1024 * 1024 }, (error, stdout) =>
+    const child = execFile("git", args, { cwd, encoding, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 64 * 1024 * 1024 }, (error, stdout) =>
       done(error ? null : stdout)
     )
     if (input !== undefined) child.stdin.end(input)
@@ -195,6 +198,42 @@ const CHECK_FILE = [
   /(^|\/)\.mocharc[^/]*$/,
 ]
 export const checkFiles = (paths) => paths.filter((p) => CHECK_FILE.some((re) => re.test(p)))
+
+/**
+ * Loop v2: runs `run` with the given test and check files as they are at
+ * HEAD (an added one is moved aside), then puts the work's own versions
+ * back. A pass that holds only with the changed tests is a weakened check.
+ * Reads git (`show`), never writes it: the person's index and refs stay.
+ * shortcut: the baseline is HEAD, so the person's own uncommitted test edits
+ * count too; commit them first (or use the v1 loop) until the baseline is the
+ * session's first checkpoint.
+ * @returns {Promise<undefined | Awaited<ReturnType<typeof run>>>} undefined outside a repository or before a first commit
+ */
+export async function onOriginals(cwd, paths, run) {
+  const root = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim()
+  if (!root || (await git(root, ["rev-parse", "--verify", "-q", "HEAD"])) === null) return undefined
+  const saved = []
+  try {
+    for (const rel of paths) {
+      const file = join(root, rel)
+      const original = await git(root, ["show", `HEAD:${rel}`], undefined, "buffer")
+      const entry = { file, mine: existsSync(file) ? readFileSync(file) : null }
+      saved.push(entry)
+      if (original === null) rmSync(file, { force: true })
+      else {
+        // The first folder this had to make (a deleted test's), removed again after
+        entry.made = mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, original)
+      }
+    }
+    return await run()
+  } finally {
+    for (const { file, mine, made } of saved.toReversed()) {
+      if (mine === null) rmSync(made ?? file, { recursive: true, force: true })
+      else writeFileSync(file, mine)
+    }
+  }
+}
 
 /* ───────────────────────────── progress ───────────────────────────── */
 
@@ -299,10 +338,11 @@ export const normalStep = (step) => {
 
 /**
  * Runs the project's confirmed check for one step and records it.
- * @param {{ cwd: string, sessionId: string, step?: string, run: (command: string) => Promise<{ exitCode: number | null, timedOut: boolean, aborted?: boolean, output: string }>, now?: () => Date, tree?: (cwd: string) => Promise<{ fingerprint: string, changed: string[] } | undefined> }} input
+ * @param {{ cwd: string, sessionId: string, step?: string, run: (command: string) => Promise<{ exitCode: number | null, timedOut: boolean, aborted?: boolean, output: string }>, now?: () => Date, tree?: (cwd: string) => Promise<{ fingerprint: string, changed: string[] } | undefined>, v2?: { readOnly?: boolean } }} input
  *   run executes the command under the session's own sandbox (the tool passes DSH's shell)
+ *   v2 (loop v2, KRIYA_LOOP_V2=on): a failure's class and excerpt, a pass that changed tests re-run on the originals, repeated failures proposed as rules
  */
-export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree }) {
+export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree, v2 }) {
   const label = normalStep(step)
   const check = confirmedCheck(cwd)
   if (!check) return { status: "not configured", step: label, suggestions: discoverChecks(cwd) }
@@ -314,19 +354,34 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
   const started = now()
   const result = await run(check.command)
   if (result.aborted) throw new VerifyError("The check was stopped.")
-  const status = result.exitCode === 0 && !result.timedOut ? "pass" : "fail"
-  const touched = work && status === "pass" ? checkFiles(work.changed) : []
+  const passes = (r) => r.exitCode === 0 && !r.timedOut
+  let status = passes(result) ? "pass" : "fail"
+  let touched = work && status === "pass" ? checkFiles(work.changed) : []
+  // v2: a pass that changed tests or the check's files must hold on the originals too
+  let checked = result
+  let weakened
+  if (v2 && !v2.readOnly && touched.length) {
+    // The work's own files are saved first, so a crash mid-swap loses nothing (kriya undo); no save, no swap
+    const kept = await checkpoint(cwd, sessionId, "before the check on the committed tests").catch(() => undefined)
+    const originals = kept && (await onOriginals(cwd, touched, () => run(check.command)))
+    if (originals?.aborted) throw new VerifyError("The check was stopped.")
+    if (originals && !passes(originals)) [status, checked, weakened, touched] = ["fail", originals, touched, []]
+  }
+  const failure = v2 && status === "fail" ? (weakened ? { kind: "tests changed", excerpt: classify(checked).excerpt } : classify(checked)) : undefined
   const progress = recordRun(check.root, sessionId, {
     at: started.toISOString(),
     step: label,
     command: check.command,
     status,
-    exitCode: result.exitCode,
-    timedOut: result.timedOut,
+    exitCode: checked.exitCode,
+    timedOut: checked.timedOut,
     durationMs: Math.max(0, now().getTime() - started.getTime()),
     ...(work && { tree: work.fingerprint }),
     ...(touched.length && { touched }),
+    ...(failure && { kind: failure.kind }),
+    ...(weakened && { weakened }),
   })
+  const proposed = failure && noteFailure(check.root, check.command, failure, now)
   const after = verdict(progress)
   const mine = after.steps.find((s) => s.step === label)
   return {
@@ -335,11 +390,14 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     attempts: mine.attempts,
     attemptsLeft: mine.status === "fail" ? MAX_ATTEMPTS - mine.failures : 0,
     command: check.command,
-    exitCode: result.exitCode,
-    timedOut: result.timedOut,
-    output: status === "pass" ? "" : trimOutput(result.output),
+    exitCode: checked.exitCode,
+    timedOut: checked.timedOut,
+    output: status === "pass" ? "" : failure ? failure.excerpt : trimOutput(result.output),
     verdict: after.status,
     ...(touched.length && { touched }),
+    ...(failure && { failure: failure.kind }),
+    ...(weakened && { weakened }),
+    ...(proposed && { proposed: proposed.text }),
   }
 }
 

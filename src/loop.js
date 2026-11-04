@@ -1,3 +1,4 @@
+import { RANK } from "./failure.js"
 import { MAX_ATTEMPTS, normalStep, readProgress, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
 import { projectRoot } from "./skill-switches.js"
 
@@ -21,11 +22,25 @@ const FILES = 12
 const clean = (value, limit) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "")
 
 /**
- * A plan as the agent proposed it, checked: a goal and 1..MAX_STEPS steps,
- * each with a title, a done-when sentence and the files it expects to touch.
- * @returns {{ goal: string, steps: Array<{ title: string, doneWhen: string, files: string[] }> }}
+ * Loop v2: the steps a step needs first, as step numbers. Each must be an
+ * earlier step, so every plan is a DAG listed in a topological order (no
+ * cycle can be written down). Absent: the step before it, as in v1.
  */
-export function validatePlan(input) {
+function dependencies(value, n) {
+  if (value === undefined) return n > 1 ? [n - 1] : []
+  if (!Array.isArray(value)) throw new VerifyError(`Step ${n}: after is a list of earlier step numbers.`)
+  const deps = [...new Set(value.map(Number))]
+  for (const d of deps) if (!Number.isInteger(d) || d < 1 || d >= n) throw new VerifyError(`Step ${n} can only come after earlier steps (1 to ${n - 1}); list the steps in an order where each needs only steps above it.`)
+  return deps.sort((a, b) => a - b)
+}
+
+/**
+ * A plan as the agent proposed it, checked: a goal and 1..MAX_STEPS steps,
+ * each with a title, a done-when sentence and the files it expects to touch;
+ * with v2, also the earlier steps each one needs (`after`).
+ * @returns {{ goal: string, steps: Array<{ title: string, doneWhen: string, files: string[], after?: number[] }> }}
+ */
+export function validatePlan(input, { v2 = false } = {}) {
   const goal = clean(input?.goal, GOAL)
   if (!goal) throw new VerifyError("A plan needs a goal: one sentence on what the task is for.")
   const steps = Array.isArray(input?.steps) ? input.steps : []
@@ -37,7 +52,7 @@ export function validatePlan(input) {
     if (!title) throw new VerifyError(`Step ${i + 1} needs a title.`)
     if (!doneWhen) throw new VerifyError(`Step ${i + 1} needs done_when: what is true when it's finished.`)
     const files = (Array.isArray(step?.files) ? step.files : []).map((f) => clean(f, 300)).filter(Boolean).slice(0, FILES)
-    return { title, doneWhen, files }
+    return { title, doneWhen, files, ...(v2 && { after: dependencies(step?.after, i + 1) }) }
   })
   const titles = new Set(out.map((s) => s.title.toLowerCase()))
   if (titles.size !== out.length) throw new VerifyError("Two steps have the same title; each step is one distinct piece of work.")
@@ -51,8 +66,8 @@ export const stepLabel = (plan, n) => normalStep(`${n} ${plan.steps[n - 1].title
  * Saves the session's plan beside its runs. A new plan starts its steps
  * over; the earlier plans and runs are kept, and at most MAX_PLANS are made.
  */
-export function savePlan(cwd, sessionId, input, now = () => new Date()) {
-  const plan = validatePlan(input)
+export function savePlan(cwd, sessionId, input, now = () => new Date(), options = {}) {
+  const plan = validatePlan(input, options)
   const root = projectRoot(cwd)
   const progress = readProgress(root, sessionId)
   const earlier = [...(progress.earlier ?? []), ...(progress.plan ? [{ plan: progress.plan, runs: progress.runs }] : [])]
@@ -70,15 +85,19 @@ export function planStatus(cwd, sessionId) {
   const progress = readProgress(projectRoot(cwd), sessionId)
   if (!progress.plan) return undefined
   const { steps } = verdict(progress)
-  return progress.plan.steps.map((step, i) => {
+  const rows = []
+  progress.plan.steps.forEach((step, i) => {
     const label = stepLabel(progress.plan, i + 1)
     const found = steps.find((s) => s.step === label)
-    return { n: i + 1, title: step.title, status: found?.status ?? "not started", attempts: found?.attempts ?? 0 }
+    // v2: a step that needs a blocked or skipped step is skipped; one pass in plan order suffices, since deps point back
+    const stuck = !found && step.after?.some((d) => ["blocked", "skipped"].includes(rows[d - 1].status))
+    rows.push({ n: i + 1, title: step.title, status: stuck ? "skipped" : (found?.status ?? "not started"), attempts: found?.attempts ?? 0, ...(step.after && { after: step.after }) })
   })
+  return rows
 }
 
-/** What a fresh builder is told: the goal, the plan, its one step and, on a retry, what failed */
-export function builderPrompt(plan, n, previous) {
+/** What a fresh builder is told: the goal, the plan, its one step and, on a retry, what failed; with v2, the person's confirmed rules */
+export function builderPrompt(plan, n, previous, rules = []) {
   const step = plan.steps[n - 1]
   const lines = [
     `You are building one step of a larger task. Do only this step, then stop.`,
@@ -92,6 +111,7 @@ export function builderPrompt(plan, n, previous) {
     `It is done when: ${step.doneWhen}`,
   ]
   if (step.files.length) lines.push(`Files it is expected to touch: ${step.files.join(", ")}`)
+  if (rules.length) lines.push("", "Rules for this project, confirmed by the person:", ...rules)
   lines.push(
     "",
     "Read the code you need, make the change, and keep it small. Don't change other steps' work unless your step needs it.",
@@ -101,12 +121,15 @@ export function builderPrompt(plan, n, previous) {
   if (previous)
     lines.push(
       "",
-      `This is attempt ${previous.attempt + 1} of ${MAX_ATTEMPTS}. The previous attempt failed the project's check (\`${previous.command}\`, ${previous.timedOut ? "timed out" : `exit ${previous.exitCode}`}). Its output:`,
+      `This is attempt ${previous.attempt + 1} of ${MAX_ATTEMPTS}. The previous attempt failed the project's check (\`${previous.command}\`, ${previous.timedOut ? "timed out" : `exit ${previous.exitCode}`}${previous.kind ? `; failure class: ${previous.kind}` : ""}). ${previous.kind ? "The lines that name the failure" : "Its output"}:`,
       "```",
       trimOutput(previous.output, 3000),
       "```",
       "Find the cause in the code and fix it; the files may already contain the previous attempt's changes."
     )
+  if (previous?.kind === "tests changed")
+    lines.push("The check passed only with changed tests or check files; on the originals it fails (above). Fix the code so the original tests pass; don't change existing tests.")
+  if (previous?.note) lines.push(previous.note)
   return lines.join("\n")
 }
 
@@ -120,29 +143,56 @@ const textOf = (blocks) =>
 /**
  * Runs one plan step to pass or blocked: a fresh builder, the harness's
  * check, and a new builder with the failure until MAX_ATTEMPTS runs.
- * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any> }} input
+ * With v2: only the step's own dependencies must have passed (one that is
+ * blocked or skipped skips it, building nothing); each attempt's files are
+ * saved, and an attempt that fails further from passing than the best one
+ * so far (RANK: syntax < type < assertion) is set aside, the files going
+ * back to the best attempt's before the next builder. Same attempt bound.
+ * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any>, v2?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, rules?: string[] } }} input
  */
-export async function runStep({ cwd, sessionId, n, spawn, verify }) {
+export async function runStep({ cwd, sessionId, n, spawn, verify, v2 }) {
   const plan = readPlan(cwd, sessionId)
   if (!plan) throw new VerifyError("There's no plan yet: call kriya_plan first.")
   if (!Number.isInteger(n) || n < 1 || n > plan.steps.length) throw new VerifyError(`The plan has steps 1 to ${plan.steps.length}.`)
   const status = planStatus(cwd, sessionId)
-  const open = status.find((s) => s.n < n && s.status !== "pass" && s.status !== "blocked")
-  if (open) throw new VerifyError(`Steps run in order: step ${open.n} (${open.title}) isn't finished yet.`)
+  const deps = plan.steps[n - 1].after
+  if (deps) {
+    const stuck = deps.map((d) => status[d - 1]).find((s) => s.status === "blocked" || s.status === "skipped")
+    if (stuck) return { status: "skipped", step: n, title: plan.steps[n - 1].title, builders: [], note: `It needs step ${stuck.n} (${stuck.title}), which is ${stuck.status}, so nothing was built.` }
+    const open = deps.map((d) => status[d - 1]).find((s) => s.status !== "pass")
+    if (open) throw new VerifyError(`Step ${n} needs step ${open.n} (${open.title}) first, and it hasn't passed yet.`)
+  } else {
+    const open = status.find((s) => s.n < n && s.status !== "pass" && s.status !== "blocked")
+    if (open) throw new VerifyError(`Steps run in order: step ${open.n} (${open.title}) isn't finished yet.`)
+  }
   const label = stepLabel(plan, n)
   const builders = []
   let previous
+  let best
   for (;;) {
     const before = status[n - 1]
     if (before.status === "pass") return { status: "pass", step: n, title: plan.steps[n - 1].title, attempts: before.attempts, builders, note: "This step already passed." }
-    const built = await spawn(builderPrompt(plan, n, previous), `Step ${n}: ${plan.steps[n - 1].title}`)
+    const built = await spawn(builderPrompt(plan, n, previous, v2?.rules), `Step ${n}: ${plan.steps[n - 1].title}`)
     builders.push({ stopReason: built.stopReason ?? "completed", summary: textOf(built.output).slice(-600) })
+    const tree = await v2?.snapshot?.(`attempt ${builders.length} of step ${n}`)
     const checked = await verify(label)
     if (checked.status === "not configured")
       return { status: "not checked", step: n, title: plan.steps[n - 1].title, builders, suggestions: checked.suggestions }
     if (checked.status === "pass" || checked.status === "blocked")
       return { status: checked.status, step: n, title: plan.steps[n - 1].title, attempts: checked.attempts, builders, command: checked.command, output: checked.output ?? "", verdict: checked.verdict }
-    previous = { attempt: checked.attempts, command: checked.command, exitCode: checked.exitCode, timedOut: checked.timedOut, output: checked.output }
+    previous = { attempt: checked.attempts, command: checked.command, exitCode: checked.exitCode, timedOut: checked.timedOut, output: checked.output, ...(checked.failure && { kind: checked.failure }) }
+    if (v2) {
+      const rank = RANK[checked.failure] ?? RANK.unknown
+      if (best?.tree && v2.restore && rank < best.rank) {
+        await v2.restore(best.tree, `back to attempt ${best.attempt} of step ${n}`)
+        builders.at(-1).setAside = true
+        previous = {
+          ...best.previous,
+          attempt: checked.attempts,
+          note: `Attempt ${checked.attempts} failed further from passing (${checked.failure}) than attempt ${best.attempt} (${best.previous.kind}), so its changes were set aside: the files are as attempt ${best.attempt} left them, and the output above is that attempt's. Try a different fix.`,
+        }
+      } else best = { rank, tree, attempt: checked.attempts, previous }
+    }
     status[n - 1] = { ...before, status: "fail", attempts: checked.attempts }
   }
 }

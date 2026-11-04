@@ -1,8 +1,9 @@
 import { createUserMessage } from "@deepseek-ai/dsh-llm"
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
-import { checkpoint } from "../../src/checkpoints.js"
+import { checkpoint, restoreTree } from "../../src/checkpoints.js"
 import { MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
+import { confirmedRules } from "../../src/rules.js"
 import { currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 
 // The Kriya loop, node half (H14a; KRIYA_LOOP.md in the Kriya repository):
@@ -16,6 +17,10 @@ import { currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 // as a checkpoint on Kriya's own git ref (src/checkpoints.js, H14b), so
 // `kriya undo` goes back one step; not in Read only, where nothing changes.
 // Off unless kriya was started with --loop (the bundle row's switch).
+// Loop v2 (KRIYA_LOOP_V2=on, `--loop-v2`; KRIYA_LOOP_V2.md): plan steps
+// name the steps they need, failures carry a class, a pass that changed
+// tests must hold on the originals, a worse attempt is set aside, and the
+// person's confirmed rules reach the builders. Off, everything is as v1.
 
 export const name = "kriya-loop"
 export const inject = ["tools", "shell", "workingDirectory", "shellEnv", "systemPrompt"]
@@ -70,6 +75,10 @@ export const GUIDANCE =
   "kriya_step has a fresh agent build the step and the harness check it, retrying with the error; " +
   "don't redo a step's work yourself. If a step is blocked, stop and report it. End with each step's result."
 
+export const GUIDANCE_V2 =
+  " Give each step `after`: the numbers of the earlier steps it needs (none for a step that needs nothing); " +
+  "a step whose needed step is blocked is skipped, so the others still run."
+
 function present(value) {
   switch (value.status) {
     case "not configured":
@@ -91,7 +100,11 @@ function present(value) {
     default:
       return [
         `Step "${value.step}" fails: \`${value.command}\` ${value.timedOut ? "timed out" : `exited ${value.exitCode ?? "without a code"}`}. ${value.attemptsLeft} attempt${value.attemptsLeft === 1 ? "" : "s"} left.`,
+        value.failure === "tests changed"
+          ? `It passed only with changed tests or check files (${value.weakened.join(", ")}); with the originals it fails, as below. Fix the code, not the tests.`
+          : value.failure && `Failure class: ${value.failure}.`,
         value.output,
+        value.rules?.length && `Rules for this project, confirmed by the person:\n${value.rules.join("\n")}`,
       ]
         .filter(Boolean)
         .join("\n\n")
@@ -124,7 +137,9 @@ export function verifyTool(host) {
     async execute(args, exec) {
       if (!exec.agent) throw new VerifyError("kriya_verify needs a session.")
       const cwd = await host.cwd(exec)
-      return verifyStep({ cwd, sessionId: String(exec.agent.id), step: args.step, run: (command) => host.run(command, exec, cwd) })
+      const result = await verifyStep({ cwd, sessionId: String(exec.agent.id), step: args.step, run: (command) => host.run(command, exec, cwd), ...(host.v2 && { v2: host.v2(exec) }) })
+      const rules = host.v2 && result.status === "fail" ? confirmedRules(cwd) : []
+      return rules.length ? { ...result, rules } : result
     },
     presentCall: (args) => ({ card: "generic", title: "Verify", kind: "execute", rawInput: typeof args.step === "string" ? args.step : "all" }),
   })
@@ -139,17 +154,25 @@ const PLAN_STEP = {
     files: { type: "array", items: { type: "string" }, description: "Files the step expects to touch." },
   },
 }
+const PLAN_STEP_V2 = {
+  ...PLAN_STEP,
+  properties: {
+    ...PLAN_STEP.properties,
+    after: { type: "array", items: { type: "number" }, description: "Numbers of the earlier steps this one needs; [] for none. Default: the step before it." },
+  },
+}
 
-const renderStatus = (rows) => rows.map((r) => `${r.n}. ${r.title}: ${r.status}${r.attempts ? ` (${r.attempts} run${r.attempts === 1 ? "" : "s"})` : ""}`).join("\n")
+const renderStatus = (rows) =>
+  rows.map((r) => `${r.n}. ${r.title}${r.after?.length ? ` (after ${r.after.join(", ")})` : ""}: ${r.status}${r.attempts ? ` (${r.attempts} run${r.attempts === 1 ? "" : "s"})` : ""}`).join("\n")
 
-/** @param {{ isBuilder: (exec: any) => boolean, cwd: (exec: any) => Promise<string> }} host */
+/** @param {{ isBuilder: (exec: any) => boolean, cwd: (exec: any) => Promise<string>, v2?: unknown }} host */
 export function planTool(host) {
   return defineTool({
     name: "kriya_plan",
     description: `Record the plan for a task with several parts: a goal and 1 to ${MAX_STEPS} ordered steps. Then run each with kriya_step, in order.`,
     parameters: {
       goal: { type: "string", required: true, description: "What the task is for, in one sentence." },
-      steps: { type: "array", required: true, items: PLAN_STEP, description: `1 to ${MAX_STEPS} ordered steps.` },
+      steps: { type: "array", required: true, items: host.v2 ? PLAN_STEP_V2 : PLAN_STEP, description: `1 to ${MAX_STEPS} ordered steps.` },
     },
     output: {
       schema: { type: "object", additionalProperties: true, properties: { steps: { type: "array", required: true, items: { type: "object", additionalProperties: true, properties: {} } } } },
@@ -159,7 +182,7 @@ export function planTool(host) {
       if (!exec.agent) throw new VerifyError("kriya_plan needs a session.")
       if (host.isBuilder(exec)) throw new VerifyError("A step's builder doesn't plan; build your step and stop.")
       const cwd = await host.cwd(exec)
-      savePlan(cwd, String(exec.agent.id), args)
+      savePlan(cwd, String(exec.agent.id), args, undefined, { v2: Boolean(host.v2) })
       return { steps: planStatus(cwd, String(exec.agent.id)) }
     },
     presentCall: (args) => ({ card: "generic", title: "Plan", kind: "think", rawInput: typeof args.goal === "string" ? args.goal : "" }),
@@ -173,6 +196,8 @@ function presentStep(value) {
     lines.push("No check is confirmed for this project, so the step was built but not checked. Tell the person; they can confirm one with `kriya verify use <number>`.")
   if (value.status === "blocked") lines.push(`\`${value.command}\` kept failing. Stop and tell the person what failed:`, value.output)
   if (value.status === "pass" && value.verdict) lines.push(`Session verdict so far: ${value.verdict}.`)
+  const aside = value.builders?.filter((b) => b.setAside).length
+  if (aside) lines.push(`${aside} attempt${aside === 1 ? " was" : "s were"} set aside for failing further from passing than an earlier one (kept in kriya undo --list).`)
   if (value.note) lines.push(value.note)
   const last = value.builders?.at(-1)?.summary
   if (last) lines.push(`The builder's own summary (not evidence): ${last}`)
@@ -180,7 +205,8 @@ function presentStep(value) {
 }
 
 /**
- * @param {{ isBuilder: (exec: any) => boolean, cwd: (exec: any) => Promise<string>, spawn: (exec: any, prompt: string, label: string) => Promise<any>, verify: (exec: any, cwd: string, label: string) => Promise<any> }} host
+ * @param {{ isBuilder: (exec: any) => boolean, cwd: (exec: any) => Promise<string>, spawn: (exec: any, prompt: string, label: string) => Promise<any>, verify: (exec: any, cwd: string, label: string) => Promise<any>, steps?: (exec: any, cwd: string) => object }} host
+ *   steps: loop v2's snapshot, restore and rules for runStep
  */
 export function stepTool(host) {
   return defineTool({
@@ -204,6 +230,7 @@ export function stepTool(host) {
         n: Math.trunc(Number(args.step)),
         spawn: (prompt, label) => host.spawn(exec, prompt, label),
         verify: (label) => host.verify(exec, cwd, label),
+        ...(host.steps && { v2: host.steps(exec, cwd) }),
       })
     },
     presentCall: (args) => ({ card: "generic", title: "Build and check a step", kind: "execute", rawInput: `step ${args.step}` }),
@@ -237,7 +264,10 @@ export function recheckHook(host) {
 
 export function apply(ctx) {
   const sandboxPolicy = ctx.shell.sandboxMode === undefined ? undefined : ctx.get("sandboxPolicy")
+  const readOnly = (exec) => sandboxPolicy?.resolve({ session: exec.agent.session })?.mode === "read-only"
+  const v2 = process.env.KRIYA_LOOP_V2 === "on" ? (exec) => ({ readOnly: readOnly(exec) }) : undefined
   const host = {
+    v2,
     cwd: (exec) => ctx.workingDirectory.ensure(exec.agent, exec.signal),
     async run(command, exec, workdir) {
       const policy = sandboxPolicy?.resolve({ session: exec.agent.session })
@@ -265,6 +295,7 @@ export function apply(ctx) {
   // builder can't plan or run steps itself
   const builders = new Set()
   const loopHost = {
+    v2,
     cwd: host.cwd,
     isBuilder: (exec) => builders.has(String(exec.agent?.id)),
     async spawn(exec, prompt, label) {
@@ -286,7 +317,18 @@ export function apply(ctx) {
         exec.signal.removeEventListener("abort", stop)
       }
     },
-    verify: (exec, cwd, label) => verifyStep({ cwd, sessionId: String(exec.agent.id), step: label, run: (command) => host.run(command, exec, cwd) }),
+    verify: (exec, cwd, label) => verifyStep({ cwd, sessionId: String(exec.agent.id), step: label, run: (command) => host.run(command, exec, cwd), ...(v2 && { v2: v2(exec) }) }),
+    // Loop v2: each attempt's files saved on the session's checkpoint ref, and restored from it; never in Read only
+    ...(v2 && {
+      steps: (exec, cwd) =>
+        readOnly(exec)
+          ? { rules: confirmedRules(cwd) }
+          : {
+              rules: confirmedRules(cwd),
+              snapshot: async (label) => (await checkpoint(cwd, String(exec.agent.id), label))?.tree,
+              restore: (tree, label) => restoreTree(cwd, tree, label),
+            },
+    }),
   }
   ctx.tools.register(planTool(loopHost))
   ctx.tools.register(stepTool(loopHost))
@@ -294,10 +336,10 @@ export function apply(ctx) {
     "tools/pre-execute",
     checkpointHook({
       cwd: host.cwd,
-      readOnly: (exec) => sandboxPolicy?.resolve({ session: exec.agent.session })?.mode === "read-only",
+      readOnly,
       warn: (text) => ctx.logger("kriya-loop").warn(text),
     })
   )
   ctx.on("agent/turn-stopping", recheckHook({ cwd: host.cwd }))
-  ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: GUIDANCE })
+  ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: v2 ? GUIDANCE + GUIDANCE_V2 : GUIDANCE })
 }
