@@ -526,6 +526,9 @@
 - id: kriya-browser
   name: '@kriya-ai/harness-browser'
   disabled: !!js process.env.KRIYA_BROWSER !== 'on'
+- id: kriya-router
+  name: '@kriya-ai/harness-router'
+  disabled: !!js process.env.KRIYA_ROUTER !== 'on'
 - id: kriya-approvals
   name: '@kriya-ai/harness-approvals'
 - id: kriya-mirror

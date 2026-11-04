@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-router",
+  "description": "The intent router for Kriya Harness: a short brief of the skills and tools likely to help with the person's request",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

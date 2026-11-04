@@ -2,7 +2,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm"
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
-import { MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
+import { loopStateText, MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
 import { confirmedRules } from "../../src/rules.js"
 import { currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 
@@ -266,9 +266,15 @@ export function apply(ctx) {
   const sandboxPolicy = ctx.shell.sandboxMode === undefined ? undefined : ctx.get("sandboxPolicy")
   const readOnly = (exec) => sandboxPolicy?.resolve({ session: exec.agent.session })?.mode === "read-only"
   const v2 = process.env.KRIYA_LOOP_V2 === "on" ? (exec) => ({ readOnly: readOnly(exec) }) : undefined
+  // Each agent's folder, as its loop tools last resolved it (loop v2's state section)
+  const folders = new WeakMap()
   const host = {
     v2,
-    cwd: (exec) => ctx.workingDirectory.ensure(exec.agent, exec.signal),
+    async cwd(exec) {
+      const cwd = await ctx.workingDirectory.ensure(exec.agent, exec.signal)
+      if (exec.agent) folders.set(exec.agent, cwd)
+      return cwd
+    },
     async run(command, exec, workdir) {
       const policy = sandboxPolicy?.resolve({ session: exec.agent.session })
       const spec = ctx.shell.resolve({
@@ -342,4 +348,24 @@ export function apply(ctx) {
   )
   ctx.on("agent/turn-stopping", recheckHook({ cwd: host.cwd }))
   ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: v2 ? GUIDANCE + GUIDANCE_V2 : GUIDANCE })
+  // Loop v2, long tasks: the plan's state per agent, in a late section that
+  // compaction never condenses (after DSH's suffix, before the anchor's), so
+  // the cached prefix stays the same. The folder is the one the agent's last
+  // loop tool ran in; before a plan there is nothing to show
+  if (v2) {
+    ctx.systemPrompt.section({
+      name: "kriya:loop-state",
+      order: 10250,
+      interpolate: false,
+      text: ({ scope }) => {
+        const cwd = scope && folders.get(scope)
+        if (!cwd) return ""
+        try {
+          return loopStateText(cwd, String(scope.id))
+        } catch {
+          return ""
+        }
+      },
+    })
+  }
 }

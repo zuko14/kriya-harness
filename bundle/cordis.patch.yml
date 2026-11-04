@@ -230,6 +230,15 @@
       name: '@kriya-ai/harness-browser'
       disabled: !!js process.env.KRIYA_BROWSER !== 'on'
 
+# The intent router (plugins/router): for the person's latest message, a
+# short brief of the skills likely to help and the tools to start with, in
+# a late prompt section. Hides and adds nothing. Off unless kriya was
+# started with --router (KRIYA_ROUTER=on): off, the prompt is as before
+- insert:
+    - id: kriya-router
+      name: '@kriya-ai/harness-router'
+      disabled: !!js process.env.KRIYA_ROUTER !== 'on'
+
 # Kriya modes (src/modes.js): the launcher sets KRIYA_SANDBOX,
 # KRIYA_APPROVAL and KRIYA_PRESET from `--mode`; anything else falls back
 # to Ask (the HD-02 default: workspace-write, approvals ask). DSH's `never`

@@ -114,6 +114,17 @@ connectors), **Progress** (goal → plan → build → verify → done from the
 loop's own check runs) and **Preview** (an app on this computer, localhost
 only, in a frame).
 
+Intent router (beta, off; `kriya --router`, `kriya run --router`,
+`KRIYA_ROUTER=on`): for each request, code (no model call) writes a short
+brief into the prompt: the request's intent, the skills of your catalog most
+likely to help (BM25 over their names and descriptions) and the tools to
+start with, naming only tools the agent has. It hides and adds nothing.
+
+Long tasks on a small window (with `--loop-v2`): the plan's state (goal,
+each step's status, the next step, the last check) is kept in a part of the
+prompt that compaction never condenses, so the agent keeps its place
+however often older turns are summarised.
+
 Agent's browser (beta, off; `kriya --browser-tools`, `kriya run
 --browser-tools`, `KRIYA_BROWSER=on`): the agent tests and reviews apps on
 this computer with your installed Google Chrome (headless, its own profile
