@@ -271,6 +271,13 @@
               "required": ["id", "object", "owned_by"],
               "additionalProperties": false
             }
+          },
+          "bodyEncodings": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "const": "gzip+base64"
+            }
           }
         },
         "required": ["object", "data"],

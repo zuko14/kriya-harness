@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
 .kh-pg-ico.blocked { border-color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-state-error-primary); color: var(--dsw-alias-bg-layer-0, #fff); }
 .kh-pg-ico.skipped { border-style: dashed; }
 .kh-pg-ico.next { border-color: var(--dsw-alias-link); color: var(--dsw-alias-link); }
+.kh-pg-ico.building { border-color: var(--dsw-alias-link); color: var(--dsw-alias-link); border-style: dotted; }
 .kh-pg-title { font-weight: 500; }
 .kh-pg-sub { color: var(--dsw-alias-label-tertiary); font-size: 12px; margin-top: 2px; line-height: 1.4; }
 .kh-pg-tag { font-size: 11px; color: var(--dsw-alias-label-secondary); white-space: nowrap; }
@@ -74,7 +75,11 @@ window.__ModuleLoader__.load({
     const REFRESH = ["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"]
 
     const VERDICT = { verified: "Verified", failed: "Failing", blocked: "Blocked", "not checked": "Not checked" }
-    const STEP_ICON = { pass: "✓", fail: "!", blocked: "×", skipped: "–", "not started": "", next: "›" }
+    const STEP_ICON = { pass: "✓", fail: "!", blocked: "×", skipped: "–", "not started": "", next: "›", building: "…" }
+    // A builder at work: its run, steps so far, minutes and latest tool (live, from the loop)
+    const buildingTag = (b) => `building · run ${b.attempt}`
+    const buildingLine = (b) =>
+      [`Builder at work: ${b.steps} step${b.steps === 1 ? "" : "s"}`, `${Math.max(0, Math.floor((Date.now() - b.startedAt) / 60_000))} min`, b.last && `last: ${b.last}`].filter(Boolean).join(" · ")
 
     /** Where the work stands: the stages a session moves through, and which one it is in */
     function stages(data) {
@@ -82,7 +87,8 @@ window.__ModuleLoader__.load({
       const plan = data.plan
       const ran = data.runs.length > 0
       const allDone = plan ? plan.steps.every((s) => ["pass", "blocked", "skipped"].includes(s.status)) : v.status === "verified"
-      const now = v.status === "verified" && !v.stale ? 4 : allDone && ran ? 3 : ran ? (plan ? 2 : 3) : plan ? 1 : 0
+      const building = plan?.steps.some((s) => s.building)
+      const now = building ? 2 : v.status === "verified" && !v.stale ? 4 : allDone && ran ? 3 : ran ? (plan ? 2 : 3) : plan ? 1 : 0
       return { now, list: ["Goal", "Plan", "Build", "Verify", "Done"] }
     }
 
@@ -106,9 +112,10 @@ window.__ModuleLoader__.load({
     function Steps({ plan }) {
       const next = plan.steps.find((s) => s.status === "not started" && (s.after ?? []).every((d) => plan.steps[d - 1]?.status === "pass"))
       return plan.steps.map((s) => {
-        const state = s === next ? "next" : s.status
-        const tag =
-          s.status === "fail"
+        const state = s.building ? "building" : s === next ? "next" : s.status
+        const tag = s.building
+          ? buildingTag(s.building)
+          : s.status === "fail"
             ? `attempt ${s.attempts} of ${MAX_ATTEMPTS} failed`
             : s.status === "pass"
               ? `passed${s.attempts > 1 ? ` on run ${s.attempts}` : ""}`
@@ -128,7 +135,8 @@ window.__ModuleLoader__.load({
             null,
             h("div", { className: "kh-pg-title" }, `${s.n}. ${s.title}`),
             h("div", { className: "kh-pg-sub" }, `Done when ${s.doneWhen}`),
-            s.after?.length ? h("div", { className: "kh-pg-sub" }, `After step ${s.after.join(", ")}`) : null
+            s.after?.length ? h("div", { className: "kh-pg-sub" }, `After step ${s.after.join(", ")}`) : null,
+            s.building ? h("div", { className: "kh-pg-sub", role: "status" }, buildingLine(s.building)) : null
           ),
           h("span", { className: "kh-pg-tag", "aria-label": `Step ${s.n}: ${s.status}` }, tag)
         )

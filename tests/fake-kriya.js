@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib"
 import { createServer } from "node:http"
 import { createHash, randomBytes } from "node:crypto"
 
@@ -17,6 +18,13 @@ const b64 = (n) => randomBytes(n).toString("base64url")
 /**
  * @param {{ models?: string[], modelNames?: Record<string, string>, answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, modelLimits?: Record<string, { contextWindow: number, maxOutputTokens: number }>, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } } | { error: { status: number, error: string, message: string } }) }} [script]
  */
+// Render's firewall page, as it answered on 2026-11-04 (trimmed)
+export const FIREWALL_PAGE =
+  '<!DOCTYPE html>\n<html lang="en"><head><title>Blocked</title></head><body><h1>403 - Forbidden</h1>' +
+  "<p>Your request was blocked by this site's web application firewall (WAF).</p>" +
+  '<div class="request-id"><p>Request ID: <code class="type-mono-01">a553e7b17903d5ee</code></p></div>' +
+  '<footer>Powered by <a href="https://render.com">Render</a></footer></body></html>\n'
+
 export async function startFakeKriya(script = {}) {
   const state = {
     requests: [],
@@ -59,7 +67,24 @@ export async function startFakeKriya(script = {}) {
   const server = createServer(async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
-    const bytes = Buffer.concat(chunks)
+    let bytes = Buffer.concat(chunks)
+    // The host's firewall, as Render's answered on 2026-11-04 (script.firewall:
+    // a pattern): a plain body matching it gets the block page. An encoded
+    // body shows the firewall nothing it matches
+    if (script.firewall && !req.headers["x-kriya-body"] && script.firewall.test(bytes.toString("utf8"))) {
+      state.blocked = (state.blocked ?? 0) + 1
+      res.writeHead(403, { "Content-Type": "text/html" }).end(FIREWALL_PAGE)
+      return
+    }
+    // The gateway's gzip+base64 bodies (Kriya lib/harness/route.ts readJson), when offered
+    if (req.headers["x-kriya-body"]) {
+      if (!script.bodyEncodings || req.headers["x-kriya-body"] !== "gzip+base64") {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "bad_request", message: "unsupported encoding" }))
+        return
+      }
+      state.encoded = (state.encoded ?? 0) + 1
+      bytes = gunzipSync(Buffer.from(bytes.toString("ascii"), "base64"))
+    }
     const raw = bytes.toString("utf8")
     let body = null
     let form = null
@@ -167,6 +192,7 @@ export async function startFakeKriya(script = {}) {
           // Harness upgrade U3: what the tier's model holds
           ...script.modelLimits?.[id],
         })),
+        ...(script.bodyEncodings && { bodyEncodings: ["gzip+base64"] }),
       })
     if (req.method === "POST" && path === "/approvals") {
       if (script.approvalsError)

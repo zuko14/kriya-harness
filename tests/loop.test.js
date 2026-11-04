@@ -4,8 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { planTool, stepTool } from "../plugins/loop/index.js"
-import { builderPrompt, MAX_PLANS, MAX_STEPS, planStatus, readPlan, runStep, savePlan, stepLabel, validatePlan } from "../src/loop.js"
+import { BUILDER_WARN_STEPS, builderGuard, NO_CHECK_PLAN, planTool, stepTool } from "../plugins/loop/index.js"
+import { builderLimits, builderPrompt, liveBuild, MAX_PLANS, MAX_STEPS, planStatus, readPlan, runStep, savePlan, stepLabel, validatePlan } from "../src/loop.js"
 import { confirmCheck, MAX_ATTEMPTS, progressFiles, VerifyError } from "../src/verify.js"
 import { freshHome } from "./helpers.js"
 
@@ -156,4 +156,99 @@ test("the tools: builders can't plan or run steps; kriya_step takes only a step 
   assert.equal(recorded.steps.length, 2)
   assert.equal((await s.execute({ step: 1 }, { agent: { id: "parent" }, signal })).status, "pass")
   assert.doesNotMatch(JSON.stringify(s), /"command"/)
+})
+
+// The stuck-step fix (2026-11-04): a step's builder is bounded by code and
+// visible while it works. On a real long task a step-1 builder with no
+// confirmed check ran 100 steps and 17 minutes behind one pending call.
+
+test("a builder's limits come from the launch environment, with tight defaults", () => {
+  assert.deepEqual(builderLimits({}), { maxSteps: 40, maxMinutes: 15 })
+  assert.deepEqual(builderLimits({ KRIYA_BUILDER_STEPS: "12", KRIYA_BUILDER_MINUTES: "3" }), { maxSteps: 12, maxMinutes: 3 })
+  assert.deepEqual(builderLimits({ KRIYA_BUILDER_STEPS: "-1", KRIYA_BUILDER_MINUTES: "x" }), { maxSteps: 40, maxMinutes: 15 })
+})
+
+test("the builder guard warns once near the limit, refuses at it, and leaves other agents alone", async () => {
+  let t = 0
+  const guard = builderGuard({ maxSteps: 10, maxMinutes: 5 }, { now: () => t, message: (text) => text })
+  const enter = async () => ({ kind: "enter", messages: [] })
+  const live = { steps: 0 }
+  guard.start("b1", live)
+  const builder = { id: "b1" }
+  const decisions = []
+  for (let i = 0; i < 11; i++) decisions.push(await guard.preStep({ agent: builder }, enter))
+  const warned = decisions.filter((d) => d.messages?.length)
+  assert.equal(warned.length, 1, "warned exactly once")
+  assert.equal(decisions.findIndex((d) => d.messages?.length), 10 - BUILDER_WARN_STEPS)
+  assert.match(warned[0].messages[0], /Finish the core change now/)
+  assert.deepEqual(decisions.at(-1), { kind: "reject" })
+  assert.equal(live.stopped, "10 steps")
+  assert.equal(live.steps, 11)
+  // The parent (or any agent not started) is never counted or refused
+  for (let i = 0; i < 50; i++) assert.equal((await guard.preStep({ agent: { id: "parent" } }, enter)).kind, "enter")
+  // The time limit, and the latest tool for the Progress tab
+  const slow = { steps: 0 }
+  guard.start("b2", slow)
+  await guard.preExecute({ agent: { id: "b2" }, name: "bash" }, async () => "ran")
+  assert.equal(slow.last, "bash")
+  t = 5 * 60_000 + 1
+  assert.deepEqual(await guard.preStep({ agent: { id: "b2" } }, enter), { kind: "reject" })
+  assert.equal(slow.stopped, "5 minutes")
+  guard.end("b2")
+  assert.equal((await guard.preStep({ agent: { id: "b2" } }, enter)).kind, "enter")
+})
+
+test("a builder is told its limits and, with no confirmed check, not to do open-ended QA", () => {
+  const p = validatePlan(plan(2))
+  const checked = builderPrompt(p, 1, undefined, [], { limits: { maxSteps: 40, maxMinutes: 15 }, checked: true })
+  assert.match(checked, /at most 40 steps and 15 minutes/)
+  assert.match(checked, /run_in_background/)
+  assert.doesNotMatch(checked, /No check is confirmed/)
+  const unchecked = builderPrompt(p, 1, undefined, [], { limits: { maxSteps: 40, maxMinutes: 15 }, checked: false })
+  assert.match(unchecked, /No check is confirmed for this project/)
+  assert.match(unchecked, /screenshots, pixel or contrast audits/)
+})
+
+test("while a builder works, the plan shows it building; one stopped at its limit is still checked", async () => {
+  freshHome()
+  const dir = project()
+  savePlan(dir, "s1", plan(2))
+  let during
+  const spawn = async (_prompt, _label, live) => {
+    live.steps = 7
+    live.last = "bash"
+    during = planStatus(dir, "s1")
+    assert.equal(liveBuild("s1"), live)
+    live.stopped = "40 steps"
+    return { output: [], stopReason: "blocked" }
+  }
+  const h = harness(dir, [pass(1)])
+  const result = await runStep({ cwd: dir, sessionId: "s1", n: 1, spawn, verify: h.verify })
+  assert.equal(during[0].status, "not started")
+  assert.deepEqual({ ...during[0].building, startedAt: 0 }, { attempt: 1, steps: 7, startedAt: 0, last: "bash" })
+  assert.equal(during[1].building, undefined)
+  assert.equal(result.status, "pass", "the check ran on what the stopped builder left")
+  assert.equal(result.builders[0].limit, "40 steps")
+  assert.equal(liveBuild("s1"), undefined, "cleared after the build")
+  assert.equal(planStatus(dir, "s1")[0].building, undefined)
+  const shown = stepTool({ cwd: async () => dir, isBuilder: () => false, spawn: async () => ({ output: [] }), verify: async () => pass(1) }).output.render({}, result)
+  assert.match(shown[0].text, /Builder 1 was stopped at its limit \(40 steps\)/)
+  // A builder that throws still clears the live record
+  savePlan(dir, "s2", plan(1))
+  await assert.rejects(runStep({ cwd: dir, sessionId: "s2", n: 1, spawn: async () => { throw new Error("aborted") }, verify: h.verify }), /aborted/)
+  assert.equal(liveBuild("s2"), undefined)
+})
+
+test("planning with no confirmed check says so up front", async () => {
+  freshHome()
+  const dir = project()
+  const signal = new AbortController().signal
+  const host = { cwd: async () => dir, isBuilder: () => false, spawn: async () => ({ output: [] }), verify: async () => pass(1) }
+  const p = planTool(host)
+  const recorded = await p.execute(plan(), { agent: { id: "parent" }, signal })
+  assert.equal(recorded.unchecked, true)
+  assert.match(p.output.render({}, recorded)[0].text, new RegExp(NO_CHECK_PLAN.slice(0, 40)))
+  confirmCheck(dir, "npm test")
+  const again = await planTool(host).execute(plan(), { agent: { id: "parent2" }, signal })
+  assert.equal(again.unchecked, undefined)
 })

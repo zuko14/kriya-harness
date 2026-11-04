@@ -84,7 +84,9 @@ The turn budget (on; --no-budget turns it off): each turn is bounded by
   code: at most 150 steps (KRIYA_MAX_STEPS), 60 minutes (KRIYA_TURN_MINUTES)
   and 10 identical tool calls in a row (KRIYA_MAX_REPEATS). Near a limit the
   agent is told to wrap up; at a limit the turn stops as "blocked" (kriya
-  run exits 1).
+  run exits 1). Each step's builder (with the loop) is bounded more tightly:
+  40 steps (KRIYA_BUILDER_STEPS), 15 minutes (KRIYA_BUILDER_MINUTES); the
+  check still runs on what a stopped builder left.
 
 --loop-v2 (beta, off): plan steps name the steps they need, so one blocked
   step skips only what depends on it; a failed check is classified (syntax,

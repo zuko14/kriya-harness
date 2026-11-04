@@ -100,8 +100,12 @@ test("every refusal code in the contract has a plain sentence for kriya run", as
 test("the model picker offers only the plan's tiers, so none fails with tier_not_allowed", async () => {
   const device = { url: "https://k.example", token: "t1" }
   const plan = (...ids) => async () => ({ data: ids.map((id) => ({ id })) })
-  assert.deepEqual(await planTiers(device, plan("budget")), { start: "budget", allowed: ["budget"], names: {}, limits: {} })
-  assert.deepEqual(await planTiers(device, plan("escalation", "budget", "balanced")), { start: "balanced", allowed: ["balanced", "budget", "escalation"], names: {}, limits: {} })
+  assert.deepEqual(await planTiers(device, plan("budget")), { start: "budget", allowed: ["budget"], names: {}, limits: {}, encodings: [] })
+  assert.deepEqual(await planTiers(device, plan("escalation", "budget", "balanced")), { start: "balanced", allowed: ["balanced", "budget", "escalation"], names: {}, limits: {}, encodings: [] })
+  // The body forms Kriya decodes (src/gateway-proxy.js), strings only; none from an older Kriya
+  const withEncodings = async () => ({ data: [{ id: "budget" }], bodyEncodings: ["gzip+base64", 7] })
+  assert.deepEqual((await planTiers(device, withEncodings)).encodings, ["gzip+base64"])
+  assert.deepEqual((await planTiers(device, async () => { throw new Error("offline") })).encodings, [])
   // Unknown aliases are dropped; nothing usable, or Kriya unreachable: all three (the gateway still refuses)
   assert.deepEqual((await planTiers(device, plan("gpt-5"))).allowed, ["balanced", "budget", "escalation"])
   assert.deepEqual((await planTiers(device, async () => { throw new Error("offline") })).allowed, ["balanced", "budget", "escalation"])
