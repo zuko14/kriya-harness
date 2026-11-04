@@ -96,6 +96,29 @@ export function planStatus(cwd, sessionId) {
   return rows
 }
 
+/**
+ * Loop v2, long tasks: where the work stands, from the loop's own records,
+ * for a late system-prompt section that compaction never condenses. A small
+ * context window loses older turns to summaries; this keeps the goal, every
+ * step's status and the next step in front of the agent. Empty without a plan.
+ */
+export function loopStateText(cwd, sessionId) {
+  const progress = readProgress(projectRoot(cwd), sessionId)
+  if (!progress.plan) return ""
+  const rows = planStatus(cwd, sessionId)
+  const STATE = { pass: "passed", fail: "failing", blocked: "blocked", skipped: "skipped", "not started": "not started" }
+  const next = rows.find((r) => r.status === "not started" || r.status === "fail")
+  const last = progress.runs.at(-1)
+  const lines = [
+    "Where this task stands, kept by Kriya Harness from its own check runs (it outranks any summary of the conversation):",
+    `Goal: ${progress.plan.goal}`,
+    ...rows.map((r) => `${r.n}. ${r.title}: ${STATE[r.status] ?? r.status}${r.attempts ? ` (${r.attempts} run${r.attempts === 1 ? "" : "s"})` : ""}`),
+    next ? `Next: kriya_step with step ${next.n}.` : "Every step has passed, been blocked or been skipped: report each step's result.",
+  ]
+  if (last) lines.push(`Last check: ${last.step}, ${last.status === "pass" ? "passed" : `failed (exit ${last.exitCode ?? "none"}${last.kind ? `, ${last.kind}` : ""})`}.`)
+  return lines.join("\n")
+}
+
 /** What a fresh builder is told: the goal, the plan, its one step and, on a retry, what failed; with v2, the person's confirmed rules */
 export function builderPrompt(plan, n, previous, rules = []) {
   const step = plan.steps[n - 1]

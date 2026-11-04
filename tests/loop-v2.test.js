@@ -360,3 +360,25 @@ test("KV2-TG-04: the work's files are saved on a checkpoint before the originals
   assert.ok(saved)
   assert.equal(execFileSync("git", ["show", `${saved.commit}:test/sum.test.js`], { cwd: dir }).toString(), "\n")
 })
+
+test("KV2-LS-01: the loop-state text shows the goal, each step, the next step and the last check; nothing without a plan", async () => {
+  const { loopStateText } = await import("../src/loop.js")
+  freshHome()
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "kriya-ls-")))
+  confirmCheck(dir, "check")
+  assert.equal(loopStateText(dir, "ls1"), "")
+  savePlan(dir, "ls1", { goal: "Ship the report", steps: [{ title: "Parse", done_when: "parser passes" }, { title: "Render", done_when: "render passes", after: [1] }] }, undefined, { v2: true })
+  await verifyStep({ cwd: dir, sessionId: "ls1", step: "1 Parse", tree: async () => undefined, v2: {}, run: async () => ({ exitCode: 1, timedOut: false, output: "AssertionError: no" }) })
+  await verifyStep({ cwd: dir, sessionId: "ls1", step: "1 Parse", tree: async () => undefined, v2: {}, run: async () => ({ exitCode: 0, timedOut: false, output: "" }) })
+  assert.equal(
+    loopStateText(dir, "ls1"),
+    [
+      "Where this task stands, kept by Kriya Harness from its own check runs (it outranks any summary of the conversation):",
+      "Goal: Ship the report",
+      "1. Parse: passed (2 runs)",
+      "2. Render: not started",
+      "Next: kriya_step with step 2.",
+      "Last check: 1 Parse, passed.",
+    ].join("\n")
+  )
+})
