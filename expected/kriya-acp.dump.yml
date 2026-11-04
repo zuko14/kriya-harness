@@ -517,6 +517,15 @@
   name: '@kriya-ai/harness-skills'
 - id: kriya-changes
   name: '@kriya-ai/harness-changes'
+- id: kriya-overview
+  name: '@kriya-ai/harness-overview'
+- id: kriya-progress
+  name: '@kriya-ai/harness-progress'
+- id: kriya-preview
+  name: '@kriya-ai/harness-preview'
+- id: kriya-browser
+  name: '@kriya-ai/harness-browser'
+  disabled: !!js process.env.KRIYA_BROWSER !== 'on'
 - id: kriya-approvals
   name: '@kriya-ai/harness-approvals'
 - id: kriya-mirror

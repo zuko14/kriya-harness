@@ -24,9 +24,9 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--no-budget] [--anchor] [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--browser-tools] [--no-budget] [--anchor] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--no-budget] [--anchor] "<job>"
+  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--browser-tools] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
   kriya usage [--json]  this month's Kriya Harness spend and limit
@@ -91,6 +91,11 @@ The turn budget (on; --no-budget turns it off): each turn is bounded by
   type, assertion, environment, timeout) and cut to its failing lines; a
   pass that changed tests must also pass with the committed tests; a worse
   attempt is set aside; a failure seen twice is proposed as a rule.
+
+--browser-tools (beta, off): the agent gets a browser for apps on this computer
+  (localhost only), on your installed Google Chrome with its own profile:
+  open, read, screenshot, click, type, console and network, to test what it
+  builds. The Preview tab shows and drives the same page.
 
 --anchor (beta): your own messages are kept word for word where compaction
   never condenses them, so a requirement survives a summary that drops it.
@@ -401,6 +406,8 @@ async function main(argv) {
     case "--no-loop":
     case "--loop-v2":
     case "--no-loop-v2":
+    case "--browser-tools":
+    case "--no-browser-tools":
     case "--no-budget":
     case "--no-anchor":
     case "--no-open":
