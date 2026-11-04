@@ -108,6 +108,23 @@ requirement survives even when the conversation's summary leaves it out.
 Only your own messages, never tool output. Without `--anchor` the agent is
 exactly as before.
 
+Web UI tabs (right sidebar): **Overview** (this computer, the folder, the
+GitHub repository and branch, context and usage, changes, background tasks,
+connectors), **Progress** (goal → plan → build → verify → done from the
+loop's own check runs) and **Preview** (an app on this computer, localhost
+only, in a frame).
+
+Agent's browser (beta, off; `kriya --browser-tools`, `kriya run
+--browser-tools`, `KRIYA_BROWSER=on`): the agent tests and reviews apps on
+this computer with your installed Google Chrome (headless, its own profile
+in `~/.kriya/browser/`): `browser_open`, `browser_read`,
+`browser_screenshot`, `browser_click`, `browser_type`, `browser_press`,
+`browser_console`, `browser_network`. Only localhost addresses open (never
+the Web UI's own port); a link elsewhere is refused before it is sent and
+the page stays. In Read only it can open and read, not click or type. The
+Preview tab's "Agent's browser" shows the same page live and lets you click,
+scroll and type into it.
+
 Loop v2 (beta, off; `kriya --loop-v2`, `kriya run --loop-v2`,
 `KRIYA_LOOP_V2=on`): plan steps name the earlier steps they need, so a
 blocked step skips only what depends on it; a failed check is classified

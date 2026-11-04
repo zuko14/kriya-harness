@@ -1,0 +1,22 @@
+{
+  "name": "@kriya-ai/harness-progress",
+  "description": "The Progress tab of the Kriya Harness Web UI: what the Kriya loop recorded for a session, from verified check runs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "UNLICENSED"
+}

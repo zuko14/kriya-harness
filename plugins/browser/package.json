@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-browser",
+  "description": "The agent's localhost browser for Kriya Harness: tools to test and review apps running on this computer, on the installed Chrome",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

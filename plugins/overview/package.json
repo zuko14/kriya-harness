@@ -1,0 +1,22 @@
+{
+  "name": "@kriya-ai/harness-overview",
+  "description": "The Overview tab of the Kriya Harness Web UI: a session's environment, context, changes, background tasks and connectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "UNLICENSED"
+}

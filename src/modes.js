@@ -92,6 +92,8 @@ export const SWITCHES = [
   ["anchor", "KRIYA_ANCHOR", false],
   // Kriya loop v2 (KRIYA_LOOP_V2.md): opt-in until measured; needs the loop
   ["loop-v2", "KRIYA_LOOP_V2", false],
+  // The agent's localhost browser (plugins/browser): opt-in, needs Google Chrome
+  ["browser-tools", "KRIYA_BROWSER", false],
 ]
 
 /** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */
