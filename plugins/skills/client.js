@@ -130,7 +130,8 @@ window.__ModuleLoader__.load({
       const out = []
       if (skill.state === "off-here") out.push("off in this project")
       if (skill.state === "off-everywhere") out.push("off everywhere")
-      if (skill.linked) out.push("linked")
+      if (skill.source === "kriya") out.push(skill.name.startsWith("kriya-") ? "from the Kriya Harness team" : "from your Kriya agent", ...(skill.version ? [`v${skill.version}`] : []))
+      else if (skill.linked) out.push("linked")
       else if (skill.source === "project-dsh" || skill.source === "project-agents") out.push("this project")
       else out.push("yours")
       if (!skill.modelInvocable) out.push("only with /" + skill.name)
