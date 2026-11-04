@@ -26,13 +26,13 @@ export const START_TIERS = ["balanced", "budget", "escalation"]
  * the plan lacks, and a short outage mustn't leave the picker empty.
  */
 export async function planTiers(device, list = models) {
-  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {} }
+  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {}, limits: {} }
   if (!device) return all
   try {
     const data = (await list(device.url, device.token)).data
     const offered = new Set(data.map((model) => model.id))
     const allowed = START_TIERS.filter((tier) => offered.has(tier))
-    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed) } : all
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed) } : all
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
@@ -55,13 +55,43 @@ export function modelNames(data, allowed) {
   return Object.fromEntries(Object.entries(named).map(([tier, name]) => [tier, count(name) > 1 ? `${name} · ${tier}` : name]))
 }
 
+// DSH's own compaction headroom (dsh-compaction-basic headroomTokens)
+const DSH_HEADROOM = 65536
+// The most context a request may use: DSH's own default window. A model that
+// holds more (the budget tier's holds 1,048,576) still compacts here, because
+// cost grows with every token re-sent and quality falls on long contexts;
+// raise it only when KriyaBench shows it pays (KU-ADR-09)
+export const WORKING_WINDOW = 262144
+const positive = (n) => Number.isSafeInteger(n) && n > 0
+
+/**
+ * What each tier's model holds (harness upgrade U3), from GET /models:
+ * DSH then compacts before a smaller model's real window is full instead of
+ * assuming 262,144 tokens for every tier (never more than WORKING_WINDOW). The output cap is the gateway's
+ * (never above a quarter of the window) and the compaction headroom is a
+ * quarter of the window at most, so DSH's trigger W − O − headroom stays
+ * positive on small windows. A tier Kriya gives no limits for keeps DSH's
+ * defaults, exactly as before.
+ */
+export function modelLimits(data, allowed) {
+  return Object.fromEntries(
+    data
+      .filter((m) => allowed.includes(m.id) && positive(m.contextWindow) && positive(m.maxOutputTokens))
+      .map((m) => {
+        const window = Math.min(m.contextWindow, WORKING_WINDOW)
+        const quarter = Math.floor(window / 4)
+        return [m.id, { contextWindow: window, maxTokens: Math.min(m.maxOutputTokens, quarter), headroomTokens: Math.min(DSH_HEADROOM, quarter) }]
+      })
+  )
+}
+
 /** The first of START_TIERS the plan allows; balanced when Kriya can't be asked. */
 export async function startTier(device, list = models) {
   return (await planTiers(device, list)).start
 }
 
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -75,6 +105,8 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
     KRIYA_ALLOWED_TIERS: (allowed.filter((t) => START_TIERS.includes(t)).length ? allowed.filter((t) => START_TIERS.includes(t)) : START_TIERS).join(","),
     // The picker's name per tier (modelNames), as JSON. Never from the shell
     KRIYA_MODEL_NAMES: JSON.stringify(Object.fromEntries(Object.entries(names).filter(([t, n]) => START_TIERS.includes(t) && typeof n === "string" && n.length <= 80))),
+    // Each tier's context window, output cap and compaction headroom (modelLimits), as JSON. Never from the shell
+    KRIYA_MODEL_LIMITS: JSON.stringify(Object.fromEntries(Object.entries(limits).filter(([t]) => START_TIERS.includes(t)))),
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -98,6 +130,7 @@ function args(profile, rest) {
 export const REFUSALS = {
   cap_reached: "This month's Kriya Harness limit is reached. It resets on the 1st (India time), or raise it in your plan.",
   plan_not_allowed: "Kriya Harness isn't part of your plan.",
+  context_length_exceeded: "The conversation grew past the model's context window and couldn't be compacted enough; start a new session or type /compact.",
   tier_not_allowed: "That model tier isn't on your plan; choose another in the model picker, or restart kriya to see only your plan's tiers.",
   harness_off: "Kriya Harness is switched off for now.",
   rate_limited: "Too many requests; wait a minute and try again.",
@@ -176,7 +209,7 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device, process.env, mode, tiers.start, tiers.allowed, tiers.names),
+      env: launchEnv(device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(text))

@@ -38,8 +38,8 @@ and changes nothing; `full` has no sandbox and asks nothing. Details and
 limits in [SAFETY.md](SAFETY.md). In the Web UI, switch with the Permissions
 control or `/permission`, and plan first with `/plan`.
 
-The Kriya loop's verify step (beta, H14a): `kriya --loop` or `kriya run
---loop` gives the agent `kriya_verify`, which runs the check you confirmed
+The Kriya loop's verify step (H14a; **on by default since 0.2.0**, `--no-loop`
+or `KRIYA_LOOP=off` turns it off) gives the agent `kriya_verify`, which runs the check you confirmed
 for the project and reports pass, fail, or blocked after 4 failed runs, from
 its exit code alone. The agent is told never to say the work passes without
 it. `kriya verify` lists the checks the project defines (package.json
@@ -52,7 +52,15 @@ checked". Every run is recorded per session in
 `~/.kriya/progress/<project>/<session>.md` (never in the project). Without
 `--loop` the agent is exactly as before.
 
-Plans and steps (H14c, with `--loop`): for a task with several parts the
+A pass covers the files it ran on (harness upgrade U8): each run records a
+fingerprint of the working tree (HEAD, the changed and untracked files and
+their contents, read without writing anything to `.git`). If files change
+after the last pass, the verdict reads "not checked" again, and before the
+turn ends the agent is sent back once to run the check again. A pass whose
+work changed test or check files (tests, `package.json`, `pytest.ini` and
+the like) names them, so you can see a test that was changed to pass.
+
+Plans and steps (H14c, with the loop): for a task with several parts the
 agent records a plan with `kriya_plan` (a goal and at most 7 ordered steps,
 each with what is true when it's done), then runs each with `kriya_step`. A
 step is built by a fresh agent that sees only the goal, the plan and its own
@@ -64,7 +72,7 @@ forever). The plan and every run are in the session's progress file. For a
 single run, `KRIYA_VERIFY_CHECK="<command>"` in your shell sets the check
 without `kriya verify use` (benchmarks use it with the visible tests).
 
-Step checkpoints (H14b, with `--loop`): before each tool call that can
+Step checkpoints (H14b, with the loop): before each tool call that can
 change files (write, edit, bash and the like), the working tree, tracked and
 untracked files but never ignored ones, is saved as a commit on Kriya's own
 ref, `refs/kriya/checkpoints/<session>/<n>`. `kriya undo` puts the files
@@ -75,6 +83,39 @@ mid-rebase too; what an undo replaces is saved first, so an undo can be
 undone. Not in Read only, where nothing changes; outside a git repository
 there are no checkpoints. The newest 100 per session are kept, and
 `refs/kriya/*` isn't pushed by a normal `git push`.
+
+Why these defaults (0.2.0): on KriyaBench's capability tasks with DeepSeek
+V4.1 Flash, three runs each, the loop with the turn budget passed 18 of 21
+task runs against 14 of 21 without them (every disagreement in its favour;
+not yet significant at 95% with this few tasks), at about 1.4× the spend per
+passed task. Confirm your project's check (`kriya verify`, then `kriya
+verify use <number>`): the gain comes from running it. Full numbers in the
+Kriya repository, `docs/kriya-harness/harness_upgradation/BENCHMARK_PLAN.md`.
+
+Turn budget (harness upgrade U2; **on by default since 0.2.0**, `--no-budget`
+or `KRIYA_BUDGET=off` turns it off) bounds each turn by code: at most 150 steps (`KRIYA_MAX_STEPS`),
+60 minutes (`KRIYA_TURN_MINUTES`) and 10 identical tool calls in a row
+(`KRIYA_MAX_REPEATS`). Five steps before the step limit (or at 90% of the
+time) the agent is told once to wrap up; at a limit the next step is
+refused, so the turn ends "blocked" and `kriya run` exits 1, never
+"completed". Each step's builder (`kriya_step`) has its own budget.
+With `--no-budget` turns are unbounded, as before 0.2.0.
+
+Kept request (beta, harness upgrade U7): `kriya --anchor` or `kriya run
+--anchor` keeps every message you send in the session, word for word, in a
+late part of the system prompt, which compaction never condenses: a
+requirement survives even when the conversation's summary leaves it out.
+Only your own messages, never tool output. Without `--anchor` the agent is
+exactly as before.
+
+Model limits (harness upgrade U3): when Kriya reports a tier's context
+window and output cap (`GET /models`), the tier declares them to DeepSeek
+Harness, capped at a 262,144-token working window, so compaction starts
+before a smaller model's window is full; a tier without them keeps DeepSeek
+Harness's defaults. When the provider says a conversation is too long,
+Kriya answers `context_length_exceeded`, which DeepSeek Harness compacts and
+retries. `kriya usage [--json]` prints this month's spend and limit
+(KriyaBench's `--meter` reads it).
 
 Models are Kriya's tiers: `balanced`, `budget`, `escalation`. A session
 starts on `balanced`, or on the best tier your plan allows. Your plan decides

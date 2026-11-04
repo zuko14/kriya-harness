@@ -15,7 +15,7 @@ import { createHash, randomBytes } from "node:crypto"
 const b64 = (n) => randomBytes(n).toString("base64url")
 
 /**
- * @param {{ models?: string[], modelNames?: Record<string, string>, answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } }) }} [script]
+ * @param {{ models?: string[], modelNames?: Record<string, string>, answer?: string, approveAfter?: number, deny?: boolean, minVersion?: string, chatError?: { status: number, error: string, message: string }, approvalsError?: { status: number, error: string, message: string }, maxWait?: number, onApproval?: (approval: { id: string, body: any }) => void, modelLimits?: Record<string, { contextWindow: number, maxOutputTokens: number }>, chat?: (body: any, turn: number) => ({ content: string } | { toolCall: { name: string, args: unknown } } | { error: { status: number, error: string, message: string } }) }} [script]
  */
 export async function startFakeKriya(script = {}) {
   const state = {
@@ -164,6 +164,8 @@ export async function startFakeKriya(script = {}) {
           object: "model",
           owned_by: "kriya",
           ...(script.modelNames?.[id] && { name: script.modelNames[id] }),
+          // Harness upgrade U3: what the tier's model holds
+          ...script.modelLimits?.[id],
         })),
       })
     if (req.method === "POST" && path === "/approvals") {
@@ -303,6 +305,8 @@ export async function startFakeKriya(script = {}) {
       record.status = 200
       // A scripted turn: plain text, or one tool call for the agent to run
       const reply = script.chat?.(body, ++state.turns) ?? { content: answer }
+      // A scripted refusal for this request only, as the gateway sends it
+      if (reply.error) return fail(reply.error.status, reply.error.error, reply.error.message)
       const id = `chatcmpl-${b64(6)}`
       const base = { id, object: "chat.completion.chunk", created: 1, model: body.model }
       if (!body.stream) {
@@ -318,6 +322,14 @@ export async function startFakeKriya(script = {}) {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
       const event = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
       event({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] })
+      // A connection that breaks mid tool call: half its arguments, then gone
+      if (reply.cut) {
+        const text = JSON.stringify(reply.cut.args)
+        const call = { index: 0, id: `call_${b64(6)}`, type: "function", function: { name: reply.cut.name, arguments: text.slice(0, Math.floor(text.length / 2)) } }
+        event({ ...base, choices: [{ index: 0, delta: { tool_calls: [call] }, finish_reason: null }] })
+        res.destroy()
+        return
+      }
       if (reply.toolCall) {
         const { name, args } = reply.toolCall
         const call = { index: 0, id: `call_${b64(6)}`, type: "function", function: { name, arguments: JSON.stringify(args) } }

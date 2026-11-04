@@ -1,8 +1,9 @@
+import { createUserMessage } from "@deepseek-ai/dsh-llm"
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
 import { checkpoint } from "../../src/checkpoints.js"
 import { MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
-import { VerifyError, verifyStep } from "../../src/verify.js"
+import { currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 
 // The Kriya loop, node half (H14a; KRIYA_LOOP.md in the Kriya repository):
 // `kriya_verify` runs the project's confirmed check and reports pass, fail
@@ -82,7 +83,11 @@ function present(value) {
     case "blocked":
       return `Step "${value.step}" is blocked: \`${value.command}\` failed ${value.attempts === undefined ? "" : `on all ${value.attempts} runs `}and isn't run again. Stop and tell the person what failed.${value.output ? `\n\n${value.output}` : ""}`
     case "pass":
-      return `Step "${value.step}" passes: \`${value.command}\` exited 0. Session verdict: ${value.verdict}.`
+      return `Step "${value.step}" passes: \`${value.command}\` exited 0. Session verdict: ${value.verdict}.${
+        value.touched?.length
+          ? ` This work changes test or check files (${value.touched.join(", ")}): tell the person, since a changed test can pass for the wrong reason.`
+          : ""
+      }`
     default:
       return [
         `Step "${value.step}" fails: \`${value.command}\` ${value.timedOut ? "timed out" : `exited ${value.exitCode ?? "without a code"}`}. ${value.attemptsLeft} attempt${value.attemptsLeft === 1 ? "" : "s"} left.`,
@@ -205,6 +210,31 @@ export function stepTool(host) {
   })
 }
 
+// U8: said once in a turn when the files changed after the last passing check
+export const RECHECK =
+  "Files changed after the last passing kriya_verify, so that pass no longer covers the work. " +
+  "Call kriya_verify again before you finish; don't say the work passes until it does."
+
+/**
+ * The agent/turn-stopping hook (U8): a "verified" session whose files changed
+ * since is stale; the agent is asked once per turn to check again. Data
+ * decides (the files' fingerprint), never what the model says.
+ * @param {{ cwd: (exec: any) => Promise<string>, verdict?: typeof currentVerdict, message?: (text: string) => any }} host
+ */
+export function recheckHook(host) {
+  const verdictOf = host.verdict ?? currentVerdict
+  const message = host.message ?? ((text) => createUserMessage({ content: [{ type: "text", text }], source: { kind: "kriya-loop", form: "notice", summary: "check again" } }))
+  const asked = new WeakMap()
+  return async ({ agent, turn, signal }) => {
+    if (asked.get(agent) === turn) return
+    const cwd = await host.cwd({ agent, signal })
+    const now = await verdictOf(cwd, String(agent.id))
+    if (!now.stale) return
+    asked.set(agent, turn)
+    agent.steer(message(RECHECK))
+  }
+}
+
 export function apply(ctx) {
   const sandboxPolicy = ctx.shell.sandboxMode === undefined ? undefined : ctx.get("sandboxPolicy")
   const host = {
@@ -268,5 +298,6 @@ export function apply(ctx) {
       warn: (text) => ctx.logger("kriya-loop").warn(text),
     })
   )
+  ctx.on("agent/turn-stopping", recheckHook({ cwd: host.cwd }))
   ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: GUIDANCE })
 }

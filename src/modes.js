@@ -79,3 +79,30 @@ export function modeEnv(name) {
     KRIYA_PRESET: mode.preset,
   }
 }
+
+// The Kriya loop's verify step (the bundle's kriya-loop row reads
+// KRIYA_LOOP), the turn budget (KRIYA_BUDGET) and the kept request
+// (KRIYA_ANCHOR). Harness upgrade U10 (owner, 2026-11-04: "B4 is our
+// winner"): the loop and the budget are on unless --no-loop / --no-budget
+// or KRIYA_LOOP=off / KRIYA_BUDGET=off; --anchor stays opt-in (unmeasured).
+// A flag beats the environment, which beats the default
+export const SWITCHES = [
+  ["loop", "KRIYA_LOOP", true],
+  ["budget", "KRIYA_BUDGET", true],
+  ["anchor", "KRIYA_ANCHOR", false],
+]
+
+/** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */
+export function switchEnv(args, env = process.env) {
+  for (const [flag, name, byDefault] of SWITCHES) {
+    let value = env[name] === "on" ? true : env[name] === "off" ? false : byDefault
+    for (const [form, on] of [[`--${flag}`, true], [`--no-${flag}`, false]]) {
+      const at = args.indexOf(form)
+      if (at === -1) continue
+      args.splice(at, 1)
+      value = on
+    }
+    env[name] = value ? "on" : "off"
+  }
+}
+

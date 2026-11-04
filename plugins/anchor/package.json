@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-anchor",
+  "description": "Keeps the person's own messages word for word in the system prompt, which compaction never condenses",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

@@ -15,6 +15,21 @@ notice the first time it runs.
   you open it in.
 - Sign out on machines you share (`kriya logout`).
 
+## On by default since 0.2.0
+
+- **The Kriya loop.** Before each tool call that can change files, the
+  working tree is saved as a commit on Kriya's own git ref
+  (`refs/kriya/checkpoints/…`, the newest 100 per session); your branches,
+  tags, index, stash and HEAD are never touched, and `refs/kriya/*` isn't
+  pushed by a normal `git push`, but the objects are in your repository's
+  `.git`. The agent's `kriya_verify` runs only the check you confirmed, under
+  the session's own mode; without one, nothing runs and work is "not
+  checked". `--no-loop` turns all of this off.
+- **The turn budget.** A turn stops at 150 steps, 60 minutes or 10 identical
+  tool calls in a row, and ends "blocked" rather than "completed".
+  `--no-budget` turns it off.
+- Neither changes a mode, a sandbox or an approval.
+
 ## What it can do on this machine
 
 The agent reads and changes files and runs commands under the mode you

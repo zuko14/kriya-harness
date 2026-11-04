@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -148,6 +149,53 @@ export function clearCheck(cwd) {
   return had
 }
 
+/* ─────────────────────────── the work's state ─────────────────────────── */
+
+// Harness upgrade U8: a pass belongs to the files it ran on. The working
+// tree's fingerprint (HEAD, the changed and untracked paths, and their
+// contents) is taken with read-only git commands (no objects written, no
+// index refresh), so Read only stays read-only. Outside a repository there
+// is none, and a pass stays a pass.
+const git = (cwd, args, input) =>
+  new Promise((done) => {
+    const child = execFile("git", args, { cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 64 * 1024 * 1024 }, (error, stdout) =>
+      done(error ? null : stdout)
+    )
+    if (input !== undefined) child.stdin.end(input)
+  })
+
+/**
+ * @returns {Promise<{ fingerprint: string, changed: string[] } | undefined>}
+ *   changed: paths that differ from HEAD (staged, unstaged, untracked)
+ */
+export async function workTree(cwd) {
+  const status = await git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"])
+  if (status === null) return undefined
+  const head = ((await git(cwd, ["rev-parse", "--verify", "-q", "HEAD"])) ?? "no commit").trim()
+  const root = ((await git(cwd, ["rev-parse", "--show-toplevel"])) ?? cwd).trim()
+  const changed = status
+    .split("\0")
+    .filter(Boolean)
+    .map((entry) => entry.slice(3))
+  const present = changed.filter((rel) => existsSync(join(root, rel)))
+  const hashes = present.length ? await git(root, ["hash-object", "--stdin-paths"], present.join("\n") + "\n") : ""
+  const fingerprint = createHash("sha256").update(`${head}\0${status}\0${hashes ?? "unreadable"}`).digest("hex").slice(0, 16)
+  return { fingerprint, changed: changed.sort() }
+}
+
+// Files that decide what "passing" means: tests and the checks' own config.
+// A pass that changed one is still a pass, but the person is told which
+const CHECK_FILE = [
+  /(^|\/)(tests?|__tests__|spec|specs)\//,
+  /\.(test|spec)\.[^/]+$/,
+  /(^|\/)test_[^/]+\.py$/,
+  /_test\.(go|py|rs)$/,
+  /(^|\/)(package\.json|Makefile|makefile|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|Cargo\.toml|go\.mod|deno\.jsonc?|conftest\.py)$/,
+  /(^|\/)(jest|vitest|playwright|karma|mocha)\.config\.[^/]+$/,
+  /(^|\/)\.mocharc[^/]*$/,
+]
+export const checkFiles = (paths) => paths.filter((p) => CHECK_FILE.some((re) => re.test(p)))
+
 /* ───────────────────────────── progress ───────────────────────────── */
 
 const projectKey = (root) => createHash("sha256").update(root).digest("hex").slice(0, 16)
@@ -172,9 +220,12 @@ export function readProgress(root, sessionId) {
 /**
  * The session's verdict, from its runs alone. A step that failed its
  * MAX_ATTEMPTS-th run is blocked; otherwise each step's last run decides.
- * @returns {{ status: "verified" | "failed" | "blocked" | "not checked", steps: Array<{ step: string, status: "pass" | "fail" | "blocked", attempts: number, failures: number }> }}
+ * With `current` (the work's fingerprint now, U8): "verified" holds only for
+ * the files the last run saw; changed since, it's "not checked" and stale.
+ * `touched`: test or check files the last passing run's work had changed.
+ * @returns {{ status: "verified" | "failed" | "blocked" | "not checked", stale?: true, touched?: string[], steps: Array<{ step: string, status: "pass" | "fail" | "blocked", attempts: number, failures: number }> }}
  */
-export function verdict(progress) {
+export function verdict(progress, current) {
   const steps = new Map()
   for (const run of progress.runs) {
     const prev = steps.get(run.step) ?? { step: run.step, attempts: 0, failures: 0, status: "fail" }
@@ -195,12 +246,17 @@ export function verdict(progress) {
       : list.every((s) => s.status === "pass")
         ? "verified"
         : "failed"
-  return { status, steps: list }
+  const last = progress.runs.at(-1)
+  const touched = progress.runs.findLast((r) => r.status === "pass")?.touched
+  const extra = touched?.length ? { touched } : {}
+  if (status === "verified" && current && last?.tree && last.tree !== current) return { status: "not checked", stale: true, steps: list, ...extra }
+  return { status, steps: list, ...extra }
 }
 
 function renderProgress(progress) {
-  const { status, steps } = verdict(progress)
+  const { status, steps, touched } = verdict(progress)
   const lines = [`# Progress`, "", `Project: ${progress.root}`, `Session: ${progress.sessionId}`, `Verdict: ${status}`, ""]
+  if (touched) lines.push(`Changed test or check files: ${touched.join(", ")}`, "")
   if (progress.plan) {
     lines.push(`## Plan`, "", `Goal: ${progress.plan.goal}`, "")
     progress.plan.steps.forEach((step, i) => lines.push(`${i + 1}. ${step.title}: done when ${step.doneWhen}`))
@@ -243,19 +299,23 @@ export const normalStep = (step) => {
 
 /**
  * Runs the project's confirmed check for one step and records it.
- * @param {{ cwd: string, sessionId: string, step?: string, run: (command: string) => Promise<{ exitCode: number | null, timedOut: boolean, aborted?: boolean, output: string }>, now?: () => Date }} input
+ * @param {{ cwd: string, sessionId: string, step?: string, run: (command: string) => Promise<{ exitCode: number | null, timedOut: boolean, aborted?: boolean, output: string }>, now?: () => Date, tree?: (cwd: string) => Promise<{ fingerprint: string, changed: string[] } | undefined> }} input
  *   run executes the command under the session's own sandbox (the tool passes DSH's shell)
  */
-export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date() }) {
+export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree }) {
   const label = normalStep(step)
   const check = confirmedCheck(cwd)
   if (!check) return { status: "not configured", step: label, suggestions: discoverChecks(cwd) }
   const before = verdict(readProgress(check.root, sessionId)).steps.find((s) => s.step === label)
   if (before?.status === "blocked") return { status: "blocked", step: label, attempts: before.attempts, command: check.command }
+  // The files this run checks, taken before the command (a check that writes
+  // files, e.g. a build, doesn't make its own pass stale)
+  const work = await tree(cwd)
   const started = now()
   const result = await run(check.command)
   if (result.aborted) throw new VerifyError("The check was stopped.")
   const status = result.exitCode === 0 && !result.timedOut ? "pass" : "fail"
+  const touched = work && status === "pass" ? checkFiles(work.changed) : []
   const progress = recordRun(check.root, sessionId, {
     at: started.toISOString(),
     step: label,
@@ -264,6 +324,8 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     exitCode: result.exitCode,
     timedOut: result.timedOut,
     durationMs: Math.max(0, now().getTime() - started.getTime()),
+    ...(work && { tree: work.fingerprint }),
+    ...(touched.length && { touched }),
   })
   const after = verdict(progress)
   const mine = after.steps.find((s) => s.step === label)
@@ -277,5 +339,18 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     timedOut: result.timedOut,
     output: status === "pass" ? "" : trimOutput(result.output),
     verdict: after.status,
+    ...(touched.length && { touched }),
   }
+}
+
+/**
+ * The session's verdict against the files as they are now (U8): what the
+ * loop checks before a turn ends, and what `kriya verify` reports.
+ */
+export async function currentVerdict(cwd, sessionId, tree = workTree) {
+  const check = confirmedCheck(cwd)
+  const root = check?.root ?? projectRoot(cwd)
+  const progress = readProgress(root, sessionId)
+  if (!progress.runs.length) return { status: "not checked", steps: [] }
+  return verdict(progress, (await tree(cwd))?.fingerprint)
 }
