@@ -28,21 +28,24 @@ function kriya(args, cwd, env = {}) {
   })
 }
 
-async function run({ bodyEncodings, env }) {
+async function run({ bodyEncodings, env, deployAfterLaunch = false }) {
   freshHome()
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "kriya-relay-")))
-  const fake = await startFakeKriya({
+  const script = {
     approveAfter: 0,
     firewall: /rm -rf/,
     bodyEncodings,
     chat: (body) => {
+      // Kriya's deploy lands while the session runs: from now on it decodes and says so
+      if (deployAfterLaunch) script.bodyEncodings = true
       if (!body.tools?.length) return { content: "Relay check" }
       const done = body.messages.filter((m) => m.role === "tool").length
       return done === 0
         ? { toolCall: { name: "bash", args: { command: "mkdir -p scratch && rm -rf scratch && echo cleaned", description: "Clean the scratch folder" } } }
         : { content: "Cleaned the scratch folder." }
     },
-  })
+  }
+  const fake = await startFakeKriya(script)
   const login = await kriya(["login", "--url", fake.url, "--no-browser"], ROOT)
   assert.equal(login.code, 0, login.stderr)
   const result = await kriya(["run", "Clean the scratch folder"], dir, env)
@@ -72,4 +75,12 @@ test("with a Kriya that can't decode yet, a block says what it is, not 'API key 
   assert.ok(r.state.blocked >= 1)
   assert.match(r.stderr, /host firewall blocked this request \(request ID a553e7b17903d5ee\)/, r.stderr.slice(-1500))
   assert.doesNotMatch(r.stderr, /API key is invalid|AUTH/)
+})
+
+test("Kriya deployed after kriya started (the owner's 19:21 run): the block is re-asked about and the task finishes, no restart", { timeout: 300_000 }, async () => {
+  const r = await run({ bodyEncodings: false, deployAfterLaunch: true })
+  assert.equal(r.code, 0, `exit ${r.code}\n${r.stderr.slice(-1500)}`)
+  assert.equal(r.state.blocked, 1, "the first plain request with `rm -rf` was blocked once")
+  assert.ok(r.state.encoded >= 1)
+  assert.match(r.stderr, /now decodes encoded request bodies/)
 })

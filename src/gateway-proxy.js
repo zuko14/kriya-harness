@@ -30,6 +30,10 @@ import { BASE_PATH } from "./api.js"
 export const BODY_ENCODING = "gzip+base64"
 // Larger requests are refused locally (a 1M-token history is about 4 MB of JSON)
 export const MAX_BODY = 64 * 1024 * 1024
+// While Kriya doesn't decode encoded bodies, how often it is asked again (a deploy after launch)
+export const RECHECK_MS = 60_000
+// Before a blocked request is sent once more, unencoded
+export const RETRY_MS = 2_000
 const DROP_REQUEST = new Set(["host", "connection", "keep-alive", "content-length", "transfer-encoding", "accept-encoding", "expect", "upgrade", "proxy-connection"])
 const DROP_RESPONSE = new Set(["connection", "keep-alive", "content-length", "transfer-encoding", "content-encoding"])
 
@@ -64,11 +68,34 @@ async function readAll(req) {
 
 /**
  * Starts the relay in front of `target` (the signed-in Kriya's address).
- * @param {{ target: string, encode: boolean, fetchImpl?: typeof fetch, log?: (text: string) => void }} options
- * @returns {Promise<{ url: string, close: () => Promise<void> }>} url stands in for device.url inside DSH
+ * `encode`: whether Kriya decodes encoded bodies, as known at launch.
+ * `checkSupport` asks Kriya again (GET /models): while encoding is off it
+ * is asked at most every RECHECK_MS, and at once after a firewall block,
+ * so a Kriya deployed after launch is picked up without a restart.
+ * A request the firewall blocked never reached Kriya, so it is sent once
+ * more: encoded if Kriya now decodes it, else after RETRY_MS. Only then is
+ * the block reported.
+ * @param {{ target: string, encode: boolean, checkSupport?: () => Promise<boolean>, fetchImpl?: typeof fetch, log?: (text: string) => void, now?: () => number, retryMs?: number }} options
+ * @returns {Promise<{ url: string, close: () => Promise<void>, encoding: () => boolean }>} url stands in for device.url inside DSH
  */
-export async function startGatewayProxy({ target, encode, fetchImpl = fetch, log = () => {} }) {
+export async function startGatewayProxy({ target, encode, checkSupport, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS }) {
   const origin = new URL(target).origin
+  const support = { on: Boolean(encode), checked: now(), pending: null }
+  // One question at a time; a failed question changes nothing
+  const recheck = () => {
+    if (support.on || !checkSupport) return Promise.resolve(support.on)
+    support.pending ??= checkSupport()
+      .then((on) => {
+        if (on && !support.on) log("Kriya now decodes encoded request bodies; using them")
+        support.on = Boolean(on)
+      })
+      .catch(() => {})
+      .finally(() => {
+        support.checked = now()
+        support.pending = null
+      })
+    return support.pending.then(() => support.on)
+  }
   const server = createServer(async (req, res) => {
     const upstream = new AbortController()
     res.on("close", () => upstream.abort())
@@ -85,22 +112,42 @@ export async function startGatewayProxy({ target, encode, fetchImpl = fetch, log
       if (body === null) return error(413, "This request is larger than Kriya Harness sends (64 MB).")
       const headers = {}
       for (const [name, value] of Object.entries(req.headers)) if (!DROP_REQUEST.has(name) && value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value
-      let sent = body?.length ? body : undefined
-      if (encode && sent && /^application\/json\b/i.test(headers["content-type"] ?? "")) {
-        sent = encodeBody(sent)
-        headers["content-type"] = "text/plain; charset=us-ascii"
-        headers["x-kriya-body"] = BODY_ENCODING
+      const plain = body?.length ? body : undefined
+      const encodable = Boolean(plain) && /^application\/json\b/i.test(headers["content-type"] ?? "")
+      if (encodable && !support.on && now() - support.checked >= RECHECK_MS) await recheck()
+      const send = (encoded) => {
+        const h = { ...headers }
+        let sent = plain
+        if (encoded) {
+          sent = encodeBody(plain)
+          h["content-type"] = "text/plain; charset=us-ascii"
+          h["x-kriya-body"] = BODY_ENCODING
+        }
+        return fetchImpl(`${origin}${req.url}`, { method: req.method, headers: h, body: sent, signal: upstream.signal, redirect: "manual" })
       }
-      const answer = await fetchImpl(`${origin}${req.url}`, { method: req.method, headers, body: sent, signal: upstream.signal, redirect: "manual" })
-      const type = answer.headers.get("content-type") ?? ""
-      if (answer.status === 403 && /text\/html/i.test(type)) {
-        const block = firewallBlock(answer.status, type, await answer.text().catch(() => ""))
+      /** The firewall's block, or null; a 403 web page's body is read here (it is never passed on) */
+      const blockOf = async (answer) => {
+        const type = answer.headers.get("content-type") ?? ""
+        if (answer.status !== 403 || !/text\/html/i.test(type)) return null
+        return firewallBlock(answer.status, type, await answer.text().catch(() => "")) ?? null
+      }
+      let encoded = encodable && support.on
+      let answer = await send(encoded)
+      let block = await blockOf(answer)
+      if (block) {
+        log(`the host firewall blocked ${req.method} ${path}${encoded ? " (encoded)" : ""}${block.requestId ? ` (request ID ${block.requestId})` : ""}; sending it once more`)
+        // It never reached Kriya, so sending it again repeats nothing
+        if (encodable && !encoded && (await recheck())) encoded = true
+        else await new Promise((done) => setTimeout(done, retryMs))
+        answer = await send(encoded)
+        block = await blockOf(answer)
         if (block) {
-          log(`the host firewall blocked ${req.method} ${path}${block.requestId ? ` (request ID ${block.requestId})` : ""}`)
+          log(`the host firewall blocked ${req.method} ${path} again${block.requestId ? ` (request ID ${block.requestId})` : ""}`)
           return reply(400, blockedAnswer(block.requestId))
         }
-        return error(502, "Kriya answered with a web page instead of an answer; try again in a minute.")
       }
+      if (answer.status === 403 && /text\/html/i.test(answer.headers.get("content-type") ?? ""))
+        return error(502, "Kriya answered with a web page instead of an answer; try again in a minute.")
       const out = {}
       answer.headers.forEach((value, name) => {
         if (!DROP_RESPONSE.has(name)) out[name] = value
@@ -121,6 +168,7 @@ export async function startGatewayProxy({ target, encode, fetchImpl = fetch, log
   const { port } = /** @type {import("node:net").AddressInfo} */ (server.address())
   return {
     url: `http://127.0.0.1:${port}`,
+    encoding: () => support.on,
     close: () =>
       new Promise((done) => {
         server.closeAllConnections?.()
