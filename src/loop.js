@@ -19,6 +19,29 @@ const DONE_WHEN = 300
 const GOAL = 600
 const FILES = 12
 
+// A step's builder is bounded by code, apart from the turn budget (which
+// gives every agent 150 steps and 60 minutes, so 4 runs of one step could
+// take 4 hours with nothing to show). Found on a real long task: a step-1
+// builder with no confirmed check spent 100 steps and 17 minutes on
+// screenshots and contrast audits while the parent showed one pending call.
+// Near the limit the builder is told once to wrap up; at the limit its next
+// step is refused and the harness's check runs on what it left.
+const whole = (value, fallback) => {
+  const n = Number(value)
+  return Number.isSafeInteger(n) && n > 0 ? n : fallback
+}
+/** One builder's limits, from the launch environment; defaults when unset or unusable. */
+export function builderLimits(env = process.env) {
+  return { maxSteps: whole(env.KRIYA_BUILDER_STEPS, 40), maxMinutes: whole(env.KRIYA_BUILDER_MINUTES, 15) }
+}
+
+// Builds in progress, for the Progress tab: session id → the live record
+// runStep hands to spawn ({ n, attempt, startedAt, steps, last, stopped }).
+// In memory only: a build lives exactly as long as its kriya_step call.
+const building = new Map()
+/** The step being built in a session right now, if any */
+export const liveBuild = (sessionId) => building.get(sessionId)
+
 const clean = (value, limit) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "")
 
 /**
@@ -85,13 +108,21 @@ export function planStatus(cwd, sessionId) {
   const progress = readProgress(projectRoot(cwd), sessionId)
   if (!progress.plan) return undefined
   const { steps } = verdict(progress)
+  const live = building.get(sessionId)
   const rows = []
   progress.plan.steps.forEach((step, i) => {
     const label = stepLabel(progress.plan, i + 1)
     const found = steps.find((s) => s.step === label)
     // v2: a step that needs a blocked or skipped step is skipped; one pass in plan order suffices, since deps point back
     const stuck = !found && step.after?.some((d) => ["blocked", "skipped"].includes(rows[d - 1].status))
-    rows.push({ n: i + 1, title: step.title, status: stuck ? "skipped" : (found?.status ?? "not started"), attempts: found?.attempts ?? 0, ...(step.after && { after: step.after }) })
+    rows.push({
+      n: i + 1,
+      title: step.title,
+      status: stuck ? "skipped" : (found?.status ?? "not started"),
+      attempts: found?.attempts ?? 0,
+      ...(step.after && { after: step.after }),
+      ...(live?.n === i + 1 && { building: { attempt: live.attempt, steps: live.steps, startedAt: live.startedAt, ...(live.last && { last: live.last }) } }),
+    })
   })
   return rows
 }
@@ -120,7 +151,7 @@ export function loopStateText(cwd, sessionId) {
 }
 
 /** What a fresh builder is told: the goal, the plan, its one step and, on a retry, what failed; with v2, the person's confirmed rules */
-export function builderPrompt(plan, n, previous, rules = []) {
+export function builderPrompt(plan, n, previous, rules = [], { limits = builderLimits(), checked = true } = {}) {
   const step = plan.steps[n - 1]
   const lines = [
     `You are building one step of a larger task. Do only this step, then stop.`,
@@ -139,8 +170,15 @@ export function builderPrompt(plan, n, previous, rules = []) {
     "",
     "Read the code you need, make the change, and keep it small. Don't change other steps' work unless your step needs it.",
     "Don't call kriya_plan or kriya_step: you are the step. You may call kriya_verify to test your change before you finish.",
-    "When you finish, the harness runs the project's check; that result, not your summary, decides whether the step passes. End with two or three sentences on what you changed."
+    "When you finish, the harness runs the project's check; that result, not your summary, decides whether the step passes. End with two or three sentences on what you changed.",
+    `You have at most ${limits.maxSteps} steps and ${limits.maxMinutes} minutes. At the limit you are stopped and the check runs on what you left, so make the step's core change first and polish after.`,
+    "Don't leave servers or browsers running: start one only with run_in_background, and stop it before you finish."
   )
+  if (!checked)
+    lines.push(
+      "No check is confirmed for this project, so nothing judges this step after you. Don't spend steps on open-ended manual QA (screenshots, pixel or contrast audits, repeated browser runs): " +
+        "stop once the step's files are written and they build or load without errors."
+    )
   if (previous)
     lines.push(
       "",
@@ -171,9 +209,12 @@ const textOf = (blocks) =>
  * saved, and an attempt that fails further from passing than the best one
  * so far (RANK: syntax < type < assertion) is set aside, the files going
  * back to the best attempt's before the next builder. Same attempt bound.
- * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any>, v2?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, rules?: string[] } }} input
+ * Each builder gets a live record (spawn's third argument; the Progress tab
+ * reads it) and is bounded by `limits`; one stopped at its limit is still
+ * checked, and the result says so. `hasCheck`: whether a check is confirmed.
+ * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string, live: { n: number, attempt: number, startedAt: number, steps: number, last?: string, stopped?: string }) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any>, v2?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, rules?: string[] }, hasCheck?: boolean, limits?: { maxSteps: number, maxMinutes: number }, now?: () => number }} input
  */
-export async function runStep({ cwd, sessionId, n, spawn, verify, v2 }) {
+export async function runStep({ cwd, sessionId, n, spawn, verify, v2, hasCheck = true, limits = builderLimits(), now = Date.now }) {
   const plan = readPlan(cwd, sessionId)
   if (!plan) throw new VerifyError("There's no plan yet: call kriya_plan first.")
   if (!Number.isInteger(n) || n < 1 || n > plan.steps.length) throw new VerifyError(`The plan has steps 1 to ${plan.steps.length}.`)
@@ -195,8 +236,15 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2 }) {
   for (;;) {
     const before = status[n - 1]
     if (before.status === "pass") return { status: "pass", step: n, title: plan.steps[n - 1].title, attempts: before.attempts, builders, note: "This step already passed." }
-    const built = await spawn(builderPrompt(plan, n, previous, v2?.rules), `Step ${n}: ${plan.steps[n - 1].title}`)
-    builders.push({ stopReason: built.stopReason ?? "completed", summary: textOf(built.output).slice(-600) })
+    const live = { n, attempt: builders.length + 1, startedAt: now(), steps: 0 }
+    building.set(sessionId, live)
+    let built
+    try {
+      built = await spawn(builderPrompt(plan, n, previous, v2?.rules, { limits, checked: hasCheck }), `Step ${n}: ${plan.steps[n - 1].title}`, live)
+    } finally {
+      if (building.get(sessionId) === live) building.delete(sessionId)
+    }
+    builders.push({ stopReason: built.stopReason ?? "completed", summary: textOf(built.output).slice(-600), steps: live.steps, ...(live.stopped && { limit: live.stopped }) })
     const tree = await v2?.snapshot?.(`attempt ${builders.length} of step ${n}`)
     const checked = await verify(label)
     if (checked.status === "not configured")

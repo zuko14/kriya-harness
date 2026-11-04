@@ -2,9 +2,9 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm"
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
-import { loopStateText, MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
+import { builderLimits, loopStateText, MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
 import { confirmedRules } from "../../src/rules.js"
-import { currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
+import { confirmedCheck, currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 
 // The Kriya loop, node half (H14a; KRIYA_LOOP.md in the Kriya repository):
 // `kriya_verify` runs the project's confirmed check and reports pass, fail
@@ -162,6 +162,10 @@ const PLAN_STEP_V2 = {
   },
 }
 
+export const NO_CHECK_PLAN =
+  "No check is confirmed for this project, so each step will be built but not checked. Tell the person now: " +
+  "they can confirm one with `kriya verify use \"<command>\"` (for example the project's build or tests) so every step is judged."
+
 const renderStatus = (rows) =>
   rows.map((r) => `${r.n}. ${r.title}${r.after?.length ? ` (after ${r.after.join(", ")})` : ""}: ${r.status}${r.attempts ? ` (${r.attempts} run${r.attempts === 1 ? "" : "s"})` : ""}`).join("\n")
 
@@ -176,14 +180,21 @@ export function planTool(host) {
     },
     output: {
       schema: { type: "object", additionalProperties: true, properties: { steps: { type: "array", required: true, items: { type: "object", additionalProperties: true, properties: {} } } } },
-      render: (_args, value) => [{ type: "text", text: `Plan recorded (${value.steps.length} step${value.steps.length === 1 ? "" : "s"}):\n${renderStatus(value.steps)}\nRun step 1 with kriya_step.` }],
+      render: (_args, value) => [
+        {
+          type: "text",
+          text: `Plan recorded (${value.steps.length} step${value.steps.length === 1 ? "" : "s"}):\n${renderStatus(value.steps)}\nRun step 1 with kriya_step.${
+            value.unchecked ? `\n${NO_CHECK_PLAN}` : ""
+          }`,
+        },
+      ],
     },
     async execute(args, exec) {
       if (!exec.agent) throw new VerifyError("kriya_plan needs a session.")
       if (host.isBuilder(exec)) throw new VerifyError("A step's builder doesn't plan; build your step and stop.")
       const cwd = await host.cwd(exec)
       savePlan(cwd, String(exec.agent.id), args, undefined, { v2: Boolean(host.v2) })
-      return { steps: planStatus(cwd, String(exec.agent.id)) }
+      return { steps: planStatus(cwd, String(exec.agent.id)), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }) }
     },
     presentCall: (args) => ({ card: "generic", title: "Plan", kind: "think", rawInput: typeof args.goal === "string" ? args.goal : "" }),
   })
@@ -196,6 +207,8 @@ function presentStep(value) {
     lines.push("No check is confirmed for this project, so the step was built but not checked. Tell the person; they can confirm one with `kriya verify use <number>`.")
   if (value.status === "blocked") lines.push(`\`${value.command}\` kept failing. Stop and tell the person what failed:`, value.output)
   if (value.status === "pass" && value.verdict) lines.push(`Session verdict so far: ${value.verdict}.`)
+  for (const [i, b] of (value.builders ?? []).entries())
+    if (b.limit) lines.push(`Builder ${i + 1} was stopped at its limit (${b.limit}); the check ran on the files it left.`)
   const aside = value.builders?.filter((b) => b.setAside).length
   if (aside) lines.push(`${aside} attempt${aside === 1 ? " was" : "s were"} set aside for failing further from passing than an earlier one (kept in kriya undo --list).`)
   if (value.note) lines.push(value.note)
@@ -228,13 +241,69 @@ export function stepTool(host) {
         cwd,
         sessionId: String(exec.agent.id),
         n: Math.trunc(Number(args.step)),
-        spawn: (prompt, label) => host.spawn(exec, prompt, label),
+        hasCheck: Boolean((host.checked ?? confirmedCheck)(cwd)),
+        ...(host.limits && { limits: host.limits }),
+        spawn: (prompt, label, live) => host.spawn(exec, prompt, label, live),
         verify: (label) => host.verify(exec, cwd, label),
         ...(host.steps && { v2: host.steps(exec, cwd) }),
       })
     },
     presentCall: (args) => ({ card: "generic", title: "Build and check a step", kind: "execute", rawInput: `step ${args.step}` }),
   })
+}
+
+// The steps left when a builder is told to wrap up
+export const BUILDER_WARN_STEPS = 8
+
+export const builderWarning = (left) =>
+  `Kriya: about ${left} step${left === 1 ? "" : "s"} or a few minutes left for this step's builder. Finish the core change now, ` +
+  "stop anything you started in the background, and end with what you changed. You are stopped at the limit and the check runs on what you left."
+
+/**
+ * Bounds each step's builder by code (src/loop.js builderLimits): counts its
+ * steps and time, warns once near the limit, refuses its next step at the
+ * limit, and keeps its live record (steps, last tool) for the Progress tab.
+ * Only agents registered with `start` are bounded; the parent and every
+ * other agent pass through. Free of DSH so it can be tested alone.
+ * @param {{ maxSteps: number, maxMinutes: number }} limits
+ * @param {{ now?: () => number, message?: (text: string) => any }} [host]
+ */
+export function builderGuard(limits, host = {}) {
+  const now = host.now ?? Date.now
+  const message =
+    host.message ??
+    ((text) => createUserMessage({ content: [{ type: "text", text }], source: { kind: "kriya-loop", form: "notice", summary: "step builder limit" } }))
+  /** @type {Map<string, { live: any, started: number, steps: number, warned: boolean }>} */
+  const bounded = new Map()
+  return {
+    start: (id, live) => bounded.set(String(id), { live, started: now(), steps: 0, warned: false }),
+    end: (id) => bounded.delete(String(id)),
+    /** agent/pre-step (waterfall) */
+    async preStep({ agent }, next) {
+      const s = bounded.get(String(agent?.id))
+      if (!s) return next()
+      s.steps += 1
+      s.live.steps = s.steps
+      const elapsed = now() - s.started
+      const reason = s.steps > limits.maxSteps ? `${limits.maxSteps} steps` : elapsed > limits.maxMinutes * 60_000 ? `${limits.maxMinutes} minutes` : null
+      if (reason) {
+        s.live.stopped ??= reason
+        return { kind: "reject" }
+      }
+      const decision = await next()
+      const left = limits.maxSteps - s.steps + 1
+      const late = left <= BUILDER_WARN_STEPS || elapsed > limits.maxMinutes * 48_000
+      if (s.warned || !late || decision.kind !== "enter") return decision
+      s.warned = true
+      return { ...decision, messages: [...decision.messages, message(builderWarning(Math.max(1, left)))] }
+    },
+    /** tools/pre-execute (waterfall): the builder's latest tool, for the Progress tab */
+    async preExecute(exec, next) {
+      const s = exec.agent && bounded.get(String(exec.agent.id))
+      if (s) s.live.last = exec.name
+      return next()
+    },
+  }
 }
 
 // U8: said once in a turn when the files changed after the last passing check
@@ -300,11 +369,14 @@ export function apply(ctx) {
   // (no parent notice), one level deep only. Their ids are remembered so a
   // builder can't plan or run steps itself
   const builders = new Set()
+  const limits = builderLimits()
+  const guard = builderGuard(limits)
   const loopHost = {
     v2,
+    limits,
     cwd: host.cwd,
     isBuilder: (exec) => builders.has(String(exec.agent?.id)),
-    async spawn(exec, prompt, label) {
+    async spawn(exec, prompt, label, live) {
       const subagents = ctx.get("subagents")
       if (!subagents) throw new VerifyError("kriya_step needs DSH's subagents, which this profile doesn't load.")
       const activation = await subagents.startActivation({
@@ -314,12 +386,27 @@ export function apply(ctx) {
         signal: exec.signal,
         delivery: "caller",
       })
-      builders.add(String(activation.childId))
+      const id = String(activation.childId)
+      builders.add(id)
+      if (live) guard.start(id, live)
       const stop = () => activation.dispose().catch(() => {})
       exec.signal.addEventListener("abort", stop, { once: true })
+      // The step limit is checked between steps; a tool call that never
+      // returns is cut off a minute after the time limit
+      const hard = setTimeout(() => {
+        if (live) live.stopped ??= `${limits.maxMinutes} minutes`
+        stop()
+      }, (limits.maxMinutes + 1) * 60_000)
+      hard.unref?.()
       try {
         return await activation.result
+      } catch (error) {
+        // Disposed by the hard limit (not by the person): still checked
+        if (live?.stopped && !exec.signal.aborted) return { output: [], stopReason: "limit" }
+        throw error
       } finally {
+        clearTimeout(hard)
+        guard.end(id)
         exec.signal.removeEventListener("abort", stop)
       }
     },
@@ -346,6 +433,8 @@ export function apply(ctx) {
       warn: (text) => ctx.logger("kriya-loop").warn(text),
     })
   )
+  ctx.on("agent/pre-step", guard.preStep)
+  ctx.on("tools/pre-execute", guard.preExecute)
   ctx.on("agent/turn-stopping", recheckHook({ cwd: host.cwd }))
   ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: v2 ? GUIDANCE + GUIDANCE_V2 : GUIDANCE })
   // Loop v2, long tasks: the plan's state per agent, in a late section that
