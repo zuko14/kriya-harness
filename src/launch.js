@@ -215,7 +215,13 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   // block said as such. KRIYA_RELAY=off talks to Kriya directly, as before
   const relay =
     device && process.env.KRIYA_RELAY !== "off"
-      ? await startGatewayProxy({ target: device.url, encode: tiers.encodings.includes(BODY_ENCODING), log: (text) => process.stderr.write(`kriya: ${text}\n`) })
+      ? await startGatewayProxy({
+          target: device.url,
+          encode: tiers.encodings.includes(BODY_ENCODING),
+          // A Kriya deployed after launch is picked up without a restart
+          checkSupport: async () => ((await models(device.url, device.token)).bodyEncodings ?? []).includes(BODY_ENCODING),
+          log: (text) => process.stderr.write(`kriya: ${text}\n`),
+        })
       : null
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {

@@ -77,7 +77,7 @@ test("without Kriya's support, and for GET and multipart, bodies go unchanged", 
 test("the firewall's block page becomes a 400 that names it and the request ID, never a 401/403", async () => {
   const up = await upstream((_r, res) => res.writeHead(403, { "content-type": "text/html" }).end(FIREWALL_PAGE))
   const logs = []
-  const relay = await startGatewayProxy({ target: up.url, encode: true, log: (t) => logs.push(t) })
+  const relay = await startGatewayProxy({ target: up.url, encode: true, log: (t) => logs.push(t), retryMs: 5 })
   const res = await fetch(`${relay.url}/api/harness/v1/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
   assert.equal(res.status, 400)
   const answer = await res.json()
@@ -85,7 +85,9 @@ test("the firewall's block page becomes a 400 that names it and the request ID, 
   assert.match(answer.error.message, /host firewall blocked this request \(request ID a553e7b17903d5ee\)/)
   assert.match(answer.error.message, /sign-in is fine/)
   assert.doesNotMatch(answer.error.message, /\b40[13]\b/, "DSH reads 401/403 in the text as a bad API key")
-  assert.match(logs[0], /firewall blocked POST \/api\/harness\/v1\/chat\/completions \(request ID a553e7b17903d5ee\)/)
+  assert.equal(up.seen.length, 2, "sent once more before reporting")
+  assert.match(logs[0], /firewall blocked POST \/api\/harness\/v1\/chat\/completions \(encoded\) \(request ID a553e7b17903d5ee\); sending it once more/)
+  assert.match(logs[1], /blocked POST \/api\/harness\/v1\/chat\/completions again/)
   // Another HTML 403 (not the firewall) is an outage-like 502; Kriya's own JSON 403 passes through
   assert.equal(firewallBlock(403, "text/html", "<html>Forbidden</html>"), null)
   assert.equal(firewallBlock(403, "application/json", FIREWALL_PAGE), null)
@@ -132,4 +134,67 @@ test("only the harness API's path is relayed, only to the signed-in Kriya; an un
   await relay.close()
   assert.ok(MAX_BODY >= 32 * 1024 * 1024)
   assert.equal(gunzipSync(Buffer.from(encodeBody(Buffer.from("{}")).toString(), "base64")).toString(), "{}")
+})
+
+test("a Kriya deployed after launch: a blocked plain request is re-asked about and sent once more encoded", async () => {
+  const up = await upstream((r, res) =>
+    r.headers["x-kriya-body"] ? json(res, 200, { ok: true }) : res.writeHead(403, { "content-type": "text/html" }).end(FIREWALL_PAGE)
+  )
+  let asked = 0
+  const logs = []
+  const relay = await startGatewayProxy({ target: up.url, encode: false, checkSupport: async () => (++asked, true), log: (t) => logs.push(t), retryMs: 5 })
+  const body = JSON.stringify({ content: RISKY })
+  const res = await fetch(`${relay.url}/api/harness/v1/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body })
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { ok: true })
+  assert.equal(asked, 1)
+  assert.equal(up.seen.length, 2)
+  assert.equal(up.seen[0].headers["x-kriya-body"], undefined)
+  assert.equal(gunzipSync(Buffer.from(up.seen[1].body.toString(), "base64")).toString(), body)
+  assert.equal(relay.encoding(), true, "later requests go encoded from the start")
+  assert.match(logs.join("\n"), /now decodes encoded request bodies/)
+  await fetch(`${relay.url}/api/harness/v1/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body })
+  assert.equal(up.seen[2].headers["x-kriya-body"], "gzip+base64")
+  assert.equal(up.seen.length, 3, "no block, no retry")
+  await relay.close()
+  await up.close()
+})
+
+test("while Kriya can't decode, it is asked again at most once a minute; a failed question changes nothing", async () => {
+  const up = await upstream((_r, res) => json(res, 200, { ok: true }))
+  let t = 0
+  let asked = 0
+  let answer = async () => false
+  const relay = await startGatewayProxy({ target: up.url, encode: false, checkSupport: () => (++asked, answer()), now: () => t })
+  const post = () => fetch(`${relay.url}/api/harness/v1/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+  await post()
+  assert.equal(asked, 0, "asked at launch; not again within the minute")
+  t = 60_000
+  answer = async () => {
+    throw new Error("offline")
+  }
+  await post()
+  assert.equal(asked, 1)
+  assert.equal(relay.encoding(), false)
+  await post()
+  assert.equal(asked, 1, "the failed question counts as asked")
+  t = 120_000
+  answer = async () => true
+  await post()
+  assert.equal(asked, 2)
+  assert.equal(up.seen.at(-1).headers["x-kriya-body"], "gzip+base64", "this very request goes encoded")
+  await relay.close()
+  await up.close()
+})
+
+test("an unencoded block with nothing new from Kriya waits, sends once more, then reports", async () => {
+  let n = 0
+  const up = await upstream((_r, res) => (++n === 1 ? res.writeHead(403, { "content-type": "text/html" }).end(FIREWALL_PAGE) : json(res, 200, { ok: true })))
+  const relay = await startGatewayProxy({ target: up.url, encode: false, checkSupport: async () => false, retryMs: 5 })
+  const res = await fetch(`${relay.url}/api/harness/v1/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+  assert.equal(res.status, 200, "a passing block (it never reached Kriya) recovers on the second send")
+  assert.equal(up.seen.length, 2)
+  assert.ok(up.seen.every((r) => r.headers["x-kriya-body"] === undefined))
+  await relay.close()
+  await up.close()
 })
