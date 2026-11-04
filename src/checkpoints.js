@@ -144,15 +144,30 @@ export async function undo(cwd, { target, now = () => new Date() } = {}) {
   const chosen = target === undefined ? stepBack(all.filter((c) => c.kind === "checkpoint"), current) : all[target - 1]
   if (!chosen) throw new CheckpointError(target === undefined ? "Nothing to undo: no checkpoint differs from the files as they are." : `There's no checkpoint ${target}; kriya undo --list shows them.`)
   if (chosen.tree === current) return { root, restored: chosen, changed: 0, saved: undefined }
+  return { root, restored: chosen, ...(await restore(root, current, chosen.tree, `before undo to ${chosen.label}`, now)) }
+}
 
-  const { write, remove } = await differences(root, current, chosen.tree)
-  // What this undo replaces is kept first: nothing is lost
-  const saved = await save(root, `${REF_ROOT}/undone`, current, `before undo to ${chosen.label}`, now)
+/**
+ * Loop v2: puts the working tree back to `tree` (a checkpoint's), the way
+ * undo does, keeping what it replaces on refs/kriya/undone first.
+ * @returns {Promise<undefined | { changed: number, saved?: object }>} undefined outside a git repository
+ */
+export async function restoreTree(cwd, tree, label, now = () => new Date()) {
+  const root = await repoRoot(cwd)
+  if (!root) return undefined
+  const current = await snapshot(root)
+  return current === tree ? { changed: 0, saved: undefined } : restore(root, current, tree, String(label).replace(/\s+/g, " ").slice(0, 200), now)
+}
+
+async function restore(root, current, tree, label, now) {
+  const { write, remove } = await differences(root, current, tree)
+  // What this replaces is kept first: nothing is lost
+  const saved = await save(root, `${REF_ROOT}/undone`, current, label, now)
 
   if (write.length) {
     const index = join(dirname(indexFile(root)), `${createHash("sha256").update(root).digest("hex").slice(0, 16)}.restore.index`)
     const env = { GIT_INDEX_FILE: index }
-    await git(root, ["read-tree", chosen.tree], { env })
+    await git(root, ["read-tree", tree], { env })
     await git(root, ["checkout-index", "-f", "-z", "--stdin"], { env, input: `${write.join("\0")}\0` })
     try {
       unlinkSync(index)
@@ -179,5 +194,5 @@ export async function undo(cwd, { target, now = () => new Date() } = {}) {
   }
   // Kriya's index now matches the restored files
   await snapshot(root)
-  return { root, restored: chosen, changed: write.length + remove.length, saved }
+  return { changed: write.length + remove.length, saved }
 }

@@ -11,6 +11,7 @@ import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkS
 import { CheckpointError, listCheckpoints, repoRoot, undo } from "../src/checkpoints.js"
 import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, VerifyError } from "../src/verify.js"
 import { projectRoot, setSkillSwitch, SwitchError } from "../src/skill-switches.js"
+import { confirmRule, dismissRule, forgetRule, listRules, RulesError } from "../src/rules.js"
 import { login } from "../src/login.js"
 import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob, switchEnv } from "../src/modes.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
@@ -23,9 +24,9 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--mode <mode>] [--no-loop] [--no-budget] [--anchor] [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--no-budget] [--anchor] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run [--mode <mode>] [--no-loop] [--no-budget] [--anchor] "<job>"
+  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
   kriya usage [--json]  this month's Kriya Harness spend and limit
@@ -58,6 +59,10 @@ Usage:
                         the agent saves a checkpoint before each change)
   kriya undo --list     the checkpoints, newest first
   kriya undo <number>   go back to one of them; what an undo replaces is kept
+  kriya rules           rules the loop proposed from repeated failures, and yours
+  kriya rules confirm <number> ["<your wording>"]
+                        let the agent see a proposed rule (only you can)
+  kriya rules dismiss <number> | forget <number>
   kriya doctor          check this machine, the sign-in and the gateway
   kriya logout          sign this device out
   kriya --version
@@ -80,6 +85,12 @@ The turn budget (on; --no-budget turns it off): each turn is bounded by
   and 10 identical tool calls in a row (KRIYA_MAX_REPEATS). Near a limit the
   agent is told to wrap up; at a limit the turn stops as "blocked" (kriya
   run exits 1).
+
+--loop-v2 (beta, off): plan steps name the steps they need, so one blocked
+  step skips only what depends on it; a failed check is classified (syntax,
+  type, assertion, environment, timeout) and cut to its failing lines; a
+  pass that changed tests must also pass with the committed tests; a worse
+  attempt is set aside; a failure seen twice is proposed as a rule.
 
 --anchor (beta): your own messages are kept word for word where compaction
   never condenses them, so a requirement survives a summary that drops it.
@@ -268,6 +279,26 @@ async function main(argv) {
       } else say('This project defines no check Kriya recognises; kriya verify use "<command>" sets one.')
       return 0
     }
+    case "rules": {
+      const [action, n, ...words] = args
+      if (action === "confirm") say(`Confirmed; the loop's builders now see: ${confirmRule(process.cwd(), n, words.join(" "))}`)
+      else if (action === "dismiss") say(`Dismissed; it won't be proposed again: ${dismissRule(process.cwd(), n)}`)
+      else if (action === "forget") say(`Removed: ${forgetRule(process.cwd(), n)}`)
+      else if (action !== undefined) {
+        say(`Unknown rules command ${action}.\n\n${HELP}`)
+        return 1
+      } else {
+        const { proposed, confirmed } = listRules(process.cwd())
+        say(confirmed.length ? `Rules you confirmed for ${projectRoot(process.cwd())}:` : "No confirmed rules for this project.")
+        confirmed.forEach((t, i) => say(`  ${i + 1}. ${t}`))
+        if (proposed.length) {
+          say("\nProposed by the loop (from failures seen twice; the agent doesn't see these):")
+          proposed.forEach((t, i) => say(`  ${i + 1}. ${t}`))
+          say('\nkriya rules confirm <number> ["<your wording>"], or kriya rules dismiss <number>.')
+        }
+      }
+      return 0
+    }
     case "undo": {
       const [arg, ...rest] = args
       if (rest.length || (arg !== undefined && arg !== "--list" && !/^\d+$/.test(arg))) {
@@ -368,6 +399,8 @@ async function main(argv) {
     case "--budget":
     case "--anchor":
     case "--no-loop":
+    case "--loop-v2":
+    case "--no-loop-v2":
     case "--no-budget":
     case "--no-anchor":
     case "--no-open":
@@ -410,7 +443,8 @@ main(process.argv.slice(2)).then(
       error instanceof ModeError ||
       error instanceof SkillsError ||
       error instanceof VerifyError ||
-      error instanceof CheckpointError
+      error instanceof CheckpointError ||
+      error instanceof RulesError
     process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }

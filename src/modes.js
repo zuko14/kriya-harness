@@ -90,6 +90,8 @@ export const SWITCHES = [
   ["loop", "KRIYA_LOOP", true],
   ["budget", "KRIYA_BUDGET", true],
   ["anchor", "KRIYA_ANCHOR", false],
+  // Kriya loop v2 (KRIYA_LOOP_V2.md): opt-in until measured; needs the loop
+  ["loop-v2", "KRIYA_LOOP_V2", false],
 ]
 
 /** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */

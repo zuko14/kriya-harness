@@ -108,6 +108,16 @@ requirement survives even when the conversation's summary leaves it out.
 Only your own messages, never tool output. Without `--anchor` the agent is
 exactly as before.
 
+Loop v2 (beta, off; `kriya --loop-v2`, `kriya run --loop-v2`,
+`KRIYA_LOOP_V2=on`): plan steps name the earlier steps they need, so a
+blocked step skips only what depends on it; a failed check is classified
+(syntax, type, assertion, environment, timeout) and cut to its failing
+lines; a pass that changed tests must also pass with the committed tests;
+an attempt that fails further from passing is set aside (kept in `kriya
+undo --list`); a failure seen twice is proposed as a rule, which the agent
+sees only after `kriya rules confirm <number>`. No extra model calls; not
+yet measured on a real model. Without `--loop-v2` the loop is exactly v1.
+
 Model limits (harness upgrade U3): when Kriya reports a tier's context
 window and output cap (`GET /models`), the tier declares them to DeepSeek
 Harness, capped at a 262,144-token working window, so compaction starts
