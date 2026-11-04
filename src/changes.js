@@ -3,6 +3,8 @@ import { lstatSync, openSync, readSync, closeSync } from "node:fs"
 import { join } from "node:path"
 import { promisify } from "node:util"
 
+import { sessionBase, snapshot, trackedRoot, treeChanges, treeFileDiff } from "./checkpoints.js"
+
 // The Changes tab (plugins/changes): what the agent (or you) changed in a
 // session's folder, as git sees it against HEAD — staged, unstaged and
 // untracked together, like a review. Read-only: git is run with an argument
@@ -111,12 +113,34 @@ function countLines(file) {
 }
 
 /**
- * Every changed file under `cwd`'s repository against HEAD, with line counts.
- * @param {string} cwd
+ * A folder in no repository (2026-11-04): what changed in this session,
+ * from the session's first checkpoint (the files before the agent's first
+ * change) to the files now, through Kriya's private store. No session or no
+ * checkpoint yet: nothing has changed.
  */
-export async function listChanges(cwd) {
+async function sessionChanges(cwd, sessionId, since) {
+  const tracked = await trackedRoot(cwd)
+  if (!tracked?.shadow) return { git: false }
+  const shape = { git: true, shadow: true, root: tracked.root, branch: null, truncated: false, added: 0, deleted: 0 }
+  const base = sessionId ? await sessionBase(tracked.root, sessionId, since) : undefined
+  if (!base) return { ...shape, files: [], since: null }
+  const now = await snapshot(tracked.root)
+  const all = await treeChanges(tracked.root, base, now)
+  const files = all.slice(0, MAX_FILES)
+  const sum = (key) => files.reduce((n, f) => n + (f[key] ?? 0), 0)
+  return { ...shape, files, truncated: all.length > MAX_FILES, added: sum("added"), deleted: sum("deleted"), since: "session", base, now }
+}
+
+/**
+ * Every changed file under `cwd`'s repository against HEAD, with line counts;
+ * in a folder with no repository, what changed in the session.
+ * @param {string} cwd
+ * @param {string} [sessionId]
+ * @param {number} [since] when the session began (ms), so its builders' changes count
+ */
+export async function listChanges(cwd, sessionId, since) {
   const root = await repoRoot(cwd)
-  if (!root) return { git: false }
+  if (!root) return sessionChanges(cwd, sessionId, since)
   const [statusText, branchText, from] = await Promise.all([
     git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
     git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => ""),
@@ -146,13 +170,18 @@ export async function listChanges(cwd) {
  * @param {string} cwd
  * @param {unknown} path
  */
-export async function fileDiff(cwd, path) {
+export async function fileDiff(cwd, path, sessionId, since) {
   if (typeof path !== "string" || path === "" || path.includes("\0")) throw new ChangesError("Which file?")
-  const changes = await listChanges(cwd)
-  if (!changes.git) throw new ChangesError("This folder isn't a git repository.")
+  const changes = await listChanges(cwd, sessionId, since)
+  if (!changes.git) throw new ChangesError("Kriya doesn't track this folder (your home folder or a drive root).")
   const file = changes.files.find((f) => f.path === path)
   if (!file) throw new ChangesError("That file has no changes.")
   if (file.binary) return { path, binary: true, diff: "", truncated: false }
+  if (changes.shadow) {
+    const text = await treeFileDiff(changes.root, changes.base, changes.now, path, file.from)
+    const truncated = Buffer.byteLength(text) > MAX_DIFF_BYTES
+    return { path, binary: false, diff: truncated ? Buffer.from(text).subarray(0, MAX_DIFF_BYTES).toString("utf8") : text, truncated }
+  }
   const args = file.untracked
     ? ["diff", "--no-color", "--no-index", "--", "/dev/null", path]
     : ["diff", "--no-color", "-M", await base(changes.root), "--", ...(file.from ? [file.from] : []), path]

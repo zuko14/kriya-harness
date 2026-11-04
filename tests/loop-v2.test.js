@@ -208,7 +208,8 @@ test("KV2-BT-03: restoreTree puts the files back and keeps what it replaced; the
   assert.equal(git("rev-parse", "HEAD"), head)
   assert.deepEqual(readFileSync(join(dir, ".git", "index")), index)
   assert.equal((await restoreTree(dir, good.tree, "again")).changed, 0)
-  assert.equal(await restoreTree(realpathSync(mkdtempSync(join(tmpdir(), "kriya-nogit-"))), good.tree, "x"), undefined)
+  // Outside git the folder has Kriya's private store, which never saw another repository's tree
+  await assert.rejects(restoreTree(realpathSync(mkdtempSync(join(tmpdir(), "kriya-nogit-"))), good.tree, "x"))
 })
 
 /* ───────────────────────────── test integrity ────────────────────────── */

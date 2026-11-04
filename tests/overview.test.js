@@ -5,6 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
+import { freshHome } from "./helpers.js"
+
 import { answer, handler, ROUTE } from "../plugins/overview/index.js"
 import { jobRows, meterFigures, parseRemote } from "../src/overview.js"
 
@@ -81,6 +83,8 @@ test("WP-OV-03: the route answers one known session's overview, read-only", asyn
 })
 
 test("WP-OV-04: unknown or missing sessions are refused; a stored session has no meter; a plain folder isn't git", async () => {
+  // A plain folder gets Kriya's private store: in a throwaway home, never the person's
+  freshHome()
   const plain = mkdtempSync(join(tmpdir(), "kriya-overview-plain-"))
   const route = handler({ folderOf: async (id) => (id === "old" ? plain : undefined), live: () => undefined, meter: () => assert.fail("no meter for a stored session"), jobs: () => [], kriyaUrl: () => undefined })
   assert.equal((await answer(route, request())).status, 400)
@@ -89,7 +93,8 @@ test("WP-OV-04: unknown or missing sessions are refused; a stored session has no
   assert.equal(body.live, false)
   assert.equal(body.context, null)
   assert.equal(body.environment.git, false)
-  assert.equal(body.changes, null)
+  // Not git, yet the session's own changes are tracked (none yet)
+  assert.equal(body.changes.count, 0)
   assert.deepEqual(body.connectors, { kriya: null, mcp: [] })
   // Anything unexpected is a 500 with a fixed sentence, logged, never the error text
   let logged

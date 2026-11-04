@@ -228,7 +228,8 @@
 - insert:
     - id: kriya-browser
       name: '@kriya-ai/harness-browser'
-      disabled: !!js process.env.KRIYA_BROWSER !== 'on'
+      # Off in KriyaBench's tool-minimal arm (KRIYA_MINIMAL=on), which keeps only the shell, files and search
+      disabled: !!js process.env.KRIYA_BROWSER !== 'on' || process.env.KRIYA_MINIMAL === 'on'
 
 # The intent router (plugins/router): for the person's latest message, a
 # short brief of the skills likely to help and the tools to start with, in

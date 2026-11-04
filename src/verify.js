@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 import { checkpoint } from "./checkpoints.js"
@@ -61,7 +61,52 @@ const PLACEHOLDER = /no test specified/
  * @returns {Array<{ command: string, source: string }>}
  */
 export function discoverChecks(cwd) {
-  const dir = projectRoot(cwd)
+  const root = projectRoot(cwd)
+  const here = checksIn(root)
+  if (here.length) return here
+  // A workspace holding its projects in subfolders (e.g. benchmarks/<app>):
+  // each one's checks, run from the workspace with `cd <folder> && …`
+  const found = []
+  for (const rel of projectFolders(root)) for (const c of checksIn(join(root, rel))) found.push({ command: `cd ${rel} && ${c.command}`, source: `${rel}/${c.source}` })
+  return found
+}
+
+// Folders never searched for projects: dependencies, build output, caches, VCS
+const SKIP_DIRS = new Set(["node_modules", "dist", "build", "out", "target", "coverage", "vendor", "venv", "__pycache__"])
+const SAFE_REL = /^[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)?$/
+const PROJECT_FILES = ["package.json", "Makefile", "makefile", "Cargo.toml", "go.mod", "pyproject.toml", "pytest.ini", "deno.json", "deno.jsonc", "gradlew", "pom.xml"]
+
+/** Subfolders (one or two levels down, at most 5) that hold a project, as safe relative paths */
+export function projectFolders(root, limit = 5) {
+  const out = []
+  const list = (dir) => {
+    try {
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith(".") && !SKIP_DIRS.has(d.name))
+        .map((d) => d.name)
+        .sort()
+    } catch {
+      return []
+    }
+  }
+  const isProject = (dir) => PROJECT_FILES.some((f) => existsSync(join(dir, f)))
+  for (const a of list(root)) {
+    if (out.length >= limit) break
+    if (isProject(join(root, a))) {
+      if (SAFE_REL.test(a)) out.push(a)
+      continue
+    }
+    for (const b of list(join(root, a))) {
+      if (out.length >= limit) break
+      const rel = `${a}/${b}`
+      if (SAFE_REL.test(rel) && isProject(join(root, rel))) out.push(rel)
+    }
+  }
+  return out
+}
+
+/** The checks one folder's project defines, best first */
+function checksIn(dir) {
   const found = []
   const add = (command, source) => {
     if (!found.some((c) => c.command === command)) found.push({ command, source })

@@ -156,7 +156,7 @@ window.__ModuleLoader__.load({
                 " changed ",
                 h("span", { key: "a", className: "kh-ch-plus" }, `+${data.added}`),
                 h("span", { key: "d", className: "kh-ch-minus" }, `−${data.deleted}`),
-                data.branch ? ` · ${data.branch}` : "",
+                data.branch ? ` · ${data.branch}` : data.shadow ? " · this session" : "",
               ]
             : "Changes"
         ),
@@ -166,8 +166,15 @@ window.__ModuleLoader__.load({
       let body
       if (error) body = h("div", { className: "kh-ch-error", role: "alert" }, error)
       else if (!data) body = h("div", { className: "kh-ch-note" }, "Reading changes…")
-      else if (!data.git) body = h("div", { className: "kh-ch-note" }, "This folder isn't a git repository, so there's nothing to compare against. Run git init here to track what the agent changes.")
-      else if (data.files.length === 0) body = h("div", { className: "kh-ch-note" }, "No changes against the last commit.")
+      else if (!data.git) body = h("div", { className: "kh-ch-note" }, "Kriya doesn't track changes in your home folder or a drive root. Open a project folder to see what the agent changes.")
+      else if (data.files.length === 0)
+        body = h(
+          "div",
+          { className: "kh-ch-note" },
+          data.shadow
+            ? "Nothing changed in this session yet. This folder isn't a git repository, so Kriya keeps its own record from the agent's first change; your folder gets no .git."
+            : "No changes against the last commit."
+        )
       else
         body = [
           h(

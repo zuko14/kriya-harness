@@ -113,12 +113,14 @@ export function planStatus(cwd, sessionId) {
   progress.plan.steps.forEach((step, i) => {
     const label = stepLabel(progress.plan, i + 1)
     const found = steps.find((s) => s.step === label)
+    // Built by kriya_step with no check confirmed: done for ordering, never a pass
+    const built = !found && progress.built?.some((b) => b.step === label)
     // v2: a step that needs a blocked or skipped step is skipped; one pass in plan order suffices, since deps point back
     const stuck = !found && step.after?.some((d) => ["blocked", "skipped"].includes(rows[d - 1].status))
     rows.push({
       n: i + 1,
       title: step.title,
-      status: stuck ? "skipped" : (found?.status ?? "not started"),
+      status: stuck ? "skipped" : (found?.status ?? (built ? "built" : "not started")),
       attempts: found?.attempts ?? 0,
       ...(step.after && { after: step.after }),
       ...(live?.n === i + 1 && { building: { attempt: live.attempt, steps: live.steps, startedAt: live.startedAt, ...(live.last && { last: live.last }) } }),
@@ -137,7 +139,7 @@ export function loopStateText(cwd, sessionId) {
   const progress = readProgress(projectRoot(cwd), sessionId)
   if (!progress.plan) return ""
   const rows = planStatus(cwd, sessionId)
-  const STATE = { pass: "passed", fail: "failing", blocked: "blocked", skipped: "skipped", "not started": "not started" }
+  const STATE = { pass: "passed", fail: "failing", blocked: "blocked", skipped: "skipped", built: "built, not checked (no check confirmed)", "not started": "not started" }
   const next = rows.find((r) => r.status === "not started" || r.status === "fail")
   const last = progress.runs.at(-1)
   const lines = [
@@ -223,10 +225,10 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2, hasCheck =
   if (deps) {
     const stuck = deps.map((d) => status[d - 1]).find((s) => s.status === "blocked" || s.status === "skipped")
     if (stuck) return { status: "skipped", step: n, title: plan.steps[n - 1].title, builders: [], note: `It needs step ${stuck.n} (${stuck.title}), which is ${stuck.status}, so nothing was built.` }
-    const open = deps.map((d) => status[d - 1]).find((s) => s.status !== "pass")
+    const open = deps.map((d) => status[d - 1]).find((s) => s.status !== "pass" && s.status !== "built")
     if (open) throw new VerifyError(`Step ${n} needs step ${open.n} (${open.title}) first, and it hasn't passed yet.`)
   } else {
-    const open = status.find((s) => s.n < n && s.status !== "pass" && s.status !== "blocked")
+    const open = status.find((s) => s.n < n && !["pass", "blocked", "built"].includes(s.status))
     if (open) throw new VerifyError(`Steps run in order: step ${open.n} (${open.title}) isn't finished yet.`)
   }
   const label = stepLabel(plan, n)
@@ -247,8 +249,14 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2, hasCheck =
     builders.push({ stopReason: built.stopReason ?? "completed", summary: textOf(built.output).slice(-600), steps: live.steps, ...(live.stopped && { limit: live.stopped }) })
     const tree = await v2?.snapshot?.(`attempt ${builders.length} of step ${n}`)
     const checked = await verify(label)
-    if (checked.status === "not configured")
+    if (checked.status === "not configured") {
+      // Recorded apart from check runs, so the plan moves on and the verdict stays "not checked"
+      const root = projectRoot(cwd)
+      const progress = readProgress(root, sessionId)
+      progress.built = [...(progress.built ?? []).filter((b) => b.step !== label), { step: label, at: new Date(now()).toISOString() }]
+      writeProgress(root, sessionId, progress)
       return { status: "not checked", step: n, title: plan.steps[n - 1].title, builders, suggestions: checked.suggestions }
+    }
     if (checked.status === "pass" || checked.status === "blocked")
       return { status: checked.status, step: n, title: plan.steps[n - 1].title, attempts: checked.attempts, builders, command: checked.command, output: checked.output ?? "", verdict: checked.verdict }
     previous = { attempt: checked.attempts, command: checked.command, exitCode: checked.exitCode, timedOut: checked.timedOut, output: checked.output, ...(checked.failure && { kind: checked.failure }) }

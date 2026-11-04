@@ -20,18 +20,27 @@ const reply = (body, status = 200) => Response.json(body, { status, headers: { "
 /**
  * The route handlers, separate from DSH so tests call them directly.
  * @param {(sessionId: string) => Promise<string | undefined>} folderOf a Session's folder
+ * @param {(sessionId: string) => Promise<number | undefined>} [startOf] when it began (ms)
  */
-export function handlers(folderOf) {
+export function handlers(folderOf, startOf = async () => undefined) {
   const folder = async (request) => {
     const id = new URL(request.url).searchParams.get("session")
     if (!id || id.length > 200) throw new ChangesError("Which session?")
     const cwd = await folderOf(id)
     if (!cwd) throw new ChangesError("That session isn't known here.")
-    return cwd
+    return { cwd, id, since: await startOf(id) }
   }
+  // base and now are tree ids the diff route uses; the browser doesn't need them
+  const shown = ({ base, now, ...rest }) => rest
   return {
-    [ROUTES.list]: async (request) => listChanges(await folder(request)),
-    [ROUTES.diff]: async (request) => fileDiff(await folder(request), new URL(request.url).searchParams.get("path")),
+    [ROUTES.list]: async (request) => {
+      const { cwd, id, since } = await folder(request)
+      return shown(await listChanges(cwd, id, since))
+    },
+    [ROUTES.diff]: async (request) => {
+      const { cwd, id, since } = await folder(request)
+      return fileDiff(cwd, new URL(request.url).searchParams.get("path"), id, since)
+    },
   }
 }
 
@@ -48,12 +57,15 @@ export async function answer(handler, request, log = () => {}) {
 
 export function apply(ctx) {
   // A live Session's header, else the stored one (a Session not open now)
-  const folderOf = async (id) => {
+  const headerOf = async (id) => {
     const live = ctx.sessions.get(id)?.header
     const stored = live === undefined ? await ctx.get("sessionPersistence")?.stat(id) : undefined
-    return (live ?? stored?.header)?.cwd
+    return live ?? stored?.header
   }
-  const table = handlers(folderOf)
+  const table = handlers(
+    async (id) => (await headerOf(id))?.cwd,
+    async (id) => (await headerOf(id))?.createdAt
+  )
   const log = (error) => ctx.logger("kriya-changes").warn(error)
   for (const [path, handler] of Object.entries(table)) {
     ctx.effect(() =>

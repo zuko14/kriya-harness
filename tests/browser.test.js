@@ -133,3 +133,19 @@ test("WP-BR-04: the view's routes: state, a frame or nothing, and the person's i
   }
   assert.deepEqual(list.map((t) => t.name), ["browser_open", "browser_read", "browser_screenshot", "browser_click", "browser_type", "browser_press", "browser_console", "browser_network"])
 })
+
+test("the agent's browser is on by default and offered only where Google Chrome is installed", async () => {
+  const { switchEnv } = await import("../src/modes.js")
+  const env = {}
+  switchEnv([], env)
+  assert.equal(env.KRIYA_BROWSER, "on")
+  const off = {}
+  switchEnv(["--no-browser-tools"], off)
+  assert.equal(off.KRIYA_BROWSER, "off")
+  const { chromeInstalled } = await import("../src/browser.js")
+  assert.equal(chromeInstalled(() => false), false)
+  assert.equal(chromeInstalled((p) => p === "/usr/bin/google-chrome"), true)
+  const { GUIDANCE } = await import("../plugins/browser/index.js")
+  assert.match(GUIDANCE, /not a Playwright, Puppeteer or headless-Chrome script/)
+  assert.match(GUIDANCE, /Preview tab/)
+})
