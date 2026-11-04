@@ -1,6 +1,6 @@
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
-import { BrowserError, LocalBrowser } from "../../src/browser.js"
+import { BrowserError, LocalBrowser, chromeInstalled } from "../../src/browser.js"
 
 // The agent's localhost browser (browser stage 2), node half: the tools an
 // agent tests and reviews a local app with, and the routes the Preview
@@ -25,7 +25,10 @@ export const GUIDANCE =
   "start its dev server (in the background), then browser_open its local address, browser_read for its text and elements, " +
   "browser_screenshot to see it, browser_click / browser_type / browser_press with refs from browser_read, and " +
   "browser_console / browser_network for errors and failed requests. Check the page after each change; report what you saw, " +
-  "not what you expect. Other sites can't be opened. Never enter passwords, codes or payment details."
+  "not what you expect. Use these tools to look at and use the app, not a Playwright, Puppeteer or headless-Chrome script of " +
+  "your own: the person watches these live in the Preview tab, and a script's browser is invisible to them. Write automated " +
+  "browser tests only when the task asks for them, and run them with the project's own test command. " +
+  "Other sites can't be opened. Never enter passwords, codes or payment details."
 
 const text = (value) => [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }]
 const OBJECT = { schema: { type: "object", additionalProperties: true, properties: {} } }
@@ -165,6 +168,11 @@ export function routes(browser) {
 }
 
 export function apply(ctx) {
+  // No Chrome, no browser: neither tools nor guidance, so the agent isn't offered what can't start
+  if (!chromeInstalled()) {
+    ctx.logger("kriya-browser").info("Google Chrome isn't installed, so the agent's browser is off")
+    return
+  }
   const sandboxPolicy = ctx.get("sandboxPolicy")
   const browser = new LocalBrowser({ selfPort: () => ctx.get("webServer")?.port })
   ctx.effect(() => () => browser.close())

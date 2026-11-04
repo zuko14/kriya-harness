@@ -157,12 +157,35 @@ test("one step at a time, unchanged trees aren't saved twice, and the oldest are
   assert.equal((await listCheckpoints(dir)).filter((c) => c.session === "s2").length, KEEP)
 })
 
-test("outside a git repository there are no checkpoints, and undo says so", async () => {
+test("outside a git repository: checkpoints and undo work from Kriya's private store; the folder gets nothing", async () => {
   freshHome()
-  const dir = mkdtempSync(join(tmpdir(), "kriya-nogit-"))
-  assert.equal(await checkpoint(dir, "s1", "x"), undefined)
-  await assert.rejects(undo(dir), CheckpointError)
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "kriya-nogit-")))
+  writeFileSync(join(dir, "app.js"), "one\n")
+  mkdirSync(join(dir, "node_modules", "dep"), { recursive: true })
+  writeFileSync(join(dir, "node_modules", "dep", "index.js"), "dependency\n")
+  const first = await checkpoint(dir, "s1", "before edit")
+  assert.ok(first?.created, "a checkpoint outside git")
+  assert.equal(existsSync(join(dir, ".git")), false, "no .git written into the folder")
+  writeFileSync(join(dir, "app.js"), "two\n")
+  writeFileSync(join(dir, "new.js"), "made by the agent\n")
+  await checkpoint(dir, "s1", "after edit")
+  const { trackedRoot, shadowDir } = await import("../src/checkpoints.js")
+  const store = shadowDir(dir)
+  const tracked = execFileSync("git", ["--git-dir", store, "ls-tree", "-r", "--name-only", first.tree], { encoding: "utf8" })
+  assert.doesNotMatch(tracked, /node_modules/, "dependency folders are never tracked")
+  assert.deepEqual(await trackedRoot(dir), { root: dir, shadow: true })
+  await undo(dir, { target: (await listCheckpoints(dir)).findIndex((c) => c.label === "before edit") + 1 })
+  assert.equal(readFileSync(join(dir, "app.js"), "utf8"), "one\n")
+  assert.equal(existsSync(join(dir, "new.js")), false)
+  assert.equal(readFileSync(join(dir, "node_modules", "dep", "index.js"), "utf8"), "dependency\n", "untracked folders untouched by undo")
   await assert.rejects(checkpoint(dir, "../x", "x"), CheckpointError)
+})
+
+test("the home folder and filesystem roots are never tracked", async () => {
+  const { tooBroad } = await import("../src/checkpoints.js")
+  assert.equal(tooBroad("/Users/someone", "/Users/someone"), true)
+  assert.equal(tooBroad("/", "/Users/someone"), true)
+  assert.equal(tooBroad("/Users/someone/Documents/app", "/Users/someone"), false)
 })
 
 test("the hook saves before file-changing calls only, one at a time per folder, never in Read only, and never blocks the call", async () => {

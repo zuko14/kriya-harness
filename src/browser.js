@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs"
+import { mkdirSync, existsSync } from "node:fs"
 import { join } from "node:path"
 
 import { kriyaHome } from "./paths.js"
@@ -13,6 +13,20 @@ import { kriyaHome } from "./paths.js"
 // per harness process, shared by the agent's tools and the person's view.
 
 export class BrowserError extends Error {}
+
+// Where Google Chrome lives on macOS, Linux and Windows (playwright's "chrome" channel uses the same)
+export const CHROME_PATHS = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/opt/google/chrome/chrome",
+  ...(process.env.LOCALAPPDATA ? [join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe")] : []),
+  ...(process.env.PROGRAMFILES ? [join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe")] : []),
+  ...(process.env["PROGRAMFILES(X86)"] ? [join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe")] : []),
+]
+
+/** Whether Google Chrome is installed (the agent's browser runs on it) */
+export const chromeInstalled = (exists = existsSync, paths = CHROME_PATHS) => paths.some((p) => exists(p))
 
 const RING = 200
 const TEXT_LIMIT = 8000

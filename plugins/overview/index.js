@@ -28,7 +28,8 @@ export function handler(host) {
     if (!id || id.length > 200) throw new ChangesError("Which session?")
     const cwd = await host.folderOf(id)
     if (!cwd) throw new ChangesError("That session isn't known here.")
-    const changes = await listChanges(cwd)
+    // In a folder outside git, the session's own changes (Kriya's private store)
+    const changes = await listChanges(cwd, id, await host.startOf?.(id))
     const session = host.live(id)
     let kriya
     try {
@@ -42,8 +43,8 @@ export function handler(host) {
         computer: "This computer",
         os: OS[platform()] ?? platform(),
         folder: cwd,
-        git: changes.git,
-        ...(changes.git && { root: changes.root, branch: changes.branch, repo: await originOf(changes.root) }),
+        git: Boolean(changes.git && !changes.shadow),
+        ...(changes.git && !changes.shadow && { root: changes.root, branch: changes.branch, repo: await originOf(changes.root) }),
       },
       live: Boolean(session),
       ...(session ? meterFigures(host.meter(session)) : { context: null, usage: null }),
@@ -75,6 +76,7 @@ export function apply(ctx) {
   }
   const route = handler({
     folderOf,
+    startOf: async (id) => (ctx.sessions.get(id)?.header ?? (await ctx.get("sessionPersistence")?.stat(id))?.header)?.createdAt,
     live: (id) => ctx.sessions.get(id),
     // Optional services: a profile without them shows no figures, never an error
     meter: (session) => ctx.get("sessionProjections")?.snapshot(session, ["contextPressure", "tokenUsage"])?.values,

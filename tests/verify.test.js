@@ -228,3 +228,20 @@ test("KRIYA_VERIFY_CHECK from the person's shell sets this run's check; a multi-
     delete process.env.KRIYA_VERIFY_CHECK
   }
 })
+
+test("a workspace whose projects sit in subfolders: their checks, run with cd from the workspace", async () => {
+  const { discoverChecks, projectFolders } = await import("../src/verify.js")
+  const { mkdtempSync, mkdirSync, writeFileSync, realpathSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "kriya-ws-")))
+  for (const [rel, scripts] of [["benchmarks/app", { test: "vitest" }], ["tool", { check: "tsc" }], ["node_modules/x", { test: "t" }], ["has space/app", { test: "t" }]]) {
+    mkdirSync(join(dir, rel), { recursive: true })
+    writeFileSync(join(dir, rel, "package.json"), JSON.stringify({ scripts }))
+  }
+  assert.deepEqual(projectFolders(dir), ["benchmarks/app", "tool"], "dependencies and unsafe names skipped")
+  assert.deepEqual(discoverChecks(dir).map((c) => c.command), ["cd benchmarks/app && npm test", "cd tool && npm run check"])
+  // A project at the top wins: no subfolder suggestions
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }))
+  assert.deepEqual(discoverChecks(dir).map((c) => c.command), ["npm test"])
+})

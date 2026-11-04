@@ -135,6 +135,20 @@ connectors), **Progress** (goal → plan → build → verify → done from the
 loop's own check runs) and **Preview** (an app on this computer, localhost
 only, in a frame).
 
+**Changes** shows every file the agent added, changed or deleted, with its
+diff. In a git repository that's against the last commit. In a folder that
+isn't one, it's this session's changes since the agent's first change,
+including those its step builders made: Kriya keeps its own record in
+`~/.kriya/shadow/` (dependency, build and cache folders left out; nothing,
+not even a `.git`, is written into your folder; your home folder and drive
+roots are never tracked). Checkpoints and `kriya undo` work there too.
+
+With no check confirmed, **Progress** lists the checks the harness found
+(also in project subfolders, e.g. `cd benchmarks/app && npm run check`); one
+click confirms one, exactly as `kriya verify use` does. A step built with no
+check reads "built, not checked": the plan moves on, and nothing counts as
+passed.
+
 Intent router (beta, off; `kriya --router`, `kriya run --router`,
 `KRIYA_ROUTER=on`): for each request, code (no model call) writes a short
 brief into the prompt: the request's intent, the skills of your catalog most
@@ -146,8 +160,9 @@ each step's status, the next step, the last check) is kept in a part of the
 prompt that compaction never condenses, so the agent keeps its place
 however often older turns are summarised.
 
-Agent's browser (beta, off; `kriya --browser-tools`, `kriya run
---browser-tools`, `KRIYA_BROWSER=on`): the agent tests and reviews apps on
+Agent's browser (beta; **on wherever Google Chrome is installed**, since
+2026-11-04; `--no-browser-tools` or `KRIYA_BROWSER=off` turns it off): the
+agent tests and reviews apps on
 this computer with your installed Google Chrome (headless, its own profile
 in `~/.kriya/browser/`): `browser_open`, `browser_read`,
 `browser_screenshot`, `browser_click`, `browser_type`, `browser_press`,

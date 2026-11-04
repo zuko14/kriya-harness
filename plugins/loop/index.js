@@ -437,17 +437,21 @@ export function apply(ctx) {
   ctx.on("tools/pre-execute", guard.preExecute)
   ctx.on("agent/turn-stopping", recheckHook({ cwd: host.cwd }))
   ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: v2 ? GUIDANCE + GUIDANCE_V2 : GUIDANCE })
-  // Loop v2, long tasks: the plan's state per agent, in a late section that
+  // Long tasks: the plan's state per agent, in a late section that
   // compaction never condenses (after DSH's suffix, before the anchor's), so
   // the cached prefix stays the same. The folder is the one the agent's last
-  // loop tool ran in; before a plan there is nothing to show
-  if (v2) {
+  // loop tool ran in; before a plan there is nothing to show, so a session
+  // without a plan gets the same prompt as before. Loop v2 only until
+  // 2026-11-04; on with the loop since (owner: a real run lost its plan after
+  // compaction and goal rounds, and the Progress tab never moved)
+  {
     ctx.systemPrompt.section({
       name: "kriya:loop-state",
       order: 10250,
       interpolate: false,
       text: ({ scope }) => {
-        const cwd = scope && folders.get(scope)
+        // The folder a loop tool last resolved, else the session's own (a resumed session before any loop tool)
+        const cwd = scope && (folders.get(scope) ?? scope.session?.header?.cwd)
         if (!cwd) return ""
         try {
           return loopStateText(cwd, String(scope.id))

@@ -92,8 +92,10 @@ export const SWITCHES = [
   ["anchor", "KRIYA_ANCHOR", false],
   // Kriya loop v2 (KRIYA_LOOP_V2.md): opt-in until measured; needs the loop
   ["loop-v2", "KRIYA_LOOP_V2", false],
-  // The agent's localhost browser (plugins/browser): opt-in, needs Google Chrome
-  ["browser-tools", "KRIYA_BROWSER", false],
+  // The agent's localhost browser (plugins/browser): on (owner, 2026-11-04:
+  // the agent must use the browser we built, shown live in Preview, not its
+  // own scripts); offered only where Google Chrome is installed
+  ["browser-tools", "KRIYA_BROWSER", true],
   // The intent router (plugins/router): opt-in until measured
   ["router", "KRIYA_ROUTER", false],
 ]

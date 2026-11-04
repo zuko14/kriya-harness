@@ -106,7 +106,7 @@ async function arm(flags) {
   }
 }
 
-test("HU-M-11 long horizon on a 32k window: after a compaction that forgets the plan, loop v2 still shows where the task stands", { timeout: 600_000 }, async () => {
+test("HU-M-11 long horizon on a 32k window: after a compaction that forgets the plan, the loop (v1 and v2) still shows where the task stands", { timeout: 600_000 }, async () => {
   const v1 = await arm([])
   const v2 = await arm(["--loop-v2"])
   const report = JSON.stringify({ v1, v2 })
@@ -116,6 +116,6 @@ test("HU-M-11 long horizon on a 32k window: after a compaction that forgets the 
     assert.ok(r.compactions >= 1, report)
     assert.equal(r.files, 4, report)
   }
-  assert.equal(v1.stateShown, false, report)
-  assert.deepEqual([v2.stateShown, v2.stepsShown, v2.nextShown], [true, true, true], report)
+  // v1 too since 2026-11-04 (a real run lost its plan after compaction; the Progress tab never moved)
+  for (const r of [v1, v2]) assert.deepEqual([r.stateShown, r.stepsShown, r.nextShown], [true, true, true], report)
 })

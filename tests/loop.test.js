@@ -252,3 +252,23 @@ test("planning with no confirmed check says so up front", async () => {
   const again = await planTool(host).execute(plan(), { agent: { id: "parent2" }, signal })
   assert.equal(again.unchecked, undefined)
 })
+
+test("with no check confirmed, a built step is recorded 'built', the plan moves on, and nothing passes", async () => {
+  freshHome()
+  const dir = project()
+  savePlan(dir, "s1", plan(2))
+  const none = harness(dir, [{ status: "not configured", suggestions: [] }])
+  assert.equal((await runStep({ cwd: dir, sessionId: "s1", n: 1, spawn: none.spawn, verify: none.verify })).status, "not checked")
+  const rows = planStatus(dir, "s1")
+  assert.deepEqual(rows.map((r) => r.status), ["built", "not started"])
+  // Step 2 may run now: built counts for ordering
+  const again = harness(dir, [{ status: "not configured", suggestions: [] }])
+  assert.equal((await runStep({ cwd: dir, sessionId: "s1", n: 2, spawn: again.spawn, verify: again.verify })).status, "not checked")
+  const { loopStateText } = await import("../src/loop.js")
+  const state = loopStateText(dir, "s1")
+  assert.match(state, /1\. Step title 1: built, not checked/)
+  assert.match(state, /Every step has passed, been blocked or been skipped/)
+  const { readProgress } = await import("../src/verify.js")
+  const { projectRoot } = await import("../src/skill-switches.js")
+  assert.deepEqual(readProgress(projectRoot(dir), "s1").runs, [], "no check run invented")
+})

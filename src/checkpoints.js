@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdirSync, rmdirSync, unlinkSync } from "node:fs"
-import { dirname, join, relative, resolve, sep } from "node:path"
+import { existsSync, mkdirSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { dirname, join, parse, relative, resolve, sep } from "node:path"
 
 import { kriyaHome } from "./paths.js"
 
@@ -29,9 +30,28 @@ const IDENTITY = {
 
 export class CheckpointError extends Error {}
 
-function git(cwd, args, { env, input } = {}) {
+// Folders that aren't git repositories (2026-11-04, owner: "it created the
+// files … why it was not showing at all"): checkpoints, undo and the Changes
+// tab use a private git store in ~/.kriya/shadow/<folder hash>.git whose
+// work tree is the folder. Nothing is written into the folder itself (no
+// .git); dependency, build and cache folders are left out; the home folder
+// and filesystem roots are never tracked. A real repository always wins.
+const shadows = new Map() // folder → its store's git dir
+export const SHADOW_EXCLUDES = [
+  "node_modules/", ".npm-cache/", ".npm/", ".pnpm-store/", ".yarn/", "bower_components/",
+  "dist/", "build/", "out/", ".next/", ".nuxt/", ".svelte-kit/", ".turbo/", ".cache/", ".parcel-cache/", ".vite/",
+  "coverage/", "target/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".gradle/", ".idea/", ".vscode/",
+  ".DS_Store", "Thumbs.db", "*.log", "playwright-report/", "test-results/", ".playwright/", ".git/",
+]
+// The first snapshot of a big folder reads every file; later ones only what changed
+const SHADOW_TIMEOUT_MS = 60_000
+
+function git(cwd, args, { env, input, timeout, raw = false } = {}) {
+  // raw: git as the folder itself sees it, never through Kriya's store
+  const store = raw ? undefined : shadows.get(cwd)
+  const full = store ? ["--git-dir", store, ...args] : args
   return new Promise((done, fail) => {
-    const child = execFile("git", args, { cwd, env: { ...process.env, ...env }, encoding: "buffer", maxBuffer: 256 * MB }, (error, stdout, stderr) => {
+    const child = execFile("git", full, { cwd, env: { ...process.env, ...env }, encoding: "buffer", maxBuffer: 256 * MB, ...(timeout && { timeout }) }, (error, stdout, stderr) => {
       if (error) fail(new CheckpointError(stderr.toString().trim().split("\n")[0] || error.message))
       else done(stdout)
     })
@@ -43,10 +63,58 @@ const text = async (cwd, args, options) => (await git(cwd, args, options)).toStr
 /** The repository's top folder, or undefined when `cwd` isn't in one. */
 export async function repoRoot(cwd) {
   try {
-    return await text(cwd, ["rev-parse", "--show-toplevel"])
+    return await text(cwd, ["rev-parse", "--show-toplevel"], { raw: true })
   } catch {
     return undefined
   }
+}
+
+/** Whether a folder is too broad to track: the home folder or a filesystem root */
+export function tooBroad(folder, home = homedir()) {
+  const real = resolve(folder)
+  return real === resolve(home) || real === parse(real).root
+}
+
+/** The private store's git dir for a folder that isn't a repository */
+export const shadowDir = (folder) => join(kriyaHome(), "shadow", `${createHash("sha256").update(folder).digest("hex").slice(0, 16)}.git`)
+
+/**
+ * Where checkpoints for `cwd` live: its repository's top folder, or, for a
+ * folder in no repository, the folder itself with its private store set up
+ * (undefined for the home folder or a filesystem root, or without git).
+ * @returns {Promise<{ root: string, shadow: boolean } | undefined>}
+ */
+export async function trackedRoot(cwd) {
+  const repo = await repoRoot(cwd)
+  if (repo) {
+    // A folder that became a repository (git init) is the repository's again
+    shadows.delete(repo)
+    return { root: repo, shadow: false }
+  }
+  let folder
+  try {
+    folder = realpathSync(cwd)
+  } catch {
+    return undefined
+  }
+  if (tooBroad(folder)) return undefined
+  const store = shadowDir(folder)
+  try {
+    if (!existsSync(join(store, "HEAD"))) {
+      mkdirSync(dirname(store), { recursive: true })
+      await git(dirname(store), ["init", "-q", "--bare", store])
+      await git(dirname(store), ["--git-dir", store, "config", "core.bare", "false"])
+      await git(dirname(store), ["--git-dir", store, "config", "core.worktree", folder])
+      // Kriya's store keeps no reflogs or hooks of its own
+      await git(dirname(store), ["--git-dir", store, "config", "core.logAllRefUpdates", "false"])
+      mkdirSync(join(store, "info"), { recursive: true })
+      writeFileSync(join(store, "info", "exclude"), `# Kriya Harness: never tracked in this folder\n${SHADOW_EXCLUDES.join("\n")}\n`)
+    }
+  } catch {
+    return undefined
+  }
+  shadows.set(folder, store)
+  return { root: folder, shadow: true }
 }
 
 // Kriya's own index per repository, kept between snapshots so `add -A` only
@@ -58,7 +126,7 @@ export async function snapshot(root) {
   const index = indexFile(root)
   mkdirSync(dirname(index), { recursive: true })
   const env = { GIT_INDEX_FILE: index }
-  await git(root, ["add", "-A", "--", "."], { env })
+  await git(root, ["add", "-A", "--", "."], { env, ...(shadows.has(root) && { timeout: SHADOW_TIMEOUT_MS }) })
   return text(root, ["write-tree"], { env })
 }
 
@@ -96,11 +164,11 @@ async function save(root, prefix, tree, label, now) {
 /**
  * Saves the working tree before a change, unless it's the same as the
  * session's last checkpoint.
- * @returns {Promise<undefined | { ref: string, commit: string, tree: string, created: boolean }>} undefined outside a git repository
+ * @returns {Promise<undefined | { ref: string, commit: string, tree: string, created: boolean }>} undefined where nothing can be tracked
  */
 export async function checkpoint(cwd, sessionId, label, now = () => new Date()) {
   if (!SESSION.test(sessionId)) throw new CheckpointError("That session id can't name a checkpoint.")
-  const root = await repoRoot(cwd)
+  const root = (await trackedRoot(cwd))?.root
   if (!root) return undefined
   const tree = await snapshot(root)
   const prefix = `${REF_ROOT}/checkpoints/${sessionId}`
@@ -137,8 +205,8 @@ export function stepBack(checkpoints, current) {
  * @param {{ target?: number, now?: () => Date }} [options] target: a number from `kriya undo --list`
  */
 export async function undo(cwd, { target, now = () => new Date() } = {}) {
-  const root = await repoRoot(cwd)
-  if (!root) throw new CheckpointError("This folder isn't a git repository, so there are no checkpoints to go back to.")
+  const root = (await trackedRoot(cwd))?.root
+  if (!root) throw new CheckpointError("Kriya doesn't track this folder (your home folder or a drive root), so there are no checkpoints to go back to.")
   const all = await listCheckpoints(root)
   const current = await snapshot(root)
   const chosen = target === undefined ? stepBack(all.filter((c) => c.kind === "checkpoint"), current) : all[target - 1]
@@ -150,10 +218,10 @@ export async function undo(cwd, { target, now = () => new Date() } = {}) {
 /**
  * Loop v2: puts the working tree back to `tree` (a checkpoint's), the way
  * undo does, keeping what it replaces on refs/kriya/undone first.
- * @returns {Promise<undefined | { changed: number, saved?: object }>} undefined outside a git repository
+ * @returns {Promise<undefined | { changed: number, saved?: object }>} undefined where nothing can be tracked
  */
 export async function restoreTree(cwd, tree, label, now = () => new Date()) {
-  const root = await repoRoot(cwd)
+  const root = (await trackedRoot(cwd))?.root
   if (!root) return undefined
   const current = await snapshot(root)
   return current === tree ? { changed: 0, saved: undefined } : restore(root, current, tree, String(label).replace(/\s+/g, " ").slice(0, 200), now)
@@ -195,4 +263,51 @@ async function restore(root, current, tree, label, now) {
   // Kriya's index now matches the restored files
   await snapshot(root)
   return { changed: write.length + remove.length, saved }
+}
+
+/* ───────── the Changes tab in a folder with no repository (src/changes.js) ───────── */
+
+/**
+ * The files before the session's first change: the oldest checkpoint that
+ * is the session's own or was taken in the folder after the session began
+ * (`since`, ms). A step's builder is a child agent whose checkpoints carry
+ * its own id, so time is what ties them to the session that started it.
+ */
+export async function sessionBase(root, sessionId, since) {
+  if (!SESSION.test(sessionId)) return undefined
+  const started = Number.isFinite(since) ? since : undefined
+  const mine = (await listCheckpoints(root)).filter((c) => c.kind === "checkpoint" && (c.session === sessionId || (started !== undefined && Date.parse(c.at) >= started)))
+  return mine.sort((a, b) => a.at.localeCompare(b.at) || a.n - b.n)[0]?.tree
+}
+
+/** Files that differ between two trees: { path, status, from?, added?, deleted?, binary? } */
+export async function treeChanges(root, from, to) {
+  const names = (await git(root, ["diff-tree", "-r", "-z", "-M", "--name-status", from, to])).toString().split("\0").filter(Boolean)
+  const counts = new Map()
+  const numstat = (await git(root, ["diff-tree", "-r", "-z", "-M", "--numstat", from, to])).toString().split("\0")
+  for (let i = 0; i < numstat.length; i++) {
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(numstat[i])
+    if (!m) continue
+    let path = m[3]
+    if (path === "") {
+      i++
+      path = numstat[++i]
+    }
+    counts.set(path, m[1] === "-" ? { binary: true } : { added: Number(m[1]), deleted: Number(m[2]) })
+  }
+  const files = []
+  for (let i = 0; i < names.length; ) {
+    const code = names[i++]
+    const renamed = code[0] === "R" || code[0] === "C"
+    const fromPath = renamed ? names[i++] : undefined
+    const path = names[i++]
+    const status = code[0] === "A" ? "added" : code[0] === "D" ? "deleted" : renamed ? "renamed" : "modified"
+    files.push({ path, status, ...(fromPath && { from: fromPath }), ...(counts.get(path) ?? {}) })
+  }
+  return files
+}
+
+/** One file's unified diff between two trees */
+export async function treeFileDiff(root, from, to, path, fromPath) {
+  return (await git(root, ["diff", "--no-color", "-M", from, to, "--", ...(fromPath ? [fromPath] : []), path])).toString()
 }

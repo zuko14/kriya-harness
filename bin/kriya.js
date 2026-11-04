@@ -8,7 +8,7 @@ import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
-import { CheckpointError, listCheckpoints, repoRoot, undo } from "../src/checkpoints.js"
+import { CheckpointError, listCheckpoints, trackedRoot, undo } from "../src/checkpoints.js"
 import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, VerifyError } from "../src/verify.js"
 import { projectRoot, setSkillSwitch, SwitchError } from "../src/skill-switches.js"
 import { confirmRule, dismissRule, forgetRule, listRules, RulesError } from "../src/rules.js"
@@ -24,9 +24,9 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--browser-tools] [--router] [--no-budget] [--anchor] [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--no-browser-tools] [--router] [--no-budget] [--anchor] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--browser-tools] [--router] [--no-budget] [--anchor] "<job>"
+  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--no-browser-tools] [--router] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
   kriya usage [--json]  this month's Kriya Harness spend and limit
@@ -94,7 +94,8 @@ The turn budget (on; --no-budget turns it off): each turn is bounded by
   pass that changed tests must also pass with the committed tests; a worse
   attempt is set aside; a failure seen twice is proposed as a rule.
 
---browser-tools (beta, off): the agent gets a browser for apps on this computer
+--browser-tools (on where Google Chrome is installed; --no-browser-tools turns it
+  off): the agent gets a browser for apps on this computer
   (localhost only), on your installed Google Chrome with its own profile:
   open, read, screenshot, click, type, console and network, to test what it
   builds. The Preview tab shows and drives the same page.
@@ -317,8 +318,8 @@ async function main(argv) {
         return 1
       }
       if (arg === "--list") {
-        const root = await repoRoot(process.cwd())
-        if (!root) throw new CheckpointError("This folder isn't a git repository, so there are no checkpoints.")
+        const root = (await trackedRoot(process.cwd()))?.root
+        if (!root) throw new CheckpointError("Kriya doesn't track this folder (your home folder or a drive root), so there are no checkpoints.")
         const list = await listCheckpoints(root)
         if (!list.length) {
           say("No checkpoints yet: the Kriya loop saves one before each change the agent makes.")

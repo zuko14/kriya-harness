@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
     const PLUGIN = "@kriya-ai/harness-progress"
     const KIND = "kriya-progress"
     const API = "api/kriya.progress"
+    const CHECK_API = "api/kriya.progress.check"
     const REFRESH_MS = 3000
     const MAX_ATTEMPTS = 4
 
@@ -32,6 +33,11 @@ window.__ModuleLoader__.load({
 .kh-pg-verdict.stale, .kh-pg-verdict.not-checked { color: var(--dsw-alias-state-warn-label); }
 .kh-pg-goal { line-height: 1.45; margin: 6px 0 0; }
 .kh-pg-check { margin-top: 6px; color: var(--dsw-alias-label-tertiary); }
+.kh-pg-use { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.kh-pg-usebtn { min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-primary); cursor: pointer; font: inherit; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.kh-pg-usebtn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.kh-pg-usebtn:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: 1px; }
+.kh-pg-usebtn:disabled { opacity: .6; cursor: default; }
 .kh-pg-mono { font-family: var(--dsw-font-code, ui-monospace, monospace); font-size: 12px; }
 .kh-pg-step { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: start; padding: 6px 0; }
 .kh-pg-step + .kh-pg-step { border-top: 1px dashed var(--dsw-alias-border-l2); }
@@ -75,7 +81,7 @@ window.__ModuleLoader__.load({
     const REFRESH = ["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"]
 
     const VERDICT = { verified: "Verified", failed: "Failing", blocked: "Blocked", "not checked": "Not checked" }
-    const STEP_ICON = { pass: "✓", fail: "!", blocked: "×", skipped: "–", "not started": "", next: "›", building: "…" }
+    const STEP_ICON = { pass: "✓", fail: "!", blocked: "×", skipped: "–", built: "○", "not started": "", next: "›", building: "…" }
     // A builder at work: its run, steps so far, minutes and latest tool (live, from the loop)
     const buildingTag = (b) => `building · run ${b.attempt}`
     const buildingLine = (b) =>
@@ -86,7 +92,7 @@ window.__ModuleLoader__.load({
       const v = data.verdict
       const plan = data.plan
       const ran = data.runs.length > 0
-      const allDone = plan ? plan.steps.every((s) => ["pass", "blocked", "skipped"].includes(s.status)) : v.status === "verified"
+      const allDone = plan ? plan.steps.every((s) => ["pass", "blocked", "skipped", "built"].includes(s.status)) : v.status === "verified"
       const building = plan?.steps.some((s) => s.building)
       const now = building ? 2 : v.status === "verified" && !v.stale ? 4 : allDone && ran ? 3 : ran ? (plan ? 2 : 3) : plan ? 1 : 0
       return { now, list: ["Goal", "Plan", "Build", "Verify", "Done"] }
@@ -110,7 +116,7 @@ window.__ModuleLoader__.load({
     }
 
     function Steps({ plan }) {
-      const next = plan.steps.find((s) => s.status === "not started" && (s.after ?? []).every((d) => plan.steps[d - 1]?.status === "pass"))
+      const next = plan.steps.find((s) => s.status === "not started" && (s.after ?? []).every((d) => ["pass", "built"].includes(plan.steps[d - 1]?.status)))
       return plan.steps.map((s) => {
         const state = s.building ? "building" : s === next ? "next" : s.status
         const tag = s.building
@@ -123,6 +129,8 @@ window.__ModuleLoader__.load({
                 ? `blocked after ${s.attempts}`
                 : s.status === "skipped"
                   ? "skipped"
+                  : s.status === "built"
+                    ? "built, not checked"
                   : s === next
                     ? "next"
                     : ""
@@ -166,6 +174,7 @@ window.__ModuleLoader__.load({
       const visible = tab?.visible !== false
       const [data, setData] = useState(null)
       const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
 
       const load = useCallback(async () => {
         if (!sessionId) return
@@ -179,6 +188,24 @@ window.__ModuleLoader__.load({
           setError(e.message === "Failed to fetch" ? "Kriya Harness isn't answering; is it still running?" : e.message)
         }
       }, [sessionId])
+
+      // The person picks one of the checks the harness found: from now on every step is judged by it
+      const useCheck = useCallback(
+        async (command) => {
+          setBusy(true)
+          try {
+            const response = await fetch(CHECK_API, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ session: sessionId, command }) })
+            const body = await response.json().catch(() => ({}))
+            if (!response.ok) throw new Error(body.error || `Kriya answered ${response.status}.`)
+            await load()
+          } catch (e) {
+            setError(e.message)
+          } finally {
+            setBusy(false)
+          }
+        },
+        [sessionId, load]
+      )
 
       useEffect(() => {
         if (!visible) return
@@ -205,8 +232,26 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "kh-pg-check" },
-            data.check ? h(React.Fragment, null, "Checked by ", h("span", { className: "kh-pg-mono" }, data.check.command)) : "No check confirmed for this project: run kriya verify use in a terminal."
+            data.check
+              ? h(React.Fragment, null, "Checked by ", h("span", { className: "kh-pg-mono" }, data.check.command))
+              : data.suggestions?.length
+                ? "No check confirmed, so no step can pass. Pick the command that proves the work, and every step is judged by it:"
+                : "No check confirmed for this project: run kriya verify use \"<command>\" in a terminal."
           ),
+          !data.check &&
+            data.suggestions?.length > 0 &&
+            h(
+              "div",
+              { className: "kh-pg-use", role: "group", "aria-label": "Checks found for this project" },
+              ...data.suggestions.map((s) =>
+                h(
+                  "button",
+                  { key: s.command, type: "button", className: "kh-pg-usebtn", disabled: busy, onClick: () => useCheck(s.command), title: `Found in ${s.source}` },
+                  "Use ",
+                  h("span", { className: "kh-pg-mono" }, s.command)
+                )
+              )
+            ),
           data.verdict.touched && h("div", { className: "kh-pg-check" }, `The passing work changed test or check files: ${data.verdict.touched.join(", ")}.`)
         ),
         data.plan
