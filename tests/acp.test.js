@@ -175,7 +175,7 @@ test("an editor session: handshake, Kriya's tiers, the gateway with the device t
     for (const chat of chats) {
       assert.equal(chat.body.model, "balanced")
       assert.equal(chat.headers.authorization, `Bearer ${[...fake.state.tokens][0]}`)
-      assert.equal(chat.headers["x-kriya-harness"], "0.1.0")
+      assert.equal(chat.headers["x-kriya-harness"], "0.2.0")
     }
     // The device token never reaches the model
     assert.doesNotMatch(JSON.stringify(chats.map((c) => c.body)), new RegExp([...fake.state.tokens][0]))

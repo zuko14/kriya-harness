@@ -19,13 +19,30 @@
         apiKeyEnv: KRIYA_DEVICE_TOKEN
         headers:
           X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
-        models:
-          - id: balanced
-            name: Kriya balanced
-          - id: budget
-            name: Kriya budget
-          - id: escalation
-            name: Kriya escalation
+        # Only the tiers the plan allows (the launcher reads GET /models into
+        # KRIYA_ALLOWED_TIERS): a tier the plan refuses would fail every
+        # request with tier_not_allowed. Unset, all three. Each is named
+        # after the model the owner routes it to (KRIYA_MODEL_NAMES, from the
+        # same answer), else "Kriya <tier>"
+        # Harness upgrade U3: a tier Kriya gives limits for (KRIYA_MODEL_LIMITS,
+        # from GET /models) declares its model's context window and output
+        # cap; the others keep DSH's defaults (262,144 and 32,768)
+        models: !!js >-
+          ((names, limits) => [['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'], ['escalation', 'Kriya escalation']]
+          .filter(([id]) => (process.env.KRIYA_ALLOWED_TIERS || 'balanced,budget,escalation').split(',').includes(id))
+          .map(([id, name]) => ({ id, name: typeof names[id] === 'string' && names[id] ? names[id] : name,
+          ...(limits[id] ? { contextWindow: limits[id].contextWindow, maxTokens: limits[id].maxTokens } : {}) })))
+          ((() => { try { return JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {} } })(),
+          (() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })())
+
+# Harness upgrade U3: compaction headroom per tier from the same limits, so
+# DSH's trigger (W − O − headroom) stays positive on a small window. No
+# limits, no policies: DSH's defaults, as before
+- id: compaction-basic
+  config:
+    modelPolicies: !!js >-
+      Object.entries((() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })())
+      .map(([model, l]) => ({ provider: 'kriya', model, headroomTokens: l.headroomTokens }))
 
 # The starting tier: balanced, or the best tier the plan allows, chosen by
 # the launcher from GET /models (src/launch.js startTier)
@@ -116,6 +133,56 @@
       name: '@kriya-ai/harness-loop'
       disabled: !!js process.env.KRIYA_LOOP !== 'on'
 
+# Harness upgrade U2 (plugins/budget): a turn is bounded by code: at most
+# KRIYA_MAX_STEPS steps (150), KRIYA_TURN_MINUTES minutes (60) and
+# KRIYA_MAX_REPEATS identical tool calls in a row (10); near a limit the agent
+# is told once to wrap up, at a limit the turn ends "blocked". Off unless
+# kriya was started with --budget (KRIYA_BUDGET=on): off, the agent is
+# exactly as before
+- insert:
+    - id: kriya-budget
+      name: '@kriya-ai/harness-budget'
+      disabled: !!js process.env.KRIYA_BUDGET !== 'on'
+
+# Harness upgrade U7 (plugins/anchor): the person's own messages, word for
+# word, in a late system-prompt section that compaction never condenses, so
+# a requirement survives a summary that drops it. Off unless kriya was
+# started with --anchor (KRIYA_ANCHOR=on)
+- insert:
+    - id: kriya-anchor
+      name: '@kriya-ai/harness-anchor'
+      disabled: !!js process.env.KRIYA_ANCHOR !== 'on'
+
+# Harness upgrade U6: KriyaBench's tool-minimal control arm (arm B0,
+# BENCHMARK_PLAN.md): the same sandbox, gateway, model and prompt, with only
+# the shell and the file and search tools, so a run shows whether the rest
+# of the tool list helps or hurts. A benchmark switch only: KRIYA_MINIMAL=on
+# in the shell that runs the bench. Off, these rows are as before: on in
+# kriya-run and kriya-acp, and off at the top level of the Web UI's profile
+# (`kriya`), where DSH's own web bundle moves them into its agent presets
+- id: tool-goal
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-subagent
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-subagent-fork
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-subagent-control
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-subagent-list-agents
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-jobs
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-todo
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-web
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-workflow
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: tool-skill
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+- id: plan-mode
+  disabled: !!js ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL === 'on'
+
 # The Skills page (plugins/skills): a sidebar row and page listing the
 # agent's SKILL.md skills, with editing for the ones you own, on routes inside
 # Connection's fence. In profiles without the web server it doesn't start
@@ -192,6 +259,7 @@
 - insert:
     - id: kriya-tools
       name: '@kriya-ai/harness-tools'
+      disabled: !!js process.env.KRIYA_MINIMAL === 'on'
 
 # DSH's first-run "Preview Notice" speaks for DeepSeek Harness; Kriya shows
 # its own beta notice at first run (bin/kriya.js) and in SAFETY.md, which

@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-budget",
+  "description": "Turn budget for Kriya Harness: bounds the steps, time and identical repeated tool calls of one turn, then lets the agent report and stops it",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

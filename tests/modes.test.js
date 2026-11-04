@@ -153,3 +153,20 @@ test("full: everything runs without asking, after the warning", { timeout: 300_0
   assert.deepEqual(r.approvals, [], r.report)
   assert.match(r.run.stderr, /Full access: the agent runs commands and changes files anywhere/)
 })
+
+// Harness upgrade U10 (HU-SW-01): B4 is the default; flags beat the
+// environment, which beats the default; the anchor stays opt-in
+test("HU-SW-01: the loop and the budget are on unless turned off; --anchor is opt-in", async () => {
+  const { switchEnv } = await import("../src/modes.js")
+  const run = (args, env = {}) => {
+    const a = [...args]
+    switchEnv(a, env)
+    return { args: a, loop: env.KRIYA_LOOP, budget: env.KRIYA_BUDGET, anchor: env.KRIYA_ANCHOR }
+  }
+  assert.deepEqual(run(["job"]), { args: ["job"], loop: "on", budget: "on", anchor: "off" })
+  assert.deepEqual(run(["--no-loop", "--no-budget", "--anchor", "job"]), { args: ["job"], loop: "off", budget: "off", anchor: "on" })
+  assert.deepEqual(run(["job"], { KRIYA_LOOP: "off", KRIYA_BUDGET: "off" }), { args: ["job"], loop: "off", budget: "off", anchor: "off" })
+  // A flag beats the environment; anything but on/off is the default
+  assert.deepEqual(run(["--loop"], { KRIYA_LOOP: "off", KRIYA_BUDGET: "maybe" }), { args: [], loop: "on", budget: "on", anchor: "off" })
+})
+

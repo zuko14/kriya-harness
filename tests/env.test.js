@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { htmlFilter, launchEnv, startTier, TOKEN_ENV } from "../src/launch.js"
+import { explain, htmlFilter, launchEnv, modelLimits, modelNames, planTiers, startTier, TOKEN_ENV } from "../src/launch.js"
 import { freshHome, ROOT } from "./helpers.js"
 
 // The device token reaches DSH only as a launch variable, and DSH removes
@@ -94,4 +95,77 @@ test("every refusal code in the contract has a plain sentence for kriya run", as
   assert.equal(explain('dsh: PI_AI_ERROR: 429 "rate_limited"'), REFUSALS.rate_limited)
   assert.equal(explain('dsh: PI_AI_ERROR: 500 "something_else"'), null)
   assert.equal(explain("no error here"), null)
+})
+
+test("the model picker offers only the plan's tiers, so none fails with tier_not_allowed", async () => {
+  const device = { url: "https://k.example", token: "t1" }
+  const plan = (...ids) => async () => ({ data: ids.map((id) => ({ id })) })
+  assert.deepEqual(await planTiers(device, plan("budget")), { start: "budget", allowed: ["budget"], names: {}, limits: {} })
+  assert.deepEqual(await planTiers(device, plan("escalation", "budget", "balanced")), { start: "balanced", allowed: ["balanced", "budget", "escalation"], names: {}, limits: {} })
+  // Unknown aliases are dropped; nothing usable, or Kriya unreachable: all three (the gateway still refuses)
+  assert.deepEqual((await planTiers(device, plan("gpt-5"))).allowed, ["balanced", "budget", "escalation"])
+  assert.deepEqual((await planTiers(device, async () => { throw new Error("offline") })).allowed, ["balanced", "budget", "escalation"])
+  assert.equal(launchEnv(device, {}, undefined, "budget", ["budget"]).KRIYA_ALLOWED_TIERS, "budget")
+  // Never from the shell
+  assert.equal(launchEnv(device, { KRIYA_ALLOWED_TIERS: "escalation" }).KRIYA_ALLOWED_TIERS, "balanced,budget,escalation")
+  assert.equal(launchEnv(device, {}, undefined, "budget", ["budget", "gpt-5"]).KRIYA_ALLOWED_TIERS, "budget")
+  assert.match(explain('PI_AI_ERROR: 400 "tier_not_allowed"'), /model picker/)
+})
+
+test("the picker names each tier after the owner's model; the same model twice says which tier", () => {
+  const m = (id, name) => ({ id, object: "model", owned_by: "kriya", ...(name && { name }) })
+  assert.deepEqual(modelNames([m("budget", "DeepSeek V4.1 Flash")], ["budget"]), { budget: "DeepSeek V4.1 Flash" })
+  assert.deepEqual(
+    modelNames([m("budget", "DeepSeek V4.1 Flash"), m("balanced", "DeepSeek V4.1 Flash"), m("escalation", "Claude Sonnet")], ["budget", "balanced", "escalation"]),
+    { budget: "DeepSeek V4.1 Flash · budget", balanced: "DeepSeek V4.1 Flash · balanced", escalation: "Claude Sonnet" }
+  )
+  // Unnamed, unusable or not allowed: no name (the row keeps "Kriya <tier>")
+  assert.deepEqual(modelNames([m("budget"), m("balanced", "<b>x</b>"), m("escalation", "Fine")], ["budget", "balanced"]), {})
+  const env = launchEnv({ url: "https://k.example", token: "t" }, { KRIYA_MODEL_NAMES: '{"budget":"Evil"}' }, undefined, "budget", ["budget"], { budget: "DeepSeek V4.1 Flash", gpt: "x" })
+  assert.equal(env.KRIYA_MODEL_NAMES, '{"budget":"DeepSeek V4.1 Flash"}')
+  assert.equal(launchEnv(null, { KRIYA_MODEL_NAMES: '{"budget":"Evil"}' }).KRIYA_MODEL_NAMES, "{}")
+})
+
+test("the kriya provider row lists exactly the allowed tiers", () => {
+  const dump = readFileSync(join(ROOT, "expected", "kriya.dump.yml"), "utf8")
+  const expr = /models: !!js >-\n((?: {10}.*\n)+)/.exec(dump)[1].replace(/\n {10}/g, " ").trim()
+  const list = (tiers, names) =>
+    new Function("process", `return ${expr}`)({ env: { ...(tiers !== undefined && { KRIYA_ALLOWED_TIERS: tiers }), ...(names !== undefined && { KRIYA_MODEL_NAMES: names }) } })
+  assert.deepEqual(list("budget"), [{ id: "budget", name: "Kriya budget" }])
+  assert.deepEqual(list("balanced,escalation").map((m) => m.id), ["balanced", "escalation"])
+  assert.deepEqual(list(undefined).map((m) => m.id), ["balanced", "budget", "escalation"])
+  assert.deepEqual(list("budget", '{"budget":"DeepSeek V4.1 Flash"}'), [{ id: "budget", name: "DeepSeek V4.1 Flash" }])
+  // A broken value never breaks the picker
+  assert.deepEqual(list("budget", "{not json"), [{ id: "budget", name: "Kriya budget" }])
+})
+
+// Harness upgrade U3 (HU-CL-01): each tier declares what its model holds, so
+// DSH compacts before the real window is full; no limits from Kriya, DSH's
+// defaults exactly as before
+test("HU-CL-01: model limits reach the provider row and compaction, never from the shell", async () => {
+  const m = (id, contextWindow, maxOutputTokens) => ({ id, object: "model", owned_by: "kriya", contextWindow, maxOutputTokens })
+  assert.deepEqual(modelLimits([m("budget", 131072, 16384), m("balanced", 32768, 16384), m("escalation", 0, 1), { id: "x" }], ["budget", "balanced", "escalation"]), {
+    budget: { contextWindow: 131072, maxTokens: 16384, headroomTokens: 32768 },
+    // A small window: output and headroom a quarter each, so W − O − headroom stays positive
+    balanced: { contextWindow: 32768, maxTokens: 8192, headroomTokens: 8192 },
+  })
+  // A bigger window than the working one (the budget tier's 1,048,576) is used up to 262,144 only, with DSH's own headroom
+  assert.deepEqual(modelLimits([m("budget", 1048576, 16384)], ["budget"]).budget, { contextWindow: 262144, maxTokens: 16384, headroomTokens: 65536 })
+  const device = { url: "https://k.example", token: "t1" }
+  const tiers = await planTiers(device, async () => ({ data: [m("budget", 131072, 16384)] }))
+  assert.deepEqual(tiers.limits, { budget: { contextWindow: 131072, maxTokens: 16384, headroomTokens: 32768 } })
+  assert.equal(launchEnv(device, { KRIYA_MODEL_LIMITS: '{"budget":{"contextWindow":1}}' }).KRIYA_MODEL_LIMITS, "{}")
+
+  const dump = readFileSync(join(ROOT, "expected", "kriya.dump.yml"), "utf8")
+  const row = (re) => re.exec(dump)[1].replace(/\n {6,10}/g, " ").trim()
+  const models = row(/models: !!js >-\n((?: {10}.*\n)+)/)
+  const policies = row(/modelPolicies: !!js >-\n((?: {6}.*\n)+)/)
+  const run = (expr, env) => new Function("process", `return ${expr}`)({ env })
+  const limits = JSON.stringify(tiers.limits)
+  assert.deepEqual(run(models, { KRIYA_ALLOWED_TIERS: "budget", KRIYA_MODEL_LIMITS: limits }), [{ id: "budget", name: "Kriya budget", contextWindow: 131072, maxTokens: 16384 }])
+  assert.deepEqual(run(policies, { KRIYA_MODEL_LIMITS: limits }), [{ provider: "kriya", model: "budget", headroomTokens: 32768 }])
+  // None, or a broken value: DSH's defaults
+  assert.deepEqual(run(models, { KRIYA_ALLOWED_TIERS: "budget" }), [{ id: "budget", name: "Kriya budget" }])
+  assert.deepEqual(run(policies, {}), [])
+  assert.deepEqual(run(policies, { KRIYA_MODEL_LIMITS: "{not json" }), [])
 })

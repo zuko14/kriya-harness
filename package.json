@@ -1,6 +1,6 @@
 {
   "name": "@kriya-ai/harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Kriya Harness (beta): a Kriya agent on your machine, built on DeepSeek Harness",
   "private": true,
   "license": "UNLICENSED",
@@ -29,11 +29,12 @@
   "scripts": {
     "test": "node --test \"tests/*.test.js\"",
     "check:pins": "node scripts/check-pins.js",
+    "check:seams": "node scripts/check-seams.js",
     "check:notices": "node scripts/notices.js --check",
     "notices": "node scripts/notices.js",
     "dump-config": "node scripts/dump-config.js",
-    "check": "npm run check:pins && npm run check:notices && npm run check:brand && npm test",
-    "release:check": "npm run check:pins && node scripts/notices.js --check --strict",
+    "check": "npm run check:pins && npm run check:seams && npm run check:notices && npm run check:brand && npm test",
+    "release:check": "npm run check:pins && npm run check:seams && node scripts/notices.js --check --strict",
     "sbom": "npm sbom --sbom-format cyclonedx --omit dev --package-lock-only",
     "build:brand": "node scripts/build-brand.js",
     "check:brand": "node scripts/build-brand.js --check"

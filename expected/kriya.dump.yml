@@ -93,13 +93,18 @@
         apiKeyEnv: KRIYA_DEVICE_TOKEN
         headers:
           X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
-        models:
-          - id: balanced
-            name: Kriya balanced
-          - id: budget
-            name: Kriya budget
-          - id: escalation
-            name: Kriya escalation
+        models: !!js >-
+          ((names, limits) => [['balanced', 'Kriya balanced'], ['budget', 'Kriya
+          budget'], ['escalation', 'Kriya escalation']] .filter(([id]) =>
+          (process.env.KRIYA_ALLOWED_TIERS ||
+          'balanced,budget,escalation').split(',').includes(id)) .map(([id,
+          name]) => ({ id, name: typeof names[id] === 'string' && names[id] ?
+          names[id] : name, ...(limits[id] ? { contextWindow:
+          limits[id].contextWindow, maxTokens: limits[id].maxTokens } : {}) })))
+          ((() => { try { return JSON.parse(process.env.KRIYA_MODEL_NAMES ||
+          '{}') } catch { return {} } })(), (() => { try { return
+          JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {}
+          } })())
 # == @deepseek-ai/dsh-base
 - id: session-persistence-jsonl
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -227,9 +232,12 @@
 - id: tool-pwsh
   name: '@deepseek-ai/dsh-tool-pwsh'
   disabled: true
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: fs-observation-policy
   name: '@deepseek-ai/dsh-fs-observation-policy'
@@ -254,9 +262,12 @@
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
   disabled: true
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: commands
   name: '@deepseek-ai/dsh-commands'
@@ -270,6 +281,7 @@
 - id: command-goal
   name: '@deepseek-ai/dsh-command-goal'
   disabled: true
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: plan-mode
   name: '@deepseek-ai/dsh-plan-mode'
   config:
@@ -320,14 +332,23 @@
       present again. If the review channel is unavailable or aborted, stay in
       plan mode and ask the user to switch modes manually; do not proceed with
       implementation.
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: token-meter
   name: '@deepseek-ai/dsh-token-meter'
-# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: compaction-basic
   name: '@deepseek-ai/dsh-compaction-basic'
   disabled: true
+  config:
+    modelPolicies: !!js >-
+      Object.entries((() => { try { return
+      JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} }
+      })()) .map(([model, l]) => ({ provider: 'kriya', model, headroomTokens:
+      l.headroomTokens }))
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app
 - id: command-compact
   name: '@deepseek-ai/dsh-command-compact'
   disabled: true
@@ -342,25 +363,33 @@
   name: '@deepseek-ai/dsh-subagent-fork-in-process'
   config:
     providerName: fork
-# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: tool-subagent-control
   name: '@deepseek-ai/dsh-tool-subagent-control'
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 - id: tool-subagent-list-agents
   name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 - id: tool-subagent
   name: '@deepseek-ai/dsh-tool-subagent'
   config:
     provider: spawn
     toolName: subagent
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 - id: tool-subagent-fork
   name: '@deepseek-ai/dsh-tool-subagent'
   config:
     provider: fork
     toolName: subagent_fork
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: ptc-runtime
   name: '@deepseek-ai/dsh-ptc-runtime-node'
@@ -370,9 +399,12 @@
   config:
     provider: spawn
   disabled: true
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: tool-workflow
   name: '@deepseek-ai/dsh-tool-workflow'
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: timeout-policy
   name: '@deepseek-ai/dsh-tool-call-timeout-policy'
@@ -395,15 +427,19 @@
 # == @deepseek-ai/dsh-base
 - id: image-offload
   name: '@deepseek-ai/dsh-compaction-image-offload'
-# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: tool-todo
   name: '@deepseek-ai/dsh-tool-todo'
   config:
     allowParallelInProgress: true
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: repeat-tool-reminder
   name: '@deepseek-ai/dsh-repeat-tool-reminder'
@@ -432,13 +468,15 @@
 # == @deepseek-ai/dsh-base
 - id: web-fetch-http
   name: '@deepseek-ai/dsh-web-fetch-http'
-# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app, @kriya-ai/harness
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
   config:
     fetch: true
     searchTimeoutMs: 60000
-  disabled: true
+  disabled: !!js >-
+    ctx.get('profileContext')?.name === 'kriya' || process.env.KRIYA_MINIMAL ===
+    'on'
 # == @deepseek-ai/dsh-base
 - id: mcp-resources
   name: '@deepseek-ai/dsh-mcp-resources'
@@ -1326,6 +1364,12 @@
 - id: kriya-loop
   name: '@kriya-ai/harness-loop'
   disabled: !!js process.env.KRIYA_LOOP !== 'on'
+- id: kriya-budget
+  name: '@kriya-ai/harness-budget'
+  disabled: !!js process.env.KRIYA_BUDGET !== 'on'
+- id: kriya-anchor
+  name: '@kriya-ai/harness-anchor'
+  disabled: !!js process.env.KRIYA_ANCHOR !== 'on'
 - id: kriya-skills
   name: '@kriya-ai/harness-skills'
 - id: kriya-changes
@@ -1336,3 +1380,4 @@
   name: '@kriya-ai/harness-mirror'
 - id: kriya-tools
   name: '@kriya-ai/harness-tools'
+  disabled: !!js process.env.KRIYA_MINIMAL === 'on'

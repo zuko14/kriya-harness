@@ -48,6 +48,12 @@ test("login, doctor, run, logout", { timeout: 300_000 }, async () => {
     assert.match(doctor.stdout, /ok {4}gateway models: budget, balanced, escalation/)
     assert.doesNotMatch(doctor.stderr, /Kriya Harness is a beta/)
 
+    // Harness upgrade U4: the spend meter KriyaBench reads, one JSON line
+    const usage = await kriya(["usage", "--json"])
+    assert.equal(usage.code, 0, usage.stderr)
+    assert.deepEqual(JSON.parse(usage.stdout), { usedMicroInr: 0, capMicroInr: 500_000_000, unpriced: 0 })
+    assert.match((await kriya(["usage"])).stdout, /This month: ₹0\.00 of ₹500\.00\./)
+
     const workspace = mkdtempSync(join(tmpdir(), "kriya-ws-"))
     const run = await kriya(["run", "Say hello"], { cwd: workspace })
     assert.equal(run.code, 0, run.stderr)
@@ -56,7 +62,7 @@ test("login, doctor, run, logout", { timeout: 300_000 }, async () => {
     assert.ok(calls.length >= 1)
     for (const call of calls) {
       assert.equal(call.headers.authorization, `Bearer ${token}`)
-      assert.equal(call.headers["x-kriya-harness"], "0.1.0")
+      assert.equal(call.headers["x-kriya-harness"], "0.2.0")
       assert.equal(call.body.model, "balanced")
     }
     // The token never lands in the Kriya home in plain text outside device.json
@@ -112,7 +118,7 @@ test("unknown commands and --version", async () => {
   freshHome()
   const version = await kriya(["--version"])
   assert.equal(version.code, 0)
-  assert.match(version.stdout, /^kriya 0\.1\.0 \(Kriya Harness beta, built on DeepSeek Harness \d+\.\d+\.\d+[\w.-]*\)\n$/)
+  assert.match(version.stdout, /^kriya 0\.2\.0 \(Kriya Harness beta, built on DeepSeek Harness \d+\.\d+\.\d+[\w.-]*\)\n$/)
   const unknown = await kriya(["fly"])
   assert.equal(unknown.code, 1)
   assert.match(unknown.stdout, /Unknown command fly/)
@@ -126,6 +132,6 @@ test("help and doctor name Kriya only", async () => {
   assert.match(help.stdout, /^Kriya Harness \(beta\)\n/)
   assert.doesNotMatch(help.stdout, /deepseek|\bdsh\b/i)
   const doctor = await kriya(["doctor"])
-  assert.match(doctor.stdout, /ok {4}Kriya Harness 0\.1\.0\n/)
+  assert.match(doctor.stdout, /ok {4}Kriya Harness 0\.2\.0\n/)
   assert.doesNotMatch(doctor.stdout, /deepseek|\bdsh\b/i)
 })

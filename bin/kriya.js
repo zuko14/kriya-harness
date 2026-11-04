@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 import { handoff, HandoffError, pull } from "../plugins/kriya-handoff/index.js"
-import { KriyaError, revokeDevice } from "../src/api.js"
+import { KriyaError, me, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
@@ -12,7 +12,7 @@ import { CheckpointError, listCheckpoints, repoRoot, undo } from "../src/checkpo
 import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, VerifyError } from "../src/verify.js"
 import { projectRoot, setSkillSwitch, SwitchError } from "../src/skill-switches.js"
 import { login } from "../src/login.js"
-import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob } from "../src/modes.js"
+import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob, switchEnv } from "../src/modes.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
 import { deleteDevice, ensureHome, kriyaUrl, readDevice } from "../src/store.js"
 
@@ -23,11 +23,12 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--mode <mode>] [--loop] [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--no-loop] [--no-budget] [--anchor] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run [--mode <mode>] [--loop] "<job>"
+  kriya run [--mode <mode>] [--no-loop] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
+  kriya usage [--json]  this month's Kriya Harness spend and limit
                         (your editor starts it; kriya acp --help for details)
   kriya handoff ["<note>"]
                         hand this repository's uncommitted work to your Kriya
@@ -50,10 +51,10 @@ Usage:
                         remove a linked skill
   kriya verify          this project's check and the ones it defines
   kriya verify use <number> | "<command>"
-                        confirm the check the agent runs with --loop: its exit
+                        confirm the check the agent runs (the Kriya loop): its exit
                         code alone says whether the work passes
   kriya verify clear    forget this project's check
-  kriya undo            put this repository's files back one step (with --loop
+  kriya undo            put this repository's files back one step (with the loop
                         the agent saves a checkpoint before each change)
   kriya undo --list     the checkpoints, newest first
   kriya undo <number>   go back to one of them; what an undo replaces is kept
@@ -68,11 +69,20 @@ ${Object.entries(MODES)
   In the app, switch with the Permissions control or /permission, and type
   /plan to plan first. plan as a --mode is for kriya run.
 
---loop (beta): the agent checks its own work with kriya_verify, which runs
-  the check you confirmed (kriya verify use) and reports pass, fail, or
-  blocked after ${MAX_ATTEMPTS} failed runs, from the exit code alone. Before each
-  change it saves a checkpoint on Kriya's own git ref (kriya undo); your
-  branches, index and stash are never touched.
+The Kriya loop (on; --no-loop turns it off): the agent checks its own work
+  with kriya_verify, which runs the check you confirmed (kriya verify use)
+  and reports pass, fail, or blocked after ${MAX_ATTEMPTS} failed runs, from the exit
+  code alone. Before each change it saves a checkpoint on Kriya's own git
+  ref (kriya undo); your branches, index and stash are never touched.
+
+The turn budget (on; --no-budget turns it off): each turn is bounded by
+  code: at most 150 steps (KRIYA_MAX_STEPS), 60 minutes (KRIYA_TURN_MINUTES)
+  and 10 identical tool calls in a row (KRIYA_MAX_REPEATS). Near a limit the
+  agent is told to wrap up; at a limit the turn stops as "blocked" (kriya
+  run exits 1).
+
+--anchor (beta): your own messages are kept word for word where compaction
+  never condenses them, so a requirement survives a summary that drops it.
 
 Run it in a folder you can afford to change; see SAFETY.md.`
 
@@ -118,14 +128,8 @@ function option(args, name) {
   return value
 }
 
-// --loop turns the Kriya loop's verify step on for this run (the bundle's
-// kriya-loop row reads KRIYA_LOOP); without it the agent is as before
-function useLoop(args) {
-  const at = args.indexOf("--loop")
-  if (at === -1) return
-  args.splice(at, 1)
-  process.env.KRIYA_LOOP = "on"
-}
+// The loop, budget and kept-request switches (src/modes.js switchEnv)
+const useLoop = (args) => switchEnv(args)
 
 function signedIn() {
   const device = readDevice()
@@ -182,6 +186,15 @@ async function main(argv) {
     }
     case "doctor":
       return (await doctor()) ? 0 : 1
+    // This month's Kriya Harness spend from Kriya's own ledger (GET /me);
+    // --json is one line for scripts, KriyaBench's spend meter among them
+    case "usage": {
+      const device = signedIn()
+      const { harness } = await me(device.url, device.token)
+      if (args.includes("--json")) say(JSON.stringify({ usedMicroInr: harness.usedMicroInr, capMicroInr: harness.capMicroInr, unpriced: harness.unpriced }))
+      else say(`This month: ₹${(harness.usedMicroInr / 1e6).toFixed(2)} of ₹${(harness.capMicroInr / 1e6).toFixed(2)}${harness.unpriced ? ` (${harness.unpriced} not priced yet)` : ""}.`)
+      return 0
+    }
     case "skills": {
       const [action, target] = args
       if (action === "link") {
@@ -234,7 +247,7 @@ async function main(argv) {
         if (/^\d+$/.test(pick) && !chosen) throw new VerifyError(`There's no check ${pick}; kriya verify lists them.`)
         const { root, command } = confirmCheck(process.cwd(), chosen)
         say(`Confirmed for ${root}: ${command}`)
-        say("With kriya --loop, the agent's work passes only when this exits 0.")
+        say("With the Kriya loop (on by default), the agent's work passes only when this exits 0.")
         return 0
       }
       if (action === "clear") {
@@ -246,7 +259,7 @@ async function main(argv) {
         return 1
       }
       const check = confirmedCheck(process.cwd())
-      say(check ? `Check for ${check.root}: ${check.command} (confirmed ${check.confirmedAt})` : "No check confirmed for this project: with --loop, work here ends \"not checked\".")
+      say(check ? `Check for ${check.root}: ${check.command} (confirmed ${check.confirmedAt})` : "No check confirmed for this project: with the Kriya loop, work here ends \"not checked\".")
       const suggestions = discoverChecks(process.cwd())
       if (suggestions.length) {
         say("\nThis project defines:")
@@ -266,7 +279,7 @@ async function main(argv) {
         if (!root) throw new CheckpointError("This folder isn't a git repository, so there are no checkpoints.")
         const list = await listCheckpoints(root)
         if (!list.length) {
-          say("No checkpoints yet: kriya --loop saves one before each change the agent makes.")
+          say("No checkpoints yet: the Kriya loop saves one before each change the agent makes.")
           return 0
         }
         list.forEach((c, i) => say(`  ${String(i + 1).padStart(3)}. ${c.at.replace("T", " ").slice(0, 19)}  ${c.kind === "undone" ? "(saved by an undo) " : ""}${c.label}`))
@@ -345,11 +358,18 @@ async function main(argv) {
         process.stderr.write("kriya: run `kriya login` to connect your Kriya account.\n")
         return 1
       }
+      // The same defaults as kriya run (U10), from the editor's environment
+      useLoop([])
       return runDsh("kriya-acp", [], device)
     }
     case undefined:
     case "--mode":
     case "--loop":
+    case "--budget":
+    case "--anchor":
+    case "--no-loop":
+    case "--no-budget":
+    case "--no-anchor":
     case "--no-open":
     case "--port": {
       // Only these Web UI flags pass through; never --host, so the UI stays on 127.0.0.1

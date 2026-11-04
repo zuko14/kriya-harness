@@ -25,6 +25,22 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+  # Harness upgrade U5 (KU-ADR-18): the DeepSeek Harness compatibility gate,
+  # its own check so a DSH break is named on the pull request: the seams
+  # Kriya depends on (check:seams), then KriyaBench-M on the pinned DSH with
+  # a scripted model (turn budget, overflow recovery, model limits, resume,
+  # stream cut, kept request, stale pass, control arms). Also part of `check`
+  dsh-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.9"
+          cache: npm
+      - run: npm ci
+      - run: npm run check:seams
+      - run: node --test tests/upgrade-run.test.js tests/drills-run.test.js tests/seams.test.js
   # The release gate (HG-5): exact pins, every license on the allow-list or
   # an owner-decided exception (notices-exceptions.json, HF-09), notices
   # current; then the release's SBOM (CycloneDX) as a build artifact

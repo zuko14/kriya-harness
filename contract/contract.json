@@ -27,6 +27,7 @@
           "cap_reached",
           "not_priced",
           "upstream_unavailable",
+          "context_length_exceeded",
           "no_agent",
           "mirror_summary_only",
           "not_connected",
@@ -251,6 +252,20 @@
                 "owned_by": {
                   "type": "string",
                   "const": "kriya"
+                },
+                "name": {
+                  "type": "string",
+                  "pattern": "^[\\p{L}\\p{N} .()+\\/:_-]{1,60}$"
+                },
+                "contextWindow": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "maxOutputTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 }
               },
               "required": ["id", "object", "owned_by"],
