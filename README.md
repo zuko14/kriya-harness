@@ -101,6 +101,27 @@ refused, so the turn ends "blocked" and `kriya run` exits 1, never
 "completed". Each step's builder (`kriya_step`) has its own budget.
 With `--no-budget` turns are unbounded, as before 0.2.0.
 
+Kriya's host runs a web application firewall that reads request bodies, and
+an agent's conversation (commands, HTML, test code) can look like an attack
+to it. `kriya` therefore starts a local relay (loopback only, random port)
+between DeepSeek Harness and Kriya: when Kriya says it decodes them, JSON
+request bodies go gzip-compressed and base64-encoded, and a firewall block
+is reported as "Kriya's host firewall blocked this request (request ID …)"
+instead of "API key is invalid". The relay adds no credential and only
+forwards the harness API to the Kriya you signed in to. `KRIYA_RELAY=off`
+talks to Kriya directly, as before.
+
+Step builders (with the loop, whatever `--no-budget` says) are bounded more
+tightly: at most 40 steps (`KRIYA_BUILDER_STEPS`) and 15 minutes
+(`KRIYA_BUILDER_MINUTES`) per builder. Eight steps before the limit (or at
+80% of the time) the builder is told once to wrap up; at the limit its next
+step is refused, a tool call that never returns is cut off a minute later,
+and the project's check still runs on what it left (the step result says
+the builder was stopped). The Progress tab shows the step being built, the
+builder's steps, minutes and latest tool while it works. With no confirmed
+check, `kriya_plan` says so at once and builders are told not to spend
+steps on open-ended manual QA.
+
 Kept request (beta, harness upgrade U7): `kriya --anchor` or `kriya run
 --anchor` keeps every message you send in the session, word for word, in a
 late part of the system prompt, which compaction never condenses: a

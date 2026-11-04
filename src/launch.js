@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
 
+import { BODY_ENCODING, startGatewayProxy } from "./gateway-proxy.js"
 import { BASE_PATH, models } from "./api.js"
 import { DEFAULT_MODE, modeEnv } from "./modes.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
@@ -26,13 +27,16 @@ export const START_TIERS = ["balanced", "budget", "escalation"]
  * the plan lacks, and a short outage mustn't leave the picker empty.
  */
 export async function planTiers(device, list = models) {
-  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {}, limits: {} }
+  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {}, limits: {}, encodings: [] }
   if (!device) return all
   try {
-    const data = (await list(device.url, device.token)).data
+    const answer = await list(device.url, device.token)
+    const data = answer.data
+    // The request-body forms Kriya decodes (src/gateway-proxy.js); none from an older Kriya
+    const encodings = Array.isArray(answer.bodyEncodings) ? answer.bodyEncodings.filter((e) => typeof e === "string") : []
     const offered = new Set(data.map((model) => model.id))
     const allowed = START_TIERS.filter((tier) => offered.has(tier))
-    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed) } : all
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), encodings } : { ...all, encodings }
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
@@ -206,10 +210,17 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
   const tiers = await planTiers(device)
+  // DSH and the Kriya plugins reach Kriya through the local relay
+  // (src/gateway-proxy.js): encoded bodies past the host's firewall, and a
+  // block said as such. KRIYA_RELAY=off talks to Kriya directly, as before
+  const relay =
+    device && process.env.KRIYA_RELAY !== "off"
+      ? await startGatewayProxy({ target: device.url, encode: tiers.encodings.includes(BODY_ENCODING), log: (text) => process.stderr.write(`kriya: ${text}\n`) })
+      : null
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
-      env: launchEnv(device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits),
+      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(text))
@@ -228,9 +239,13 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
     // SIGTERM or SIGHUP sent to kriya alone is passed on, or DSH would outlive it
     process.on("SIGINT", () => {})
     for (const signal of ["SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal))
-    child.on("error", fail)
+    child.on("error", (error) => {
+      relay?.close()
+      fail(error)
+    })
     // close, not exit: stderr may still hold the last lines when DSH exits
     child.on("close", (code, signal) => {
+      relay?.close()
       filter.end()
       explained ??= filter.explained
       if (explained) process.stderr.write(`kriya: ${explained}\n`)
