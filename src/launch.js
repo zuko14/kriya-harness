@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
 
+import { broadcastRun } from "./daemon.js"
 import { BODY_ENCODING, startGatewayProxy } from "./gateway-proxy.js"
 import { BASE_PATH, models } from "./api.js"
 import { DEFAULT_MODE, modeEnv } from "./modes.js"
@@ -223,6 +224,13 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
           log: (text) => process.stderr.write(`kriya: ${text}\n`),
         })
       : null
+  // What this process runs, for Kriya's Control Center (no task text; nothing on a Kriya without it)
+  const on = (name) => process.env[name] === "on"
+  const broadcast = broadcastRun(device, {
+    kind: profile === "kriya-run" ? "run" : profile === "kriya-acp" ? "acp" : "app",
+    mode,
+    switches: { loop: on("KRIYA_LOOP"), loopV2: on("KRIYA_LOOP_V2"), budget: on("KRIYA_BUDGET"), anchor: on("KRIYA_ANCHOR"), browser: on("KRIYA_BROWSER") },
+  })
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
       stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
@@ -252,10 +260,12 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
     // close, not exit: stderr may still hold the last lines when DSH exits
     child.on("close", (code, signal) => {
       relay?.close()
+      // Kriya hears how it ended before kriya exits (each request is capped at 5 s)
+      const ended = broadcast.end(code === 0 ? "completed" : signal ? "stopped" : "failed", code ?? undefined)
       filter.end()
       explained ??= filter.explained
       if (explained) process.stderr.write(`kriya: ${explained}\n`)
-      done(code ?? (signal ? 1 : 0))
+      ended.finally(() => done(code ?? (signal ? 1 : 0)))
     })
   })
 }

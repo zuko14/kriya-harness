@@ -194,6 +194,32 @@ export async function startFakeKriya(script = {}) {
         })),
         ...(script.bodyEncodings && { bodyEncodings: ["gzip+base64"] }),
       })
+    // The Control Center (Kriya CONTROL_CENTER.md): the daemon's hello, its
+    // long poll (one queued action per poll, claimed), reports and run broadcasts
+    if (req.method === "POST" && path === "/daemon/hello") {
+      state.hello = body
+      return send(200, { pollSeconds: 25 })
+    }
+    if (req.method === "GET" && path === "/dispatch/next") {
+      state.dispatches ??= []
+      const next = state.dispatches.find((d) => d.status === "queued")
+      if (next) next.status = "claimed"
+      const cancel = state.dispatches.filter((d) => d.status === "canceling").map((d) => d.id)
+      return send(200, { dispatch: next ? { id: next.id, kind: next.kind, payload: next.payload, createdAt: new Date().toISOString() } : null, cancel })
+    }
+    const reported = /^\/dispatch\/([0-9a-f-]{36})$/.exec(path)
+    if (req.method === "POST" && reported) {
+      const d = (state.dispatches ?? []).find((x) => x.id === reported[1])
+      if (!d) return send(404, { error: "not_found", message: "Not found." })
+      ;(state.reports ??= []).push({ id: d.id, ...body })
+      if (!(d.status === "canceling" && body.status === "running")) d.status = body.status
+      d.result = body.result ?? d.result
+      return send(204)
+    }
+    if (req.method === "POST" && path === "/runs") {
+      ;(state.runs ??= []).push(body)
+      return send(204)
+    }
     if (req.method === "POST" && path === "/approvals") {
       if (script.approvalsError)
         return fail(script.approvalsError.status, script.approvalsError.error, script.approvalsError.message)
@@ -331,6 +357,8 @@ export async function startFakeKriya(script = {}) {
       record.status = 200
       // A scripted turn: plain text, or one tool call for the agent to run
       const reply = script.chat?.(body, ++state.turns) ?? { content: answer }
+      // A slow model, for tests that stop a run mid-answer
+      if (reply.delayMs) await new Promise((wake) => setTimeout(wake, reply.delayMs))
       // A scripted refusal for this request only, as the gateway sends it
       if (reply.error) return fail(reply.error.status, reply.error.error, reply.error.message)
       const id = `chatcmpl-${b64(6)}`
@@ -384,6 +412,12 @@ export async function startFakeKriya(script = {}) {
     /** The person answers in Kriya (approved | declined), or the request expires */
     answer: (id, status) => settle(id, status),
     expire: (id) => settle(id, "expired"),
+    /** Queues an action for the daemon, as the person would in Kriya */
+    queue(kind, payload = {}) {
+      const id = crypto.randomUUID()
+      ;(state.dispatches ??= []).push({ id, kind, payload, status: "queued" })
+      return id
+    },
     issueToken() {
       const token = b64(32)
       state.tokens.add(token)

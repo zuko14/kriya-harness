@@ -750,6 +750,257 @@
         "required": ["deviceId", "relayUrl"],
         "additionalProperties": false
       }
+    },
+    {
+      "method": "POST",
+      "path": "/daemon/hello",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "daemonVersion": {
+            "type": "string",
+            "pattern": "^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$"
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "fullAccess": {
+                "type": "boolean"
+              },
+              "serve": {
+                "type": "boolean"
+              },
+              "handoff": {
+                "type": "boolean"
+              }
+            },
+            "required": ["fullAccess", "serve", "handoff"],
+            "additionalProperties": false
+          },
+          "projects": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{16}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "git": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["id", "name", "path", "git"],
+              "additionalProperties": false
+            }
+          },
+          "rules": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "project": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{16}$"
+                },
+                "n": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 999
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["proposed", "confirmed"]
+                }
+              },
+              "required": ["project", "n", "text", "status"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["daemonVersion", "capabilities", "projects", "rules"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "pollSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          }
+        },
+        "required": ["pollSeconds"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/dispatch/next",
+      "auth": true,
+      "request": null,
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "dispatch": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "run",
+                      "doctor",
+                      "rule_confirm",
+                      "rule_dismiss",
+                      "handoff",
+                      "pull",
+                      "serve_start",
+                      "serve_stop"
+                    ]
+                  },
+                  "payload": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  }
+                },
+                "required": ["id", "kind", "payload", "createdAt"],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancel": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        },
+        "required": ["dispatch", "cancel"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/dispatch/{id}",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["running", "done", "failed", "canceled"]
+          },
+          "result": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      },
+      "response": null
+    },
+    {
+      "method": "POST",
+      "path": "/runs",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "localId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["terminal", "dispatch"]
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["app", "run", "acp", "serve", "handoff", "pull"]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["ask", "auto", "read", "plan", "full"]
+          },
+          "switches": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "maxLength": 30
+            },
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "project": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running", "completed", "failed", "blocked", "stopped"]
+          },
+          "exitCode": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "dispatchId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": ["localId", "source", "kind", "status"],
+        "additionalProperties": false
+      },
+      "response": null
     }
   ]
 }

@@ -6,6 +6,7 @@ import { handoff, HandoffError, pull } from "../plugins/kriya-handoff/index.js"
 import { KriyaError, me, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
+import { runDaemon, serviceDefinition } from "../src/daemon.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
 import { CheckpointError, listCheckpoints, trackedRoot, undo } from "../src/checkpoints.js"
@@ -37,6 +38,13 @@ Usage:
   kriya pull [<workspace id>]
                         bring a workspace's changes back on a new branch
                         kriya/pull-<id> (default: your last handoff)
+  kriya daemon [--folder <path>]… [--allow-full-access] [--allow-serve]
+                        let Kriya (/harness, your phone) run tasks, health checks,
+                        rule decisions, handoff and pull on this computer, in this
+                        folder and each --folder only, while it runs
+  kriya daemon install [same options]
+                        keep it running in the background (launchd / systemd)
+  kriya daemon uninstall
   kriya serve [folder]  let your Kriya agents work on this machine: cloud tasks
                         run commands and change files in new subfolders of
                         <folder> (default: this folder) while it runs
@@ -356,6 +364,66 @@ async function main(argv) {
       const done = await pull(device, process.cwd(), id)
       say(`On branch ${done.branch}: the workspace's changes on ${done.baseSha.slice(0, 12)} (${done.bytes} bytes).`)
       say("Review them with git diff HEAD, then commit or merge as you like.")
+      return 0
+    }
+    case "daemon": {
+      const sub = args[0] === "install" || args[0] === "uninstall" ? args.shift() : null
+      const folders = []
+      let allowFullAccess = false
+      let allowServe = false
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === "--folder" && args[i + 1]) folders.push(args[++i])
+        else if (args[i] === "--allow-full-access") allowFullAccess = true
+        else if (args[i] === "--allow-serve") allowServe = true
+        else {
+          say("Usage: kriya daemon [install|uninstall] [--folder <path>]… [--allow-full-access] [--allow-serve]")
+          return 1
+        }
+      }
+      const { resolve } = await import("node:path")
+      const offered = [process.cwd(), ...folders].map((f) => resolve(f))
+      if (sub) {
+        const { mkdirSync, unlinkSync } = await import("node:fs")
+        const { spawnSync } = await import("node:child_process")
+        const { dirname } = await import("node:path")
+        const service = serviceDefinition({
+          bin: new URL(import.meta.url).pathname,
+          args: [...offered.flatMap((f) => ["--folder", f]), ...(allowFullAccess ? ["--allow-full-access"] : []), ...(allowServe ? ["--allow-serve"] : [])],
+        })
+        if (!service) {
+          say("kriya daemon install supports macOS (launchd) and Linux (systemd). Run kriya daemon in a terminal instead.")
+          return 1
+        }
+        const run = (steps) => steps.every(([cmd, ...rest]) => spawnSync(cmd, rest, { stdio: "inherit" }).status === 0)
+        if (sub === "uninstall") {
+          if (!existsSync(service.path)) {
+            say("The daemon isn't installed.")
+            return 0
+          }
+          run(service.stop)
+          unlinkSync(service.path)
+          say("The daemon is uninstalled; Kriya can't reach this computer until you start it again.")
+          return 0
+        }
+        signedIn()
+        mkdirSync(dirname(service.path), { recursive: true })
+        if (existsSync(service.path)) run(service.stop)
+        writeFileSync(service.path, service.content, { mode: 0o600 })
+        if (!run(service.start)) {
+          say(`Wrote ${service.path}, but it didn't start; see the message above.`)
+          return 1
+        }
+        say(`The daemon runs in the background for: ${offered.join(", ")}.`)
+        say(`Logs: ~/.kriya/daemon.log. Stop it with kriya daemon uninstall.`)
+        return 0
+      }
+      const device = signedIn()
+      if (allowFullAccess) process.stderr.write(`kriya daemon: Full access from Kriya is allowed. ${FULL_ACCESS_WARNING}\n`)
+      const stop = new AbortController()
+      process.once("SIGINT", () => stop.abort())
+      process.once("SIGTERM", () => stop.abort())
+      await runDaemon({ device, folders: offered, allowFullAccess, allowServe, signal: stop.signal, log: say })
+      say("kriya daemon stopped.")
       return 0
     }
     case "serve": {
