@@ -129,6 +129,20 @@ requirement survives even when the conversation's summary leaves it out.
 Only your own messages, never tool output. Without `--anchor` the agent is
 exactly as before.
 
+Control Center (`kriya daemon`; needs Kriya's Control Center switched on):
+run tasks, health checks, rule decisions, handoff, pull and serve on this
+computer from Kriya's `/harness` page or your phone. The daemon long-polls
+Kriya and runs each action with the same routines as the terminal. It runs
+only in the folder it starts in and each `--folder` you give (never your
+home folder, never a path typed in Kriya); Full access and serving work from
+Kriya only with `--allow-full-access` / `--allow-serve`; a task in Ask mode
+still sends its approvals to Kriya. `kriya daemon install` keeps it running
+in the background (launchd on macOS, a systemd user unit on Linux; logs in
+`~/.kriya/daemon.log`); `kriya daemon uninstall` stops it. Every `kriya`,
+`kriya run` and `kriya acp` tells Kriya its mode, switches, folder name and
+state (never the task), shown under Activity; `KRIYA_BROADCAST=off` turns
+that off.
+
 Web UI tabs (right sidebar): **Overview** (this computer, the folder, the
 GitHub repository and branch, context and usage, changes, background tasks,
 connectors), **Progress** (goal → plan → build → verify → done from the

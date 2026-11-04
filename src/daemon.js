@@ -1,0 +1,355 @@
+import { spawn } from "node:child_process"
+import { createHash, randomUUID } from "node:crypto"
+import { existsSync, realpathSync, statSync } from "node:fs"
+import { homedir } from "node:os"
+import { basename, join, sep } from "node:path"
+import { gzipSync } from "node:zlib"
+
+import { BASE_PATH, call, KriyaError, models } from "./api.js"
+import { doctor } from "./doctor.js"
+import { CLIENT_VERSION } from "./paths.js"
+import { confirmRule, dismissRule, listRules } from "./rules.js"
+
+// `kriya daemon` (the Control Center, CONTROL_CENTER.md in the Kriya
+// repository): this computer listens for actions the person queues in
+// Kriya (/harness, or the phone) and runs them with the same routines as
+// the terminal. What it accepts is decided here, on the computer:
+// - only the folders the person offered (the one it started in and each
+//   --folder), never a path from Kriya;
+// - only typed actions (a task, a health check, a rule decision, handoff,
+//   pull, serve), never a command;
+// - Full access and serving only with --allow-full-access / --allow-serve;
+// - a task runs `kriya run` exactly as typed in a terminal would, so Ask
+//   mode's approvals still go to Kriya and the person answers them there.
+
+export const POLL_WAIT_S = 25
+export const MAX_RUNNING = 2
+const OUTPUT_TAIL = 4000
+const REHELLO_MS = 5 * 60_000
+const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
+
+/** A folder's id: the first 16 hex of the sha256 of its real path */
+export const projectId = (path) => createHash("sha256").update(path).digest("hex").slice(0, 16)
+
+/**
+ * The folders this computer offers: real, existing directories, never the
+ * home folder or a drive root, at most 50.
+ * @param {string[]} folders
+ */
+export function offeredProjects(folders, home = homedir()) {
+  const out = []
+  for (const raw of folders) {
+    let path
+    try {
+      path = realpathSync(raw)
+      if (!statSync(path).isDirectory()) continue
+    } catch {
+      continue
+    }
+    if (path === realpathSync(home) || path === sep || /^[A-Za-z]:\\?$/.test(path)) continue
+    if (out.some((p) => p.path === path)) continue
+    out.push({
+      id: projectId(path),
+      name: basename(path).slice(0, 80) || path,
+      path,
+      shown: (path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path).slice(0, 300),
+      git: existsSync(join(path, ".git")),
+    })
+    if (out.length >= 50) break
+  }
+  return out
+}
+
+/** Each offered folder's loop rules: proposed ones by number, then confirmed */
+export function projectRules(projects) {
+  const rules = []
+  for (const p of projects) {
+    try {
+      const { proposed, confirmed } = listRules(p.path)
+      proposed.forEach((text, i) => rules.push({ project: p.id, n: i + 1, text: text.slice(0, 400), status: "proposed" }))
+      confirmed.forEach((text, i) => rules.push({ project: p.id, n: i + 1, text: text.slice(0, 400), status: "confirmed" }))
+    } catch {
+      // No rules file: nothing to list
+    }
+  }
+  return rules.slice(0, 200)
+}
+
+/** The modes and switches of a task, as `kriya run` flags */
+export function runArgs(payload) {
+  const s = payload.switches ?? {}
+  return [
+    "run",
+    "--mode",
+    payload.mode,
+    ...(s.loopV2 ? ["--loop-v2"] : []),
+    ...(s.budget === false ? ["--no-budget"] : []),
+    ...(s.anchor ? ["--anchor"] : []),
+    ...(s.browser === false ? ["--no-browser-tools"] : []),
+    payload.prompt,
+  ]
+}
+
+const tail = (text) => (text.length > OUTPUT_TAIL ? `…${text.slice(-OUTPUT_TAIL)}` : text)
+const MODES = new Set(["ask", "auto", "read", "plan", "full"])
+
+/**
+ * The daemon: hello, then a long poll for actions, each run on this
+ * computer and reported. Stops when `signal` aborts (Ctrl-C).
+ * @param {{
+ *   device: { url: string, token: string },
+ *   folders: string[],
+ *   allowFullAccess?: boolean,
+ *   allowServe?: boolean,
+ *   signal?: AbortSignal,
+ *   log?: (line: string) => void,
+ *   kriya?: { bin: string, node: string },
+ *   once?: boolean,
+ * }} options once: handle one poll and return (tests)
+ */
+export async function runDaemon(options) {
+  const { device, signal, log = (line) => process.stdout.write(`${line}\n`) } = options
+  const kriya = options.kriya ?? { bin: join(import.meta.dirname, "..", "bin", "kriya.js"), node: process.execPath }
+  const projects = offeredProjects(options.folders)
+  const capabilities = { fullAccess: Boolean(options.allowFullAccess), serve: Boolean(options.allowServe), handoff: true }
+  // Bodies past the host's firewall when Kriya decodes them (as the relay does)
+  let encode = false
+  try {
+    encode = ((await models(device.url, device.token)).bodyEncodings ?? []).includes("gzip+base64")
+  } catch {
+    // Asked again on the next hello
+  }
+  const send = (method, path, body) =>
+    encode && body !== undefined
+      ? call(device.url, method, path, {
+          token: device.token,
+          raw: true,
+          headers: { "Content-Type": "text/plain; charset=us-ascii", "x-kriya-body": "gzip+base64" },
+          bodyText: gzipSync(Buffer.from(JSON.stringify(body))).toString("base64"),
+        }).then(async (r) => (r.status === 204 ? null : r.json()))
+      : call(device.url, method, path, { token: device.token, ...(body !== undefined && { body }) })
+
+  const running = new Map() // dispatch id → { child, canceled }
+  let serving = null // { child, project }
+  let helloAt = 0
+
+  const hello = async () => {
+    await send("POST", "/daemon/hello", { daemonVersion: CLIENT_VERSION, capabilities, projects: projects.map((p) => ({ id: p.id, name: p.name, path: p.shown, git: p.git })), rules: projectRules(projects) })
+    helloAt = Date.now()
+  }
+  const report = (id, status, result) => send("POST", `/dispatch/${id}`, { status, ...(result && { result }) }).catch((error) => log(`kriya daemon: couldn't report ${id.slice(0, 8)}: ${error.message}`))
+
+  const folderOf = (payload) => projects.find((p) => p.id === payload.project)
+
+  // A child kriya command in a folder; resolves with its exit code and output
+  const child = (id, args, cwd, extraEnv = {}) =>
+    new Promise((done) => {
+      const proc = spawn(kriya.node, [kriya.bin, ...args], { cwd, env: { ...process.env, KRIYA_DISPATCH_ID: id, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] })
+      let out = ""
+      let err = ""
+      proc.stdout.on("data", (d) => (out = (out + d).slice(-OUTPUT_TAIL * 2)))
+      proc.stderr.on("data", (d) => (err = (err + d).slice(-OUTPUT_TAIL * 2)))
+      running.set(id, { child: proc, canceled: false })
+      proc.on("error", (error) => done({ code: 1, out, err: `${err}\n${error.message}`, canceled: running.get(id)?.canceled }))
+      proc.on("close", (code, sig) => done({ code: code ?? (sig ? 1 : 0), out, err, canceled: running.get(id)?.canceled }))
+    }).finally(() => running.delete(id))
+
+  const handle = async ({ id, kind, payload }) => {
+    const refuse = (error) => report(id, "failed", { error })
+    if (kind === "doctor") {
+      const lines = []
+      await report(id, "running")
+      const ok = await doctor({ say: (line) => lines.push(line) }).catch((error) => (lines.push(`FAIL  doctor — ${error.message}`), false))
+      const checks = lines.map((line) => {
+        const m = /^(ok|FAIL)\s+(.*?)(?: — (.*))?$/.exec(line)
+        return m ? { name: m[2].slice(0, 200), ok: m[1] === "ok", ...(m[3] && { fix: m[3].slice(0, 300) }) } : { name: line.slice(0, 200), ok: true }
+      })
+      return report(id, ok ? "done" : "failed", { checks })
+    }
+    if (kind === "serve_stop") {
+      if (serving) serving.child.kill("SIGTERM")
+      return report(id, "done", { output: serving ? "Stopped serving." : "Wasn't serving." })
+    }
+    const folder = folderOf(payload)
+    if (!folder) return refuse("That folder isn't offered by this computer any more.")
+    if (kind === "rule_confirm" || kind === "rule_dismiss") {
+      try {
+        const text = kind === "rule_confirm" ? confirmRule(folder.path, payload.n, payload.wording) : dismissRule(folder.path, payload.n)
+        await report(id, "done", { output: `${kind === "rule_confirm" ? "Confirmed" : "Dismissed"}: ${text}` })
+      } catch (error) {
+        await refuse(error.message)
+      }
+      return hello().catch(() => {})
+    }
+    if (kind === "run") {
+      if (!MODES.has(payload.mode) || typeof payload.prompt !== "string" || !payload.prompt.trim()) return refuse("That task isn't complete.")
+      if (payload.mode === "full" && !capabilities.fullAccess) return refuse("Full access from Kriya is off on this computer.")
+      if (running.size >= MAX_RUNNING) return refuse(`This computer is already running ${MAX_RUNNING} tasks from Kriya.`)
+      await report(id, "running")
+      log(`kriya daemon: task in ${folder.shown} (${payload.mode})`)
+      const r = await child(id, runArgs(payload), folder.path)
+      const stopped = r.canceled
+      // The answer on success; on failure the last error lines too (DSH writes the reason to stderr)
+      const errors = r.err
+        .split("\n")
+        .filter((line) => line.trim() && !/^(dsh: warning: \d+ entries did not activate|kriya-[\w-]+ \(@kriya-ai\/[\w-]+\): pending)/.test(line))
+        .join("\n")
+      const answer = r.code === 0 ? r.out.trim() || errors : [r.out.trim(), errors].filter(Boolean).join("\n\n")
+      return report(id, stopped ? "canceled" : r.code === 0 ? "done" : "failed", { exitCode: r.code, answer: tail(answer) })
+    }
+    if (kind === "handoff" || kind === "pull") {
+      if (!folder.git) return refuse("Handoff and pull need a git repository.")
+      await report(id, "running")
+      const args = kind === "handoff" ? ["handoff", ...(payload.note ? [payload.note] : [])] : ["pull", ...(payload.workspace ? [payload.workspace] : [])]
+      const r = await child(id, args, folder.path)
+      const text = `${r.out}\n${r.err}`.trim()
+      const workspace = /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/.exec(text)?.[1]
+      const branch = /\b(kriya\/pull-[\w-]+)\b/.exec(text)?.[1]
+      return report(id, r.code === 0 ? "done" : "failed", { exitCode: r.code, output: tail(text), ...(workspace && { workspace }), ...(branch && { branch }) })
+    }
+    if (kind === "serve_start") {
+      if (!capabilities.serve) return refuse("Serving from Kriya is off on this computer.")
+      if (serving) return refuse(`Already serving ${serving.project.name}.`)
+      const proc = spawn(kriya.node, [kriya.bin, "serve", folder.path], { cwd: folder.path, env: { ...process.env, KRIYA_DISPATCH_ID: id }, stdio: "ignore" })
+      serving = { child: proc, project: folder }
+      proc.on("close", () => {
+        if (serving?.child === proc) serving = null
+        report(id, "done", { output: `Stopped serving ${folder.name}.` })
+      })
+      log(`kriya daemon: serving ${folder.shown}`)
+      return report(id, "running")
+    }
+    return refuse("This computer doesn't know that action.")
+  }
+
+  log(`kriya daemon: listening for Kriya (${projects.length} folder${projects.length === 1 ? "" : "s"}: ${projects.map((p) => p.shown).join(", ") || "none"})`)
+  let failures = 0
+  while (!signal?.aborted) {
+    try {
+      if (Date.now() - helloAt > REHELLO_MS) await hello()
+      const next = await call(device.url, "GET", `/dispatch/next?wait=${options.once ? 0 : POLL_WAIT_S}`, { token: device.token, signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout((POLL_WAIT_S + 15) * 1000)]) })
+      failures = 0
+      for (const id of next.cancel ?? []) {
+        const job = running.get(id)
+        if (job) {
+          job.canceled = true
+          job.child.kill("SIGTERM")
+        } else if (serving && id) serving.child.kill("SIGTERM")
+      }
+      if (next.dispatch) {
+        const work = handle(next.dispatch).catch((error) => report(next.dispatch.id, "failed", { error: String(error?.message ?? error).slice(0, 500) }))
+        if (options.once) await work
+      }
+    } catch (error) {
+      if (signal?.aborted) break
+      if (error instanceof KriyaError && error.status === 404) {
+        log("kriya daemon: the Control Center isn't on for this Kriya yet; trying again in a minute.")
+        await new Promise((done) => setTimeout(done, 60_000))
+      } else {
+        const wait = BACKOFF_MS[Math.min(failures++, BACKOFF_MS.length - 1)]
+        log(`kriya daemon: ${error.message}; trying again in ${wait / 1000} s`)
+        await new Promise((done) => setTimeout(done, wait))
+      }
+    }
+    if (options.once) break
+  }
+  for (const { child: proc } of running.values()) proc.kill("SIGTERM")
+  serving?.child.kill("SIGTERM")
+}
+
+/* ─────────── terminal → Kriya: what this kriya process runs ─────────── */
+
+/**
+ * Tells Kriya what a kriya process runs (mode, switches, folder name,
+ * state; never the task). Fire-and-forget: a Kriya without the Control
+ * Center (404) or a failed request changes nothing for the person.
+ * @returns {{ end: (status: string, exitCode?: number) => Promise<void> }}
+ */
+export const HEARTBEAT_MS = 60_000
+
+export function broadcastRun(device, { kind, mode, switches, cwd = process.cwd(), env = process.env, fetchCall = call, heartbeatMs = HEARTBEAT_MS }) {
+  if (!device || env.KRIYA_BROADCAST === "off") return { end: async () => {} }
+  const dispatchId = /^[0-9a-f-]{36}$/.test(env.KRIYA_DISPATCH_ID ?? "") ? env.KRIYA_DISPATCH_ID : undefined
+  const base = {
+    localId: randomUUID(),
+    source: dispatchId ? "dispatch" : "terminal",
+    kind,
+    ...(MODES.has(mode) && { mode }),
+    switches,
+    project: basename(cwd).slice(0, 80),
+    ...(dispatchId && { dispatchId }),
+  }
+  const post = (body) => fetchCall(device.url, "POST", "/runs", { token: device.token, body, signal: AbortSignal.timeout(5_000) }).catch(() => {})
+  const started = post({ ...base, status: "running" })
+  // A heartbeat while it runs: a process that dies without a word shows as lost, not running forever
+  const beat = setInterval(() => post({ ...base, status: "running" }), heartbeatMs)
+  beat.unref?.()
+  return {
+    end: async (status, exitCode) => {
+      clearInterval(beat)
+      await started
+      await post({ ...base, status, ...(Number.isInteger(exitCode) && { exitCode }) })
+    },
+  }
+}
+
+export { BASE_PATH }
+
+/* ─────────── kriya daemon install: run it in the background ─────────── */
+
+export const LAUNCHD_LABEL = "ai.kriya.harness.daemon"
+const xml = (text) => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
+/**
+ * The daemon as a background service, for the person's own login only:
+ * a launchd agent on macOS, a systemd user unit on Linux. The folders and
+ * --allow-* flags are the ones given to `kriya daemon install`.
+ * @returns {{ path: string, content: string, start: string[][], stop: string[][] } | null} null on other systems
+ */
+export function serviceDefinition({ platform = process.platform, home = homedir(), node = process.execPath, bin, args }) {
+  const command = [node, bin, "daemon", ...args]
+  const logs = join(home, ".kriya", "daemon.log")
+  if (platform === "darwin") {
+    const path = join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`)
+    const content = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LAUNCHD_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${command.map((part) => `    <string>${xml(part)}</string>`).join("\n")}
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${xml(logs)}</string>
+  <key>StandardErrorPath</key><string>${xml(logs)}</string>
+</dict>
+</plist>
+`
+    return { path, content, start: [["launchctl", "load", "-w", path]], stop: [["launchctl", "unload", "-w", path]] }
+  }
+  if (platform === "linux") {
+    const path = join(home, ".config", "systemd", "user", "kriya-daemon.service")
+    const quote = (part) => (/^[\w@%+=:,./-]+$/.test(part) ? part : `"${part.replace(/(["\\$`])/g, "\\$1")}"`)
+    const content = `[Unit]
+Description=Kriya Harness daemon (the Control Center)
+
+[Service]
+ExecStart=${command.map(quote).join(" ")}
+Restart=on-failure
+StandardOutput=append:${logs}
+StandardError=append:${logs}
+
+[Install]
+WantedBy=default.target
+`
+    return {
+      path,
+      content,
+      start: [["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", "kriya-daemon.service"]],
+      stop: [["systemctl", "--user", "disable", "--now", "kriya-daemon.service"]],
+    }
+  }
+  return null
+}
