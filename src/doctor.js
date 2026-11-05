@@ -1,5 +1,5 @@
 import { chromeInstalled } from "./browser.js"
-import { models, me } from "./api.js"
+import { call, models, me } from "./api.js"
 import { dumpConfig } from "./launch.js"
 import { CLIENT_VERSION } from "./paths.js"
 import { PROFILES } from "./profiles.js"
@@ -92,6 +92,9 @@ export async function doctor(io = {}) {
       const list = await models(device.url, device.token)
       const tiers = list.data.map((model) => model.id)
       check(tiers.length > 0, `gateway models: ${tiers.join(", ") || "none"}`, "your plan allows no models")
+      // An empty report writes nothing: 400 means the route is on, 404 that it's switched off
+      const live = await call(device.url, "POST", "/live", { token: device.token, body: {} }).catch((error) => error.status)
+      say(`ok    Remote Control on Kriya: ${live === 404 ? "off (harness.remoteControl in the Owner console)" : "on"}`)
     } catch (error) {
       check(false, "Kriya account reachable", error.message)
     }

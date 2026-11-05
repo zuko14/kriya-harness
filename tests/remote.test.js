@@ -83,6 +83,46 @@ test("RC-06: a Kriya with the switch off is reported, not retried as a failure",
   await r.close()
 })
 
+test("RC-09: refused by the server, it asks rarely, keeps events, and delivers once on", async () => {
+  const state = { off: true, asked: 0 }
+  const sent = []
+  const { r } = setup({
+    host: {
+      refusedMs: 60,
+      sender: async () => async (_m, _p, body) => {
+        state.asked++
+        if (state.off) throw Object.assign(new Error("no"), { status: 404 })
+        sent.push(body)
+      },
+    },
+  })
+  await r.set("s1", { on: true }, session)
+  r.onEvent("s1", { type: "user/message", time: 1, data: { source: { kind: "user" }, content: [{ type: "text", text: "kept" }] } })
+  await settle()
+  assert.ok(state.asked <= 2, `asked ${state.asked} times in 40 ms`)
+  state.off = false
+  await new Promise((done) => setTimeout(done, 120))
+  assert.deepEqual(sent.flatMap((b) => b.events).map((e) => e.text), ["kept"])
+  assert.equal(r.status("s1").unavailable, false)
+  await r.close()
+})
+
+test("RC-10: after a restart new events never reuse a seq, so Kriya doesn't drop them", async () => {
+  const first = setup()
+  await first.r.set("s1", { on: true }, session)
+  first.r.onEvent("s1", { type: "user/message", time: 1, data: { source: { kind: "user" }, content: [{ type: "text", text: "one" }] } })
+  await settle()
+  const before = first.sent.flatMap((b) => b.events)[0].seq
+  await first.r.close()
+  const sent = []
+  const again = remote({ device: () => device, file: first.file, flushMs: 5, heartbeatMs: 1_000_000, external: () => false, sender: async () => async (_m, _p, body) => sent.push(body), daemon: (o) => new Promise((d) => o.signal.addEventListener("abort", d)) })
+  await again.start()
+  again.onEvent("s1", { type: "user/message", time: 2, data: { source: { kind: "user" }, content: [{ type: "text", text: "two" }] } })
+  await settle()
+  assert.ok(sent.flatMap((b) => b.events)[0].seq > before)
+  await again.close()
+})
+
 test("RC-07: an outage keeps events in order for later", async () => {
   const state = { down: true }
   const sent = []

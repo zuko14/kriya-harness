@@ -54,7 +54,7 @@ export function liveChange(event, calls) {
     case "user/message": {
       if (data?.source?.kind !== "user") return null
       const text = textOf(data.content).trim()
-      return text ? { title: cut(text.split("\n")[0], 120), line: { kind: "user", text: cut(text, MAX_TEXT) } } : null
+      return text ? { state: "running", title: cut(text.split("\n")[0], 120), line: { kind: "user", text: cut(text, MAX_TEXT) } } : null
     }
     case "assistant/message": {
       const text = textOf(data?.message?.content).trim()
@@ -63,7 +63,8 @@ export function liveChange(event, calls) {
     case "tool/call": {
       calls.set(data.callId, { time })
       const target = targetOf(data.arguments)
-      return { line: { kind: "tool_start", callId: String(data.callId).slice(0, 100), tool: cut(String(data.name), 60), ...(target && { target }) } }
+      // Also tells a session switched on mid-turn that it's working
+      return { state: "running", line: { kind: "tool_start", callId: String(data.callId).slice(0, 100), tool: cut(String(data.name), 60), ...(target && { target }) } }
     }
     case "tool/result": {
       const id = data.message?.toolCallId
