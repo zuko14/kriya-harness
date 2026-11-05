@@ -17,6 +17,7 @@ test("RC-02: events map to lines and states", () => {
   assert.deepEqual(liveChange({ type: "approval/asked", time: 1, data: {} }, calls), { state: "waiting" })
   assert.equal(liveChange({ type: "user/message", time: 1, data: { source: { kind: "system" }, content: [{ type: "text", text: "x" }] } }, calls), null)
   const start = liveChange({ type: "tool/call", time: 10, data: { callId: "c", name: "bash", arguments: '{"command":"ls"}' } }, calls)
+  assert.equal(start.state, "running", "a session switched on mid-turn shows as working")
   assert.deepEqual(start.line, { kind: "tool_start", callId: "c", tool: "bash", target: "ls" })
   const end = liveChange({ type: "tool/result", time: 60, data: { message: { toolCallId: "c", content: [{ type: "text", text: "secret output" }] } } }, calls)
   assert.deepEqual(end.line, { kind: "tool_end", callId: "c", status: "ok", ms: 50 })

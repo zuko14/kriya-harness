@@ -49,6 +49,7 @@ export function readState(file = stateFile()) {
  *   log?: (text: string) => void,
  *   flushMs?: number,
  *   heartbeatMs?: number,
+ *   refusedMs?: number,
  * }} host
  */
 export function remote(host) {
@@ -69,6 +70,7 @@ export function remote(host) {
   let unavailable = false
   let listening = null // { stop, control, done }
   let closed = false
+  let unsaved = false
 
   const save = () => {
     const temporary = `${file}.tmp`
@@ -153,13 +155,18 @@ export function remote(host) {
           }
           if (!stream.dirty && Date.now() - stream.sentAt < heartbeatMs) continue
           ok = (await report(id, meta, stream)) && ok
+          // One refusal answers for every session; events stay queued for when it's on
+          if (unavailable) break
           if (stream.ending && !stream.queue.length) streams.delete(id)
         }
       }
       failures = ok ? 0 : failures + 1
+      if (unsaved) save()
+      unsaved = false
     })().finally(() => (flushing = null))
     await flushing
-    schedule(failures ? Math.min(flushMs * 2 ** failures, MAX_BACKOFF) : flushMs)
+    // Refused by the server: ask rarely, these count against the device's requests per minute
+    schedule(unavailable ? (host.refusedMs ?? MAX_BACKOFF) : failures ? Math.min(flushMs * 2 ** failures, MAX_BACKOFF) : flushMs)
   }
 
   return {
@@ -174,6 +181,7 @@ export function remote(host) {
       if (change.state) stream.state = change.state
       if (change.title && !meta.title) meta.title = change.title
       if (change.line) {
+        unsaved = true
         stream.queue.push({ seq: meta.seq++, at: Math.round(event.time) || Date.now(), ...change.line })
         if (stream.queue.length > MAX_QUEUE) stream.queue.splice(0, stream.queue.length - MAX_QUEUE)
       }
@@ -226,7 +234,12 @@ export function remote(host) {
     },
     /** Sessions left on by the last run carry on */
     async start() {
-      for (const id of Object.keys(state.sessions)) streamOf(id)
+      // Past anything the last run numbered but didn't save: Kriya keeps the first of each seq
+      for (const [id, meta] of Object.entries(state.sessions)) {
+        meta.seq += MAX_QUEUE
+        streamOf(id)
+      }
+      if (streams.size) save()
       await syncDaemon()
       if (streams.size) schedule(0)
     },

@@ -112,7 +112,7 @@ window.__ModuleLoader__.load({
       const line = !state.signedIn
         ? "Sign in with kriya login to use this."
         : state.unavailable
-          ? "Remote Control isn't switched on for your Kriya yet."
+          ? "Not reaching Kriya: it's switched off on the server (harness.remoteControl in the Owner console). What happens now is kept and sent once it's on."
           : !state.on
             ? "Follow this session and run tasks here from the Kriya app."
             : state.daemon === "external"
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
                 : `On. Follow it at ${state.host}. Tasks from Kriya can't run in the home folder.`
       return Section("Remote Control", [
         h("div", { key: "t", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Remote Control"), h(Toggle, { label: "Remote Control", checked: state.on, disabled: busy || !state.signedIn, onChange: (on) => change({ on }) })),
-        h("div", { key: "n", className: "kh-ov-note2" }, line),
+        h("div", { key: "n", className: `kh-ov-note2${state.unavailable ? " kh-ov-err" : ""}` }, line),
         error && h("div", { key: "e", className: "kh-ov-note2 kh-ov-err", role: "alert" }, error),
         state.on && h("div", { key: "s", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow serving"), h(Toggle, { label: "Allow serving from Kriya", checked: state.serve, disabled: busy, onChange: (serve) => change({ serve }) })),
         state.on && h("div", { key: "f", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow Full access"), h(Toggle, { label: "Allow Full access from Kriya", checked: state.fullAccess, disabled: busy, onChange: (fullAccess) => change({ fullAccess }) })),
