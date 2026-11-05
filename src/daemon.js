@@ -7,7 +7,7 @@ import { gzipSync } from "node:zlib"
 
 import { BASE_PATH, call, KriyaError, models } from "./api.js"
 import { doctor } from "./doctor.js"
-import { CLIENT_VERSION } from "./paths.js"
+import { CLIENT_VERSION, kriyaHome } from "./paths.js"
 import { confirmRule, dismissRule, listRules } from "./rules.js"
 
 // `kriya daemon` (the Control Center, CONTROL_CENTER.md in the Kriya
@@ -123,6 +123,37 @@ const readProgressFile = (file) => {
 const tail = (text) => (text.length > OUTPUT_TAIL ? `…${text.slice(-OUTPUT_TAIL)}` : text)
 const MODES = new Set(["ask", "auto", "read", "plan", "full"])
 
+/** Sends to Kriya, with bodies past the host's firewall when Kriya decodes them (as the relay does) */
+export async function deviceSender(device) {
+  let encode = false
+  try {
+    encode = ((await models(device.url, device.token)).bodyEncodings ?? []).includes("gzip+base64")
+  } catch {
+    // Plain JSON until the next sender asks
+  }
+  return (method, path, body) =>
+    encode && body !== undefined
+      ? call(device.url, method, path, {
+          token: device.token,
+          raw: true,
+          headers: { "Content-Type": "text/plain; charset=us-ascii", "x-kriya-body": "gzip+base64" },
+          bodyText: gzipSync(Buffer.from(JSON.stringify(body))).toString("base64"),
+        }).then(async (r) => (r.status === 204 ? null : r.json()))
+      : call(device.url, method, path, { token: device.token, ...(body !== undefined && { body }) })
+}
+
+/* The running `kriya daemon` command's pid: Remote Control leaves listening to it */
+export const daemonPidFile = () => join(kriyaHome(), "daemon.pid")
+
+export function externalDaemon(file = daemonPidFile()) {
+  try {
+    process.kill(Number(readFileSync(file, "utf8")), 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * The daemon: hello, then a long poll for actions, each run on this
  * computer and reported. Stops when `signal` aborts (Ctrl-C).
@@ -140,24 +171,9 @@ const MODES = new Set(["ask", "auto", "read", "plan", "full"])
 export async function runDaemon(options) {
   const { device, signal, log = (line) => process.stdout.write(`${line}\n`) } = options
   const kriya = options.kriya ?? { bin: join(import.meta.dirname, "..", "bin", "kriya.js"), node: process.execPath }
-  const projects = offeredProjects(options.folders)
+  let projects = offeredProjects(options.folders)
   const capabilities = { fullAccess: Boolean(options.allowFullAccess), serve: Boolean(options.allowServe), handoff: true }
-  // Bodies past the host's firewall when Kriya decodes them (as the relay does)
-  let encode = false
-  try {
-    encode = ((await models(device.url, device.token)).bodyEncodings ?? []).includes("gzip+base64")
-  } catch {
-    // Asked again on the next hello
-  }
-  const send = (method, path, body) =>
-    encode && body !== undefined
-      ? call(device.url, method, path, {
-          token: device.token,
-          raw: true,
-          headers: { "Content-Type": "text/plain; charset=us-ascii", "x-kriya-body": "gzip+base64" },
-          bodyText: gzipSync(Buffer.from(JSON.stringify(body))).toString("base64"),
-        }).then(async (r) => (r.status === 204 ? null : r.json()))
-      : call(device.url, method, path, { token: device.token, ...(body !== undefined && { body }) })
+  const send = await deviceSender(device)
 
   const running = new Map() // dispatch id → { child, canceled }
   let serving = null // { child, project }
@@ -167,6 +183,14 @@ export async function runDaemon(options) {
     await send("POST", "/daemon/hello", { daemonVersion: CLIENT_VERSION, capabilities, projects: projects.map((p) => ({ id: p.id, name: p.name, path: p.shown, git: p.git })), rules: projectRules(projects) })
     helloAt = Date.now()
   }
+  // Remote Control changes folders and switches without stopping running tasks
+  if (options.control)
+    options.control.update = (next) => {
+      projects = offeredProjects(next.folders)
+      capabilities.fullAccess = Boolean(next.allowFullAccess)
+      capabilities.serve = Boolean(next.allowServe)
+      return hello().catch(() => (helloAt = 0))
+    }
   const report = (id, status, result) => send("POST", `/dispatch/${id}`, { status, ...(result && { result }) }).catch((error) => log(`kriya daemon: couldn't report ${id.slice(0, 8)}: ${error.message}`))
 
   const folderOf = (payload) => projects.find((p) => p.id === payload.project)

@@ -1,0 +1,10 @@
+{
+  "name": "@kriya-ai/harness-remote",
+  "description": "Remote Control: stream a session to Kriya and listen for the Control Center",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": { ".": "./index.js", "./package.json": "./package.json" },
+  "license": "UNLICENSED"
+}

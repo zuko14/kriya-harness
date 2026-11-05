@@ -1,4 +1,5 @@
-import { mkdirSync, existsSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { kriyaHome } from "./paths.js"
@@ -25,8 +26,31 @@ export const CHROME_PATHS = [
   ...(process.env["PROGRAMFILES(X86)"] ? [join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe")] : []),
 ]
 
-/** Whether Google Chrome is installed (the agent's browser runs on it) */
-export const chromeInstalled = (exists = existsSync, paths = CHROME_PATHS) => paths.some((p) => exists(p))
+// Other Chromium browsers, used when Google Chrome isn't there
+export const CHROMIUM_PATHS = [
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  "/usr/bin/microsoft-edge",
+  "/usr/bin/brave-browser",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/snap/bin/chromium",
+  ...(process.env["PROGRAMFILES(X86)"] ? [join(process.env["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe")] : []),
+]
+
+/** What the agent's browser launches with: Google Chrome's channel, else another Chromium browser, else null */
+export function browserTarget(exists = existsSync, chrome = CHROME_PATHS, others = CHROMIUM_PATHS) {
+  if (chrome.some((p) => exists(p))) return { channel: "chrome" }
+  const executablePath = others.find((p) => exists(p))
+  return executablePath ? { executablePath } : null
+}
+
+/** Whether a browser the agent can use is installed */
+export const chromeInstalled = (exists = existsSync, paths = CHROME_PATHS, others = CHROMIUM_PATHS) => browserTarget(exists, paths, others) !== null
+
+// Chrome allows one process per profile; `kriya` and a task from Kriya can run at once
+const PROFILE_BUSY = /ProcessSingleton|SingletonLock|profile.*(in use|already)|user data directory is already/i
 
 const RING = 200
 const TEXT_LIMIT = 8000
@@ -99,18 +123,26 @@ export class LocalBrowser {
       launch = (dir, options) => chromium.launchPersistentContext(dir, options)
     }
     mkdirSync(this.profileDir, { recursive: true, mode: 0o700 })
-    try {
-      this.context = await launch(this.profileDir, {
-        channel: "chrome",
+    const options = {
+        ...(browserTarget() ?? { channel: "chrome" }),
         headless: true,
         viewport: VIEWPORT,
         acceptDownloads: false,
         // Nothing of the person's: no extensions, no sync, no first-run calls home
         args: ["--no-first-run", "--disable-sync", "--disable-extensions", "--disable-background-networking", "--disable-component-update"],
-      })
+    }
+    try {
+      try {
+        this.context = await launch(this.profileDir, options)
+      } catch (error) {
+        if (!PROFILE_BUSY.test(String(error?.message))) throw error
+        // Another kriya has the profile open: this process gets its own for this run
+        this.spareProfile = mkdtempSync(join(tmpdir(), "kriya-browser-"))
+        this.context = await launch(this.spareProfile, options)
+      }
     } catch (error) {
       throw new BrowserError(
-        /executable|channel|not found|ENOENT/i.test(String(error?.message)) ? "Google Chrome isn't installed on this computer; the agent's browser needs it." : `Chrome didn't start: ${String(error?.message ?? error).split("\n")[0]}`
+        /executable|channel|not found|ENOENT/i.test(String(error?.message)) ? "No Chrome, Edge, Brave or Chromium on this computer; the agent's browser needs one." : `Chrome didn't start: ${String(error?.message ?? error).split("\n")[0]}`
       )
     }
     await this.context.route("**/*", (route) => {
@@ -248,5 +280,7 @@ export class LocalBrowser {
     const context = this.context
     this.context = this.current = undefined
     await context?.close().catch(() => {})
+    if (this.spareProfile) rmSync(this.spareProfile, { recursive: true, force: true })
+    this.spareProfile = undefined
   }
 }
