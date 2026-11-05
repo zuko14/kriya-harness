@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
-import { existsSync, realpathSync, statSync } from "node:fs"
-import { homedir } from "node:os"
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { basename, join, sep } from "node:path"
 import { gzipSync } from "node:zlib"
 
@@ -88,6 +88,36 @@ export function runArgs(payload) {
     ...(s.browser === false ? ["--no-browser-tools"] : []),
     payload.prompt,
   ]
+}
+
+// The harness switches a flow may set (KU-ADR-16: nothing protected has a name)
+const PROFILE_ENV = /^KRIYA_(LOOP|LOOP_V2|BUDGET|ANCHOR|MINIMAL|MAX_STEPS|TURN_MINUTES|MAX_REPEATS)$/
+const FLOW_REPORT_MS = 3_000
+
+/**
+ * What a flow from Kriya adds to `kriya run`: its plan in a file the loop
+ * saves as written, a file the loop reports into, and its harness settings,
+ * only the known switches, each a short value. Refuses anything else, as the
+ * server does, so a tampered action changes nothing protected.
+ */
+export function flowEnv(payload, dir) {
+  const env = {}
+  if (payload.profile) {
+    for (const [name, value] of Object.entries(payload.profile.env ?? {}))
+      if (PROFILE_ENV.test(name) && /^(on|off|[0-9]{1,3})$/.test(String(value))) env[name] = String(value)
+  }
+  if (!payload.plan) return env
+  const seed = join(dir, "plan.json")
+  writeFileSync(seed, JSON.stringify(payload.plan))
+  return { ...env, KRIYA_SEED_PLAN: seed, KRIYA_PROGRESS_FILE: join(dir, "progress.json") }
+}
+
+const readProgressFile = (file) => {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"))
+  } catch {
+    return null
+  }
 }
 
 const tail = (text) => (text.length > OUTPUT_TAIL ? `…${text.slice(-OUTPUT_TAIL)}` : text)
@@ -187,7 +217,21 @@ export async function runDaemon(options) {
       if (running.size >= MAX_RUNNING) return refuse(`This computer is already running ${MAX_RUNNING} tasks from Kriya.`)
       await report(id, "running")
       log(`kriya daemon: task in ${folder.shown} (${payload.mode})`)
-      const r = await child(id, runArgs(payload), folder.path)
+      const flow = payload.plan || payload.profile ? mkdtempSync(join(tmpdir(), "kriya-flow-")) : null
+      const env = flow ? flowEnv(payload, flow) : {}
+      let sent = ""
+      const beat = () => {
+        const seen = env.KRIYA_PROGRESS_FILE && readProgressFile(env.KRIYA_PROGRESS_FILE)
+        if (!seen || JSON.stringify(seen) === sent) return seen
+        sent = JSON.stringify(seen)
+        report(id, "running", seen)
+        return seen
+      }
+      const reporting = env.KRIYA_PROGRESS_FILE ? setInterval(beat, FLOW_REPORT_MS) : null
+      const r = await child(id, runArgs(payload), folder.path, env)
+      clearInterval(reporting)
+      const progress = env.KRIYA_PROGRESS_FILE ? readProgressFile(env.KRIYA_PROGRESS_FILE) : null
+      if (flow) rmSync(flow, { recursive: true, force: true })
       const stopped = r.canceled
       // The answer on success; on failure the last error lines too (DSH writes the reason to stderr)
       const errors = r.err
@@ -195,7 +239,7 @@ export async function runDaemon(options) {
         .filter((line) => line.trim() && !/^(dsh: warning: \d+ entries did not activate|kriya-[\w-]+ \(@kriya-ai\/[\w-]+\): pending)/.test(line))
         .join("\n")
       const answer = r.code === 0 ? r.out.trim() || errors : [r.out.trim(), errors].filter(Boolean).join("\n\n")
-      return report(id, stopped ? "canceled" : r.code === 0 ? "done" : "failed", { exitCode: r.code, answer: tail(answer) })
+      return report(id, stopped ? "canceled" : r.code === 0 ? "done" : "failed", { exitCode: r.code, answer: tail(answer), ...(progress && { plan: progress.plan }) })
     }
     if (kind === "handoff" || kind === "pull") {
       if (!folder.git) return refuse("Handoff and pull need a git repository.")

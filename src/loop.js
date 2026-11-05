@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync } from "node:fs"
+
 import { RANK } from "./failure.js"
 import { MAX_ATTEMPTS, normalStep, readProgress, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
 import { projectRoot } from "./skill-switches.js"
@@ -97,6 +99,31 @@ export function savePlan(cwd, sessionId, input, now = () => new Date(), options 
   if (earlier.length >= MAX_PLANS) throw new VerifyError(`This session already made ${MAX_PLANS} plans; stop and tell the person where it stands.`)
   writeProgress(root, sessionId, { ...progress, earlier, plan: { ...plan, at: now().toISOString() }, runs: progress.plan ? [] : progress.runs })
   return plan
+}
+
+/**
+ * A flow from Kriya (SD-14 in the Kriya repository): the person's own plan,
+ * which the daemon hands over in a file. While one is set it is the session's
+ * plan as written, so the model can't rewrite it.
+ */
+export function seededPlan(env = process.env) {
+  if (!env.KRIYA_SEED_PLAN) return undefined
+  try {
+    return JSON.parse(readFileSync(env.KRIYA_SEED_PLAN, "utf8"))
+  } catch {
+    return undefined
+  }
+}
+
+/** Where a seeded plan stands, for the daemon to report; a safety net, never a gate */
+export function writeSnapshot(cwd, sessionId, { current, env = process.env } = {}) {
+  if (!env.KRIYA_PROGRESS_FILE) return
+  try {
+    const plan = planStatus(cwd, sessionId)?.map((s) => ({ ...s, ...(s.n === current && !s.building && { building: { attempt: s.attempts + 1 } }) }))
+    writeFileSync(env.KRIYA_PROGRESS_FILE, JSON.stringify({ plan }))
+  } catch {
+    // The run doesn't depend on being reported
+  }
 }
 
 export function readPlan(cwd, sessionId) {

@@ -1380,6 +1380,8 @@
   name: '@kriya-ai/harness-progress'
 - id: kriya-preview
   name: '@kriya-ai/harness-preview'
+- id: kriya-graph
+  name: '@kriya-ai/harness-graph'
 - id: kriya-browser
   name: '@kriya-ai/harness-browser'
   disabled: !!js process.env.KRIYA_BROWSER !== 'on' || process.env.KRIYA_MINIMAL === 'on'
