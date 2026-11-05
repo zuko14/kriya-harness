@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 import { handoff, HandoffError, pull } from "../plugins/kriya-handoff/index.js"
 import { KriyaError, me, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
-import { runDaemon, serviceDefinition } from "../src/daemon.js"
+import { daemonPidFile, runDaemon, serviceDefinition } from "../src/daemon.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
 import { CheckpointError, listCheckpoints, trackedRoot, undo } from "../src/checkpoints.js"
@@ -422,7 +422,9 @@ async function main(argv) {
       const stop = new AbortController()
       process.once("SIGINT", () => stop.abort())
       process.once("SIGTERM", () => stop.abort())
+      writeFileSync(daemonPidFile(), String(process.pid), { mode: 0o600 })
       await runDaemon({ device, folders: offered, allowFullAccess, allowServe, signal: stop.signal, log: say })
+      rmSync(daemonPidFile(), { force: true })
       say("kriya daemon stopped.")
       return 0
     }

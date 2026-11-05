@@ -72,6 +72,12 @@ export const INTENTS = [
   { id: "security", label: "security", words: ["auth", "login", "password", "token", "secret", "injection", "xss", "csrf", "security", "permission", "vulnerab"], tools: [["grep", "find where untrusted input enters"], ["read", "follow it"]] },
 ]
 
+// A request about a shipped artifact rather than source: words only this kind of work uses
+const REVERSE = /\b(reverse[- ]engineer\w*|decompil\w*|disassembl\w*|deobfuscat\w*|binary analysis|ghidra|frida|apk|ipa|asar|dylib|mach-?o|pcap|firmware (image|dump)|what does this (binary|app)|how does (this|the) (binary|electron app))\b|\.(exe|dll|so|wasm|elf)\b/i
+
+/** Whether a request is reverse-engineering work (plugins/rea) */
+export const isReverseEngineering = (request) => REVERSE.test(String(request ?? ""))
+
 /** The request's intents, strongest first (at most two), by whole-word or phrase matches */
 export function classify(request) {
   const text = ` ${String(request ?? "").toLowerCase().replace(/\s+/g, " ")} `

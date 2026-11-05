@@ -220,6 +220,11 @@ export async function startFakeKriya(script = {}) {
       ;(state.runs ??= []).push(body)
       return send(204)
     }
+    if (req.method === "POST" && path === "/live") {
+      if (script.liveOff) return fail(404, "not_found", "Not found.")
+      ;(state.live ??= []).push(body)
+      return send(204)
+    }
     if (req.method === "POST" && path === "/approvals") {
       if (script.approvalsError)
         return fail(script.approvalsError.status, script.approvalsError.error, script.approvalsError.message)

@@ -170,7 +170,7 @@ export function routes(browser) {
 export function apply(ctx) {
   // No Chrome, no browser: neither tools nor guidance, so the agent isn't offered what can't start
   if (!chromeInstalled()) {
-    ctx.logger("kriya-browser").info("Google Chrome isn't installed, so the agent's browser is off")
+    ctx.logger("kriya-browser").info("No Chrome, Edge, Brave or Chromium here, so the agent's browser is off")
     return
   }
   const sandboxPolicy = ctx.get("sandboxPolicy")

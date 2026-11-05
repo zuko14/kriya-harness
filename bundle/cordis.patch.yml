@@ -206,6 +206,27 @@
     - id: kriya-overview
       name: '@kriya-ai/harness-overview'
 
+# Remote Control (plugins/remote): the switch in the Overview tab streams a
+# session to the person's Kriya and listens for the Control Center while this
+# app runs, with no command. Without the web server it doesn't start
+- insert:
+    - id: kriya-remote
+      name: '@kriya-ai/harness-remote'
+
+# Delete session (plugins/sessions): a row in a session's "..." menu; DSH has
+# archive only. Without the web server it doesn't start
+- insert:
+    - id: kriya-sessions
+      name: '@kriya-ai/harness-sessions'
+
+# Reverse engineering (plugins/rea): two small tools over the pinned REA MCP
+# server, started on first use, and its guidance only on such requests. Off in
+# KriyaBench's tool-minimal arm
+- insert:
+    - id: kriya-rea
+      name: '@kriya-ai/harness-rea'
+      disabled: !!js process.env.KRIYA_MINIMAL === 'on'
+
 # The Progress tab (plugins/progress): what the Kriya loop recorded for a
 # session (goal, plan, each step's status and attempts, every check run and
 # the verdict against the files now), read-only, on one route inside

@@ -1376,6 +1376,13 @@
   name: '@kriya-ai/harness-changes'
 - id: kriya-overview
   name: '@kriya-ai/harness-overview'
+- id: kriya-remote
+  name: '@kriya-ai/harness-remote'
+- id: kriya-sessions
+  name: '@kriya-ai/harness-sessions'
+- id: kriya-rea
+  name: '@kriya-ai/harness-rea'
+  disabled: !!js process.env.KRIYA_MINIMAL === 'on'
 - id: kriya-progress
   name: '@kriya-ai/harness-progress'
 - id: kriya-preview

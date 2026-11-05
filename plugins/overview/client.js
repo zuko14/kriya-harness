@@ -36,6 +36,15 @@ window.__ModuleLoader__.load({
 .kh-ov-btn { min-width: 44px; min-height: 44px; margin: -12px -10px -12px 0; border: 0; border-radius: 10px; background: transparent; color: inherit; cursor: pointer; display: grid; place-items: center; }
 .kh-ov-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .kh-ov-btn:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
+.kh-ov-switch { flex: none; width: 44px; height: 26px; padding: 3px; border: 0; border-radius: 999px; background: var(--dsw-alias-border-l2); cursor: pointer; position: relative; }
+.kh-ov-switch::before { content: ""; position: absolute; inset: -9px 0; }
+.kh-ov-switch > span { display: block; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.kh-ov-switch.on { background: var(--dsw-alias-link); }
+.kh-ov-switch.on > span { transform: translateX(18px); }
+.kh-ov-switch:disabled { opacity: .5; cursor: default; }
+.kh-ov-switch:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: 2px; }
+.kh-ov-note2 { font-size: 12px; line-height: 1.45; color: var(--dsw-alias-label-tertiary); padding-bottom: 4px; }
+.kh-ov-err { color: var(--dsw-alias-state-error-primary); }
 .kh-ov-error { padding: 12px 14px; color: var(--dsw-alias-state-error-primary); }
 .kh-ov-note { padding: 14px; color: var(--dsw-alias-label-tertiary); line-height: 1.5; }
 `
@@ -62,6 +71,63 @@ window.__ModuleLoader__.load({
       plug: ["M9 2v6", "M15 2v6", "M6 8h12v4a6 6 0 0 1-12 0Z", "M12 18v4"],
       refresh: ["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"],
       overview: ["M4 4h7v7H4z", "M13 4h7v4h-7z", "M13 10h7v10h-7z", "M4 13h7v7H4z"],
+    }
+
+    const REMOTE = "api/kriya.remote"
+
+    function Toggle({ label, checked, disabled, onChange }) {
+      return h(
+        "button",
+        { type: "button", role: "switch", "aria-checked": checked, "aria-label": label, disabled, className: `kh-ov-switch${checked ? " on" : ""}`, onClick: () => onChange(!checked) },
+        h("span", null)
+      )
+    }
+
+    // The switch beside a session's environment: on, this session shows up
+    // live in Kriya and Kriya can reach this computer; no command to run
+    function Remote({ sessionId }) {
+      const [state, setState] = useState(null)
+      const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const call = useCallback(async (body) => {
+        const query = new URLSearchParams({ session: sessionId })
+        const response = await fetch(`${REMOTE}?${query}`, { method: body ? "POST" : "GET", credentials: "same-origin", ...(body && { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) })
+        const answer = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(answer.error || `Kriya Harness answered ${response.status}.`)
+        setState(answer)
+        setError(null)
+      }, [sessionId])
+      useEffect(() => {
+        const read = () => call().catch((e) => setError(e.message))
+        read()
+        const timer = setInterval(read, REFRESH_MS)
+        return () => clearInterval(timer)
+      }, [call])
+      const change = async (body) => {
+        setBusy(true)
+        await call(body).catch((e) => setError(e.message))
+        setBusy(false)
+      }
+      if (!state) return null
+      const line = !state.signedIn
+        ? "Sign in with kriya login to use this."
+        : state.unavailable
+          ? "Remote Control isn't switched on for your Kriya yet."
+          : !state.on
+            ? "Follow this session and run tasks here from the Kriya app."
+            : state.daemon === "external"
+              ? `On. Follow it at ${state.host}; kriya daemon is already listening.`
+              : state.folderOffered
+                ? `On. Follow it at ${state.host}, Kriya Harness.`
+                : `On. Follow it at ${state.host}. Tasks from Kriya can't run in the home folder.`
+      return Section("Remote Control", [
+        h("div", { key: "t", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Remote Control"), h(Toggle, { label: "Remote Control", checked: state.on, disabled: busy || !state.signedIn, onChange: (on) => change({ on }) })),
+        h("div", { key: "n", className: "kh-ov-note2" }, line),
+        error && h("div", { key: "e", className: "kh-ov-note2 kh-ov-err", role: "alert" }, error),
+        state.on && h("div", { key: "s", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow serving"), h(Toggle, { label: "Allow serving from Kriya", checked: state.serve, disabled: busy, onChange: (serve) => change({ serve }) })),
+        state.on && h("div", { key: "f", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow Full access"), h(Toggle, { label: "Allow Full access from Kriya", checked: state.fullAccess, disabled: busy, onChange: (fullAccess) => change({ fullAccess }) })),
+        state.on && state.fullAccess && h("div", { key: "w", className: "kh-ov-note2 kh-ov-err" }, "Tasks from Kriya can then run with no sandbox and no questions on this computer."),
+      ])
     }
 
     const fmt = (n) => (n === undefined || n === null ? "—" : n >= 10_000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n))
@@ -177,6 +243,7 @@ window.__ModuleLoader__.load({
         { className: "kh-ov" },
         error && h("div", { className: "kh-ov-error", role: "alert" }, error),
         h(Environment, { key: "e", env: data.environment, action: refresh }),
+        h(Remote, { key: "r", sessionId }),
         h(Context, { key: "c", data }),
         h(Changes, { key: "ch", changes: data.changes }),
         h(Jobs, { key: "j", jobs: data.jobs }),

@@ -1001,6 +1001,90 @@
         "additionalProperties": false
       },
       "response": null
+    },
+    {
+      "method": "POST",
+      "path": "/live",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "deviceSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "project": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "remote": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": ["running", "waiting", "idle", "ended"]
+          },
+          "events": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["user", "assistant", "tool_start", "tool_end"]
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 8000
+                },
+                "callId": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "tool": {
+                  "type": "string",
+                  "maxLength": 60
+                },
+                "target": {
+                  "type": "string",
+                  "maxLength": 400
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ok", "error", "declined"]
+                },
+                "ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": ["seq", "at", "kind"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["deviceSessionId", "remote", "state", "events"],
+        "additionalProperties": false
+      },
+      "response": null
     }
   ]
 }

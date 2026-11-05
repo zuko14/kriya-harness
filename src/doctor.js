@@ -1,3 +1,4 @@
+import { chromeInstalled } from "./browser.js"
 import { models, me } from "./api.js"
 import { dumpConfig } from "./launch.js"
 import { CLIENT_VERSION } from "./paths.js"
@@ -73,6 +74,9 @@ export async function doctor(io = {}) {
       check(false, `profile ${profile} composes`, error.message)
     }
   }
+
+  // Not a failure: everything else works without it
+  say(`ok    agent's browser: ${chromeInstalled() ? "ready" : "off (install Chrome, Edge, Brave or Chromium to turn it on)"}`)
 
   const device = readDevice()
   check(!!device, device ? `signed in to ${device.url}` : "signed in", "run kriya login")
