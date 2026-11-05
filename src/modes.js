@@ -92,21 +92,21 @@ export const SWITCHES = [
   ["anchor", "KRIYA_ANCHOR", false],
   // Kriya loop v2 (KRIYA_LOOP_V2.md): opt-in until measured; needs the loop
   ["loop-v2", "KRIYA_LOOP_V2", false],
-  // The loop guard (KRIYA_LOOP.md): opt-in until measured; needs the loop
-  ["loop-guard", "KRIYA_LOOP_GUARD", false],
+  // The loop guard (KRIYA_LOOP.md): on (owner, 2026-11-05); needs the loop
+  ["loop-guard", "KRIYA_LOOP_GUARD", true],
   // The strict coding loop, reconnaissance and just-in-time tools
-  // (KRIYA_CODING_HARNESS_REPORT.md): opt-in until measured; they need the loop
-  ["strict-loop", "KRIYA_STRICT_LOOP", false],
+  // (KRIYA_CODING_HARNESS_REPORT.md): on (owner, 2026-11-05, unmeasured on a real model); they need the loop
+  ["strict-loop", "KRIYA_STRICT_LOOP", true],
   // The defensive engine (KRIYA_DEFENSIVE_ENGINE_REPORT.md): turns the strict loop on too
-  ["defensive", "KRIYA_DEFENSIVE", false],
-  ["recon", "KRIYA_RECON", false],
-  ["jit-tools", "KRIYA_JIT_TOOLS", false],
+  ["defensive", "KRIYA_DEFENSIVE", true],
+  ["recon", "KRIYA_RECON", true],
+  ["jit-tools", "KRIYA_JIT_TOOLS", true],
   // The agent's localhost browser (plugins/browser): on (owner, 2026-11-04:
   // the agent must use the browser we built, shown live in Preview, not its
   // own scripts); offered only where Google Chrome is installed
   ["browser-tools", "KRIYA_BROWSER", true],
-  // The intent router (plugins/router): opt-in until measured
-  ["router", "KRIYA_ROUTER", false],
+  // The intent router (plugins/router): on (owner, 2026-11-05, unmeasured)
+  ["router", "KRIYA_ROUTER", true],
 ]
 
 /** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */

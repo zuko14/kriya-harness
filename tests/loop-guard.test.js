@@ -221,14 +221,14 @@ test("LG-TR-02: a recovered step counts; classes are counted", () => {
   assert.deepEqual(t.classes, { syntax: 1 })
 })
 
-test("LG-SW-01: the switch defaults off and the flags set it", () => {
-  assert.deepEqual(SWITCHES.find(([flag]) => flag === "loop-guard"), ["loop-guard", "KRIYA_LOOP_GUARD", false])
+test("LG-SW-01: the owner's six switches default on (2026-11-05); the flags turn each off", () => {
+  for (const flag of ["loop-guard", "strict-loop", "defensive", "recon", "jit-tools", "router"]) assert.equal(SWITCHES.find(([name]) => name === flag)[2], true, flag)
   const env = {}
   switchEnv([], env)
-  assert.equal(env.KRIYA_LOOP_GUARD, "off")
-  const args = ["--loop-guard"]
-  switchEnv(args, env)
   assert.equal(env.KRIYA_LOOP_GUARD, "on")
+  const args = ["--no-loop-guard"]
+  switchEnv(args, env)
+  assert.equal(env.KRIYA_LOOP_GUARD, "off")
   assert.deepEqual(args, [])
 })
 

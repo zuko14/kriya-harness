@@ -26,7 +26,7 @@ function kriya(args, cwd, env = {}) {
   return new Promise((done) => {
     const child = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), ...args], {
       cwd,
-      env: { ...process.env, KRIYA_LOOP: "off", KRIYA_BUDGET: "off", KRIYA_MAX_STEPS: "", KRIYA_MAX_REPEATS: "", KRIYA_MINIMAL: "", ...env },
+      env: { ...process.env, KRIYA_LOOP_GUARD: "off", KRIYA_STRICT_LOOP: "off", KRIYA_DEFENSIVE: "off", KRIYA_RECON: "off", KRIYA_JIT_TOOLS: "off", KRIYA_ROUTER: "off", KRIYA_LOOP: "off", KRIYA_BUDGET: "off", KRIYA_MAX_STEPS: "", KRIYA_MAX_REPEATS: "", KRIYA_MINIMAL: "", ...env },
     })
     let stderr = ""
     child.stderr.on("data", (d) => (stderr += d))

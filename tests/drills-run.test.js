@@ -22,7 +22,7 @@ function start(args, cwd) {
   const child = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), ...args], {
     cwd,
     detached: true,
-    env: { ...process.env, KRIYA_LOOP: "off", KRIYA_BUDGET: "off", KRIYA_ANCHOR: "off", KRIYA_MINIMAL: "" },
+    env: { ...process.env, KRIYA_LOOP_GUARD: "off", KRIYA_STRICT_LOOP: "off", KRIYA_DEFENSIVE: "off", KRIYA_RECON: "off", KRIYA_JIT_TOOLS: "off", KRIYA_ROUTER: "off", KRIYA_LOOP: "off", KRIYA_BUDGET: "off", KRIYA_ANCHOR: "off", KRIYA_MINIMAL: "" },
   })
   let stdout = ""
   let stderr = ""

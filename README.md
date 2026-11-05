@@ -196,6 +196,8 @@ undo --list`); a failure seen twice is proposed as a rule, which the agent
 sees only after `kriya rules confirm <number>`. No extra model calls; not
 yet measured on a real model. Without `--loop-v2` the loop is exactly v1.
 
+**On by default since 2026-11-05 (owner's decision; not measured on a real model):** the loop guard, strict loop, defensive engine, reconnaissance, just-in-time tools and intent router described below, whatever each paragraph's "off" says. Turn one off with its `--no-…` flag or `KRIYA_…=off`; `--defensive` brings the strict loop, so turn off both to drop it.
+
 Loop guard (beta, off; `kriya --loop-guard`, `kriya run --loop-guard`,
 `KRIYA_LOOP_GUARD=on`): an agent that stops with plan steps still to do is
 sent back (once per step, from the records, never from what it says); a step

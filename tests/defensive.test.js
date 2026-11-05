@@ -261,3 +261,10 @@ test("DF-RUN-06: a plan with no pre-mortem reaches no builder; with one, it runs
   assert.match(defensive.prompts[0], /Could fail: a null value crashes the reader/, report)
   assert.doesNotMatch(strict.prompts[0], /Could fail/, report)
 })
+
+test("DF-RUN-07: with no flags at all, a person gets the engine: float money refused, then clean", { timeout: 200_000 }, async () => {
+  const r = await runScenario("float-money", { defaults: true })
+  assert.equal(r.passed, true, r.stderr)
+  assert.equal(r.verdict, "verified", r.stderr)
+  assert.equal(r.builders, 2, r.stderr)
+})
