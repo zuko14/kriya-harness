@@ -128,7 +128,7 @@ function plainEnv() {
 }
 
 function start(client, args, cwd, env = {}) {
-  const child = spawn(process.execPath, [join(client, "bin", "kriya.js"), ...args], { cwd, detached: true, env: { ...plainEnv(), KRIYA_LOOP: "off", KRIYA_LOOP_V2: "off", KRIYA_LOOP_GUARD: "off", KRIYA_BUDGET: "off", ...env } })
+  const child = spawn(process.execPath, [join(client, "bin", "kriya.js"), ...args], { cwd, detached: true, env: { ...plainEnv(), KRIYA_LOOP_GUARD: "off", KRIYA_STRICT_LOOP: "off", KRIYA_DEFENSIVE: "off", KRIYA_RECON: "off", KRIYA_JIT_TOOLS: "off", KRIYA_ROUTER: "off", KRIYA_LOOP: "off", KRIYA_LOOP_V2: "off", KRIYA_BUDGET: "off", ...env } })
   let stdout = ""
   let stderr = ""
   child.stdout.on("data", (d) => (stdout += d))
@@ -172,7 +172,7 @@ function record(home, dir) {
  * @param {string} name a key of SCENARIOS
  * @param {{ client?: string, guard?: boolean, flags?: string[] }} [options]
  */
-export async function runScenario(name, { client: checkout = ROOT, guard = false, flags = [] } = {}) {
+export async function runScenario(name, { client: checkout = ROOT, guard = false, flags = [], defaults = false } = {}) {
   const client = resolve(checkout)
   const scenario = SCENARIOS[name] ?? STRICT_SCENARIOS[name] ?? TOOL_SCENARIOS[name] ?? DEFENSIVE_SCENARIOS[name]
   const home = freshHome()
@@ -222,7 +222,11 @@ export async function runScenario(name, { client: checkout = ROOT, guard = false
       })
       .find((e) => e?.type === "session")
     run = await start(client, [...args, "--session-id", String(opening?.sessionId ?? opening?.id), "carry on"], dir).done
-  } else run = await start(client, [...args, "Finish the work"], dir).done
+  } else {
+    // defaults: the switches as a person gets them, none pinned
+    const unset = Object.fromEntries(["GUARD", "STRICT", "DEF", "RECON", "JIT", "ROUTER", "LOOP"].map((k) => [{ GUARD: "KRIYA_LOOP_GUARD", STRICT: "KRIYA_STRICT_LOOP", DEF: "KRIYA_DEFENSIVE", RECON: "KRIYA_RECON", JIT: "KRIYA_JIT_TOOLS", ROUTER: "KRIYA_ROUTER", LOOP: "KRIYA_LOOP" }[k], ""]))
+    run = await start(client, [...args, "Finish the work"], dir, defaults ? unset : {}).done
+  }
   const durationMs = Date.now() - started
   await fake.close()
   const progress = record(home, dir)

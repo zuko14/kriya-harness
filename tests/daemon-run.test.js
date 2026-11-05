@@ -19,7 +19,7 @@ import { freshHome, ROOT } from "./helpers.js"
 
 function kriya(args, cwd) {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), ...args], { cwd, env: { ...process.env, KRIYA_LOOP: "off" } })
+    const child = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), ...args], { cwd, env: { ...process.env, KRIYA_LOOP_GUARD: "off", KRIYA_STRICT_LOOP: "off", KRIYA_DEFENSIVE: "off", KRIYA_RECON: "off", KRIYA_JIT_TOOLS: "off", KRIYA_ROUTER: "off", KRIYA_LOOP: "off" } })
     let stderr = ""
     child.stderr.on("data", (d) => (stderr += d))
     child.on("exit", (code) => done({ code, stderr }))
