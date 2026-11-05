@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
 .kh-pg-verdict { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
 .kh-pg-verdict.verified { color: var(--dsw-alias-state-success-primary); }
 .kh-pg-verdict.failed, .kh-pg-verdict.blocked { color: var(--dsw-alias-state-error-primary); }
-.kh-pg-verdict.stale, .kh-pg-verdict.not-checked { color: var(--dsw-alias-state-warn-label); }
+.kh-pg-verdict.stale, .kh-pg-verdict.not-checked, .kh-pg-verdict.partial { color: var(--dsw-alias-state-warn-label); }
 .kh-pg-goal { line-height: 1.45; margin: 6px 0 0; }
 .kh-pg-check { margin-top: 6px; color: var(--dsw-alias-label-tertiary); }
 .kh-pg-use { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -80,7 +80,7 @@ window.__ModuleLoader__.load({
     const TabIcon = ({ size = 20 }) => svg(["M9 6h11", "M9 12h11", "M9 18h11", "M4 6l1 1 2-2", "M4 12l1 1 2-2", "M4 18h2"], size)
     const REFRESH = ["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"]
 
-    const VERDICT = { verified: "Verified", failed: "Failing", blocked: "Blocked", "not checked": "Not checked" }
+    const VERDICT = { verified: "Verified", partial: "Partly done", failed: "Failing", blocked: "Blocked", "not checked": "Not checked" }
     const STEP_ICON = { pass: "✓", fail: "!", blocked: "×", skipped: "–", built: "○", "not started": "", next: "›", building: "…" }
     // A builder at work: its run, steps so far, minutes and latest tool (live, from the loop)
     const buildingTag = (b) => `building · run ${b.attempt}`

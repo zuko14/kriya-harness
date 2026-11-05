@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, readdirSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 import { checkpoint } from "./checkpoints.js"
-import { classify } from "./failure.js"
+import { classify, signature } from "./failure.js"
 import { kriyaHome } from "./paths.js"
 import { noteFailure } from "./rules.js"
+import { affectedTests, blastRadius, importGraph } from "./recon.js"
+import { hasBoundaryTest, newSurface, reviewDiff, sentinel } from "./sentinel.js"
 import { projectRoot } from "./skill-switches.js"
+import { isSource, ladder, silencers, weakenedTest } from "./strict.js"
 
 // The Kriya loop's verify step (H14a, docs/kriya-harness/KRIYA_LOOP.md in
 // the Kriya repository). "Passed" comes only from the exit code of the
@@ -26,6 +29,8 @@ import { projectRoot } from "./skill-switches.js"
 
 export const MAX_ATTEMPTS = 4 // the first try and 3 fixes (KRIYA_LOOP.md §1, (5))
 export const OUTPUT_LIMIT = 4000
+// What a failed run keeps of its output (loop guard), so a resumed step's next builder still sees it
+const KEPT_OUTPUT = 2500
 const COMMAND_LIMIT = 500
 const STEP = /^[\p{L}\p{N}][\p{L}\p{N} ._:/#()-]{0,79}$/u
 
@@ -280,6 +285,106 @@ export async function onOriginals(cwd, paths, run) {
   }
 }
 
+/* ───────────────────────────── the strict loop ─────────────────────── */
+
+const gitRoot = async (cwd) => (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim()
+const fileNow = (file) => (existsSync(file) ? readFileSync(file, "utf8") : null)
+const refusal = (kind, command, output) => ({ exitCode: 1, timedOut: false, output, command, kind, own: true })
+
+// `a/*` and `a/**` match below a folder; anything else is one path
+const matches = (pattern, rel) => (/\*+$/.test(pattern) ? rel.startsWith(pattern.replace(/\*+$/, "")) : rel === pattern)
+
+/**
+ * What fails a step before the person's check runs (strict loop): a broken
+ * invariant, a weakened test, a silenced compiler, then the ladder's fast
+ * rungs. Each can only fail: a pass still needs the confirmed check. Against
+ * HEAD, so outside a repository none of this applies.
+ * @returns {Promise<undefined | { exitCode: number | null, timedOut: boolean, output: string, command: string, kind?: string, level?: number }>}
+ */
+async function strictBefore(cwd, plan, work, run, defensive) {
+  const root = await gitRoot(cwd)
+  if (!root || !work?.changed.length) return undefined
+  const head = (rel) => git(root, ["show", `HEAD:${rel}`])
+  const hit = work.changed.find((rel) => plan?.invariants?.some((p) => matches(p, rel)))
+  if (hit) return refusal("invariant broken", "the plan's invariants", `${hit} must not change in this task (the plan's invariants). Put it back and solve this another way.`)
+  const checks = new Set(checkFiles(work.changed))
+  for (const rel of checks) {
+    const before = await head(rel)
+    const why = before !== null && !/(package\.json|Makefile|makefile|\.toml|\.ini|\.cfg|go\.mod|deno\.jsonc?|\.config\.[^/]+|\.mocharc[^/]*)$/.test(rel) && weakenedTest(before, fileNow(join(root, rel)))
+    if (why) return refusal("tests changed", "the test files", `${rel} was weakened: ${why}. Put the test back and fix the code; adding tests is fine.`)
+  }
+  for (const rel of work.changed.filter((f) => isSource(f) && !checks.has(f))) {
+    const now = fileNow(join(root, rel))
+    const added = now === null ? [] : silencers(await head(rel), now)
+    if (added.length) return refusal("silenced", "the changed source", `${rel} adds ${added.join(" and ")} to get past a check. Fix the cause instead.`)
+  }
+  const tests = affectedTests(root, work.changed)
+  let neighbours = []
+  if (defensive) {
+    const graph = importGraph(root)
+    const diffs = await diffsOf(root, work.changed)
+    const found = sentinel(diffs, { tenancy: graph.files.some((rel) => /\bwithUser\(/.test(graph.text(rel))) })
+    if (found.length) return refusal("invariant violated", "the invariant sentinel", findings(found.map((f) => `${f.file}:${f.line} [${f.rule}] ${f.why}`)))
+    // The neighbours' suites too: the work isn't done if it passes here and breaks there
+    neighbours = blastRadius(graph, diffs).tests.filter((rel) => !tests.includes(rel))
+  }
+  for (const rung of ladder(root, work.changed, tests, neighbours)) {
+    const result = await run(rung.command)
+    if (result.aborted) throw new VerifyError("The check was stopped.")
+    if (result.exitCode === 0 && !result.timedOut) continue
+    // A type error in a file this work never touched is older than it
+    if (rung.names && !rung.names.some((rel) => result.output.includes(rel))) continue
+    return { ...result, command: rung.command, level: rung.level, ...(rung.kind && { kind: rung.kind }) }
+  }
+  return undefined
+}
+
+const diffsOf = async (root, changed) =>
+  Promise.all(changed.map(async (rel) => ({ rel, before: await git(root, ["show", `HEAD:${rel}`]), after: fileNow(join(root, rel)) })))
+
+const findings = (lines) => `${lines.slice(0, 12).join("\n")}${lines.length > 12 ? `\n… ${lines.length - 12} more` : ""}`
+
+/**
+ * Before a plan can read verified (defensive): the whole diff against code it
+ * didn't touch, a bad-input test for anything new, and each pre-mortem claim
+ * backed by the test it named.
+ */
+async function defensiveAfter(cwd, plan, work) {
+  const root = await gitRoot(cwd)
+  if (!root || !work?.changed.length) return undefined
+  const diffs = await diffsOf(root, work.changed)
+  const hazards = reviewDiff(importGraph(root), diffs)
+  if (hazards.length) return refusal("regression hazard", "the diff review", findings(hazards.map((h) => `${h.file}${h.line ? `:${h.line}` : ""} [${h.hazard}] ${h.why}`)))
+  const surface = newSurface(diffs)
+  if (surface.length && !hasBoundaryTest(diffs)) return refusal("no negative test", "the diff review", `${surface[0]} adds something callers can reach, and no added test tries a bad input (invalid, empty, unauthorized, a boundary). Add one that shows it fails cleanly.`)
+  const open = plan?.premortem?.failures.find((f) => !existsSync(join(root, f.coveredBy)))
+  if (open) return refusal("premortem open", "the pre-mortem", `"${open.what}" was to be covered by ${open.coveredBy}, which doesn't exist. Write that test.`)
+  return undefined
+}
+
+/** What fails a passing step afterwards: the plan's acceptance commands, and a bug fix with no proof of the bug */
+async function strictAfter(cwd, sessionId, plan, work, check, run, defensive, finishing) {
+  for (const command of plan?.acceptance ?? []) {
+    const result = await run(command)
+    if (result.aborted) throw new VerifyError("The check was stopped.")
+    if (result.exitCode !== 0 || result.timedOut) return { ...result, command, kind: "acceptance" }
+  }
+  if (defensive && finishing) {
+    const late = await defensiveAfter(cwd, plan, work)
+    if (late) return late
+  }
+  if (plan?.kind !== "surgical_bugfix") return undefined
+  const code = (work?.changed ?? []).filter((rel) => !checkFiles([rel]).length)
+  if (!code.length) return undefined
+  // The red phase, proved: on the code as it was, the check (with any new test) must fail
+  const kept = await checkpoint(cwd, sessionId, "before the check on the old code").catch(() => undefined)
+  const old = kept && (await onOriginals(cwd, code, () => run(check.command)))
+  if (old?.aborted) throw new VerifyError("The check was stopped.")
+  if (old?.exitCode === 0 && !old.timedOut)
+    return refusal("no reproduction", check.command, "The check also passes on the code before your change, so nothing proves the bug or its fix. Add a test that fails on the old code and passes on the new.")
+  return undefined
+}
+
 /* ───────────────────────────── progress ───────────────────────────── */
 
 const projectKey = (root) => createHash("sha256").update(root).digest("hex").slice(0, 16)
@@ -302,12 +407,14 @@ export function readProgress(root, sessionId) {
 }
 
 /**
- * The session's verdict, from its runs alone. A step that failed its
- * MAX_ATTEMPTS-th run is blocked; otherwise each step's last run decides.
+ * The session's verdict, from its runs and plan. A step that failed its
+ * MAX_ATTEMPTS-th run, or that the loop guard stopped as stalled, is blocked;
+ * otherwise each step's last run decides. With a plan, "verified" needs every
+ * step of it passed: passes with steps still open are "partial", never verified.
  * With `current` (the work's fingerprint now, U8): "verified" holds only for
  * the files the last run saw; changed since, it's "not checked" and stale.
  * `touched`: test or check files the last passing run's work had changed.
- * @returns {{ status: "verified" | "failed" | "blocked" | "not checked", stale?: true, touched?: string[], steps: Array<{ step: string, status: "pass" | "fail" | "blocked", attempts: number, failures: number }> }}
+ * @returns {{ status: "verified" | "partial" | "failed" | "blocked" | "not checked", stale?: true, touched?: string[], steps: Array<{ step: string, status: "pass" | "fail" | "blocked", attempts: number, failures: number }> }}
  */
 export function verdict(progress, current) {
   const steps = new Map()
@@ -319,16 +426,19 @@ export function verdict(progress, current) {
       step: run.step,
       attempts: prev.attempts + 1,
       failures,
-      status: run.status === "pass" ? "pass" : failures >= MAX_ATTEMPTS ? "blocked" : "fail",
+      status: run.status === "pass" ? "pass" : failures >= MAX_ATTEMPTS || run.stalled ? "blocked" : "fail",
     })
   }
   const list = [...steps.values()]
+  const open = progress.plan?.steps.some((_, i) => steps.get(stepLabel(progress.plan, i + 1))?.status !== "pass")
   const status = !list.length
     ? "not checked"
     : list.some((s) => s.status === "blocked")
       ? "blocked"
       : list.every((s) => s.status === "pass")
-        ? "verified"
+        ? open
+          ? "partial"
+          : "verified"
         : "failed"
   const last = progress.runs.at(-1)
   const touched = progress.runs.findLast((r) => r.status === "pass")?.touched
@@ -381,13 +491,18 @@ export const normalStep = (step) => {
   return text
 }
 
+/** The step label kriya_verify records runs under: "<n> <title>", within its limits */
+export const stepLabel = (plan, n) => normalStep(`${n} ${plan.steps[n - 1].title}`.replace(/[^\p{L}\p{N} ._:/#()-]/gu, " ").replace(/\s+/g, " ").slice(0, 80).trim())
+
 /**
  * Runs the project's confirmed check for one step and records it.
- * @param {{ cwd: string, sessionId: string, step?: string, run: (command: string) => Promise<{ exitCode: number | null, timedOut: boolean, aborted?: boolean, output: string }>, now?: () => Date, tree?: (cwd: string) => Promise<{ fingerprint: string, changed: string[] } | undefined>, v2?: { readOnly?: boolean } }} input
+ * @param {{ cwd: string, sessionId: string, step?: string, run: (command: string) => Promise<{ exitCode: number | null, timedOut: boolean, aborted?: boolean, output: string }>, now?: () => Date, tree?: (cwd: string) => Promise<{ fingerprint: string, changed: string[] } | undefined>, v2?: { readOnly?: boolean }, guard?: boolean }} input
  *   run executes the command under the session's own sandbox (the tool passes DSH's shell)
  *   v2 (loop v2, KRIYA_LOOP_V2=on): a failure's class and excerpt, a pass that changed tests re-run on the originals, repeated failures proposed as rules
+ *   guard (KRIYA_LOOP_GUARD=on): a failure's class and excerpt too, with its signature, and the excerpt kept in the run so a resumed step can use it
+ *   strict (KRIYA_STRICT_LOOP=on): the checks of strictBefore and strictAfter around the person's check; never in Read only
  */
-export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree, v2 }) {
+export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree, v2, guard, strict }) {
   const label = normalStep(step)
   const check = confirmedCheck(cwd)
   if (!check) return { status: "not configured", step: label, suggestions: discoverChecks(cwd) }
@@ -397,26 +512,38 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
   // files, e.g. a build, doesn't make its own pass stale)
   const work = await tree(cwd)
   const started = now()
-  const result = await run(check.command)
+  const hard = strict && !strict.readOnly
+  const plan = hard ? readProgress(check.root, sessionId).plan : undefined
+  const early = hard ? await strictBefore(cwd, plan, work, run, strict.defensive) : undefined
+  const result = early ?? (await run(check.command))
   if (result.aborted) throw new VerifyError("The check was stopped.")
   const passes = (r) => r.exitCode === 0 && !r.timedOut
   let status = passes(result) ? "pass" : "fail"
   let touched = work && status === "pass" ? checkFiles(work.changed) : []
-  // v2: a pass that changed tests or the check's files must hold on the originals too
+  // v2 and strict: a pass that changed tests or the check's files must hold on the originals too
   let checked = result
   let weakened
-  if (v2 && !v2.readOnly && touched.length) {
+  if (((v2 && !v2.readOnly) || hard) && touched.length) {
     // The work's own files are saved first, so a crash mid-swap loses nothing (kriya undo); no save, no swap
     const kept = await checkpoint(cwd, sessionId, "before the check on the committed tests").catch(() => undefined)
     const originals = kept && (await onOriginals(cwd, touched, () => run(check.command)))
     if (originals?.aborted) throw new VerifyError("The check was stopped.")
     if (originals && !passes(originals)) [status, checked, weakened, touched] = ["fail", originals, touched, []]
   }
-  const failure = v2 && status === "fail" ? (weakened ? { kind: "tests changed", excerpt: classify(checked).excerpt } : classify(checked)) : undefined
+  if (hard && status === "pass") {
+    // The whole diff is reviewed when this pass could finish the work: a plan's last open step, or no plan
+    const open = plan ? plan.steps.filter((_, i) => verdict(readProgress(check.root, sessionId)).steps.find((s) => s.step === stepLabel(plan, i + 1))?.status !== "pass" && stepLabel(plan, i + 1) !== label) : []
+    const late = await strictAfter(cwd, sessionId, plan, work, check, run, strict.defensive, !open.length)
+    if (late) [status, checked, touched] = ["fail", late, []]
+  }
+  // A refusal's words are its whole output; a rung's error is cut like any other
+  const classified = () => (checked.own ? { kind: checked.kind, excerpt: checked.output } : weakened ? { kind: "tests changed", excerpt: classify(checked).excerpt } : { ...classify(checked), ...(checked.kind && { kind: checked.kind }) })
+  const failure = (v2 || guard) && status === "fail" ? classified() : undefined
+  const sig = guard && failure ? createHash("sha256").update(signature(check.command, failure)).digest("hex").slice(0, 16) : undefined
   const progress = recordRun(check.root, sessionId, {
     at: started.toISOString(),
     step: label,
-    command: check.command,
+    command: checked.command ?? check.command,
     status,
     exitCode: checked.exitCode,
     timedOut: checked.timedOut,
@@ -425,8 +552,10 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     ...(touched.length && { touched }),
     ...(failure && { kind: failure.kind }),
     ...(weakened && { weakened }),
+    ...(sig && { sig, excerpt: failure.excerpt.slice(0, KEPT_OUTPUT) }),
+    ...(checked.level && { level: checked.level }),
   })
-  const proposed = failure && noteFailure(check.root, check.command, failure, now)
+  const proposed = (v2 || strict) && failure && noteFailure(check.root, check.command, failure, now)
   const after = verdict(progress)
   const mine = after.steps.find((s) => s.step === label)
   return {
@@ -434,7 +563,7 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     step: label,
     attempts: mine.attempts,
     attemptsLeft: mine.status === "fail" ? MAX_ATTEMPTS - mine.failures : 0,
-    command: check.command,
+    command: checked.command ?? check.command,
     exitCode: checked.exitCode,
     timedOut: checked.timedOut,
     output: status === "pass" ? "" : failure ? failure.excerpt : trimOutput(result.output),
@@ -443,6 +572,80 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     ...(failure && { failure: failure.kind }),
     ...(weakened && { weakened }),
     ...(proposed && { proposed: proposed.text }),
+    ...(sig && { signature: sig }),
+  }
+}
+
+/**
+ * Loop guard: the last failed run stopped the step early, so the step is
+ * blocked though it has attempts left. Marked on the run, so the verdict and
+ * every later read agree; the reason says why more builders can't help.
+ */
+export function markStalled(root, sessionId, reason) {
+  const progress = readProgress(root, sessionId)
+  const run = progress.runs.at(-1)
+  if (run) run.stalled = reason
+  return verdict(writeProgress(root, sessionId, progress))
+}
+
+/** What a session's records say happened, in numbers: the bench's and KRHE's view of a run */
+export function trajectory(progress) {
+  const { steps } = verdict(progress)
+  const failedRuns = progress.runs.filter((r) => r.status !== "pass")
+  const classes = {}
+  for (const run of failedRuns) if (run.kind) classes[run.kind] = (classes[run.kind] ?? 0) + 1
+  const planned = progress.plan?.steps.length ?? 0
+  const passed = steps.filter((s) => s.status === "pass").length
+  return {
+    plans: (progress.earlier?.length ?? 0) + (progress.plan ? 1 : 0),
+    planned,
+    // Plan steps with no pass and no block: work the session left undone
+    open: progress.plan ? progress.plan.steps.filter((_, i) => !["pass", "blocked"].includes(steps.find((s) => s.step === stepLabel(progress.plan, i + 1))?.status)).length : 0,
+    passed,
+    blocked: steps.filter((s) => s.status === "blocked").length,
+    // Steps that failed at least once and then passed
+    recovered: steps.filter((s) => s.status === "pass" && s.failures > 0).length,
+    checkRuns: progress.runs.length,
+    failedRuns: failedRuns.length,
+    stalled: failedRuns.filter((r) => r.stalled).length,
+    builders: progress.builders?.length ?? 0,
+    builderSteps: (progress.builders ?? []).reduce((n, b) => n + (b.steps ?? 0), 0),
+    interrupted: Object.values(progress.interrupted ?? {}).reduce((n, c) => n + c, 0),
+    rollbacks: progress.rollbacks ?? 0,
+    // Failures the fast rungs caught before the full check ran
+    earlyFailures: failedRuns.filter((r) => r.level).length,
+    peakTokens: Math.max(0, ...(progress.builders ?? []).map((b) => b.tokens ?? 0)),
+    classes,
+  }
+}
+
+/** This project's newest session with a record (the one `kriya verify status` reports), or `sessionId`'s */
+export function latestSession(cwd, sessionId) {
+  if (sessionId) return sessionId
+  const root = confirmedCheck(cwd)?.root ?? projectRoot(cwd)
+  const dir = dirname(progressFiles(root, "x").json)
+  const names = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : []
+  // The parent's record, not a builder's: a plan first, then the newest
+  const rows = names.map((f) => ({ id: f.slice(0, -5), at: statSync(join(dir, f)).mtimeMs, plan: Boolean(readProgress(root, f.slice(0, -5)).plan) }))
+  return rows.sort((a, b) => Number(b.plan) - Number(a.plan) || b.at - a.at)[0]?.id
+}
+
+/** Where a session stands, with its evidence: the verdict on the files as they are now, each step, each run */
+export async function sessionReport(cwd, sessionId) {
+  const id = latestSession(cwd, sessionId)
+  if (!id) return { status: "not checked", steps: [], runs: [], trajectory: null }
+  const root = confirmedCheck(cwd)?.root ?? projectRoot(cwd)
+  const progress = readProgress(root, id)
+  const now = await currentVerdict(cwd, id)
+  return {
+    session: id,
+    status: now.status,
+    ...(now.stale && { stale: true }),
+    ...(now.touched && { touched: now.touched }),
+    goal: progress.plan?.goal ?? null,
+    steps: now.steps,
+    runs: progress.runs.map((r) => ({ at: r.at, step: r.step, status: r.status, exitCode: r.exitCode ?? null, command: r.command, ...(r.kind && { kind: r.kind }), ...(r.stalled && { stalled: r.stalled }) })),
+    trajectory: trajectory(progress),
   }
 }
 

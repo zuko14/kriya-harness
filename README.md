@@ -196,6 +196,50 @@ undo --list`); a failure seen twice is proposed as a rule, which the agent
 sees only after `kriya rules confirm <number>`. No extra model calls; not
 yet measured on a real model. Without `--loop-v2` the loop is exactly v1.
 
+Loop guard (beta, off; `kriya --loop-guard`, `kriya run --loop-guard`,
+`KRIYA_LOOP_GUARD=on`): an agent that stops with plan steps still to do is
+sent back (once per step, from the records, never from what it says); a step
+stops after the same failure twice with no file changed, or when the check
+can't run on this machine, instead of spending all four builders; a builder
+that died on an error before changing a file isn't counted as an attempt
+(at most twice per step); and a step resumed after a crash starts from its
+last recorded failure. No extra model calls of its own; not yet measured on a
+real model.
+
+Strict coding loop (beta, off; `--strict-loop`, `KRIYA_STRICT_LOOP=on`; includes
+the loop guard): `kriya_plan` takes a task contract (`kind`, `invariants`,
+`acceptance`), and a `surgical_bugfix` has at most 2 steps. Each check runs
+cheapest first: parsing changed files, then `tsc` when the project has it, then
+the tests that import what changed, then your confirmed check. These can only
+fail a step: passing still means your check exited 0. A weakened or deleted
+test, an added `any`, `@ts-ignore` or empty catch, or a changed invariant is
+refused; adding tests is fine. A bug fix must fail on the old code. Two attempts
+in a row that break the build undo the step's files, and a blocked step leaves
+them as they were (the attempts stay in `kriya undo --list`). Needs a git
+repository.
+
+Defensive engine (beta, off; `--defensive`, `KRIYA_DEFENSIVE=on`; brings the
+strict loop): a plan of two or more steps needs a `premortem` (failure hypotheses,
+each naming the test that proves it can't happen; the blast radius; bad inputs).
+Before tests run, added lines are checked for tenant bypasses, SQL built from
+strings, money in floats, identity taken from the request and secrets. Tests of
+code the change can reach run after its own. Before a pass, the diff is reviewed
+for broken callers, changed defaults and promises nobody awaits, and anything new
+needs a test with a bad input. All fixed rules, no model; expect false alarms on
+about 6% of commits, and minutes of extra tests on heavily shared files.
+
+Reconnaissance (beta, off; `--recon`, `KRIYA_RECON=on`): `code_outline` lists a
+file's symbols, `code_impact` lists what imports it (both by fixed patterns, not
+a parser), and one read takes at most 400 lines. Just-in-time tools (beta, off;
+`--jit-tools`, `KRIYA_JIT_TOOLS=on`): a step's builder gets browser and reverse
+engineering tools only when the step's words call for them, and a hint of the
+skills that fit. None of these is measured on a real model.
+
+`kriya verify status [--session <id>] [--json]` reports where the newest
+session in this folder stands, with each check run as evidence: `verified`
+(every plan step passed), `partial` (passes, but plan steps still open),
+`not checked`, `failed` or `blocked`. It exits 0 only when verified.
+
 Model limits (harness upgrade U3): when Kriya reports a tier's context
 window and output cap (`GET /models`), the tier declares them to DeepSeek
 Harness, capped at a 262,144-token working window, so compaction starts

@@ -54,7 +54,10 @@ test("WP-PG-01: plan, step statuses, runs newest first and the verdict come from
     ]
   )
   assert.equal(body.runs[1].kind, "assertion")
-  assert.deepEqual(body.verdict, { status: "verified" })
+  // Step 2 hasn't run, so one step's pass isn't the plan's
+  assert.deepEqual(body.verdict, { status: "partial" })
+  await verifyStep({ cwd: dir, sessionId: "s1", step: "2 Render", run: run(0) })
+  assert.deepEqual((await (await answer(route, request("s1"))).json()).verdict, { status: "verified" })
   // A change after the pass: the verdict is stale, from the files' fingerprint
   writeFileSync(join(dir, "a.js"), "2\n")
   const later = await (await answer(route, request("s1"))).json()

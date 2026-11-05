@@ -20,7 +20,7 @@ export const CLASSES = [
 ]
 
 // The order a fix can move through: lower is further from passing
-export const RANK = { timeout: 0, environment: 0, syntax: 1, type: 2, unknown: 2, assertion: 3, "tests changed": 3, pass: 4 }
+export const RANK = { timeout: 0, environment: 0, syntax: 1, type: 2, unknown: 2, assertion: 3, "tests changed": 3, silenced: 3, "invariant broken": 3, acceptance: 3, "no reproduction": 3, "invariant violated": 3, "regression hazard": 3, "no negative test": 3, "premortem open": 3, pass: 4 }
 
 const EXCERPT = 2500
 

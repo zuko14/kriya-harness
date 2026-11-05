@@ -81,6 +81,18 @@ export const SEAMS = [
     must: [/No built-in turn budget/],
     users: "plugins/budget: if DSH adds one, compare and drop ours (KU-ADR-04)",
   },
+  {
+    seam: "a child agent can be told from its owner and its tools masked before its first step",
+    file: "dsh-agent/lib/index.js",
+    must: [/isOwnedBy\(id, owner\)/],
+    users: "plugins/loop (--jit-tools)",
+  },
+  {
+    seam: "tools.restrict masks tools on one agent's context",
+    file: "dsh-tools/lib/index.js",
+    must: [/restrict\(filter\)/],
+    users: "plugins/loop (--jit-tools)",
+  },
 ]
 
 /**

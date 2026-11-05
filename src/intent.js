@@ -61,13 +61,15 @@ export function rankSkills(query, skills) {
 // Intent classes: words that signal them, and the tools to start with (each
 // tool listed only if this agent has it), in the order to use them
 export const INTENTS = [
-  { id: "fix", label: "fix a failure", words: ["bug", "error", "fail", "failing", "broken", "crash", "fix", "exception", "regression", "wrong", "doesn't", "not working", "issue"], tools: [["kriya_verify", "reproduce the failure first"], ["grep", "find where it happens"], ["read", "read the code"], ["edit", "fix the cause once"]] },
-  { id: "build", label: "build something new", words: ["add", "build", "implement", "create", "feature", "support", "new", "make"], tools: [["kriya_plan", "plan it if it has several parts"], ["glob", "see how the project is laid out"], ["read", "follow the existing patterns"], ["write", "add files"], ["edit", "change files"]] },
-  { id: "test", label: "tests", words: ["test", "tests", "coverage", "spec", "tdd", "unit"], tools: [["kriya_verify", "run the project's check"], ["read", "read the existing tests"]] },
-  { id: "refactor", label: "restructure code", words: ["refactor", "rename", "clean", "simplify", "migrate", "move", "split", "extract", "reorganize"], tools: [["grep", "find every caller first"], ["kriya_plan", "plan it in checkable steps"], ["edit", "change files"]] },
-  { id: "web", label: "a web page or UI", words: ["page", "ui", "button", "form", "css", "layout", "frontend", "browser", "localhost", "react", "component", "screen", "style", "html"], tools: [["browser_open", "open the running app"], ["browser_read", "see its text and elements"], ["browser_screenshot", "see its layout"], ["browser_console", "check for errors"]] },
+  { id: "fix", label: "fix a failure", words: ["bug", "error", "fail", "failing", "broken", "crash", "fix", "exception", "regression", "wrong", "doesn't", "not working", "issue"], tools: [["kriya_verify", "reproduce the failure first"], ["grep", "find where it happens"], ["read", "read the code"], ["edit", "fix the cause once"]], loop: "reproduce, find the cause, fix it once, re-run, check nothing else broke" },
+  { id: "build", label: "build something new", words: ["add", "build", "implement", "create", "feature", "support", "new", "make"], tools: [["kriya_plan", "plan it if it has several parts"], ["glob", "see how the project is laid out"], ["read", "follow the existing patterns"], ["write", "add files"], ["edit", "change files"]], loop: "build the smallest working part, run it, test it, repair, re-test" },
+  { id: "test", label: "tests", words: ["test", "tests", "coverage", "spec", "tdd", "unit"], tools: [["kriya_verify", "run the project's check"], ["read", "read the existing tests"]], loop: "write a test that fails for the right reason, make it pass, run them all" },
+  { id: "refactor", label: "restructure code", words: ["refactor", "rename", "clean", "simplify", "migrate", "move", "split", "extract", "reorganize"], tools: [["grep", "find every caller first"], ["kriya_plan", "plan it in checkable steps"], ["edit", "change files"]], loop: "change one thing, run the check, then the next" },
+  { id: "web", label: "a web page or UI", words: ["page", "ui", "button", "form", "css", "layout", "frontend", "browser", "localhost", "react", "component", "screen", "style", "html"], tools: [["browser_open", "open the running app"], ["browser_read", "see its text and elements"], ["browser_screenshot", "see its layout"], ["browser_console", "check for errors"]], loop: "render it, look at it, name what's wrong, fix that, look again; judge from the page, not the code" },
   { id: "review", label: "review", words: ["review", "pr", "pull request", "diff", "audit", "check my"], tools: [["bash", "git diff to see the change"], ["read", "read the connected code"]] },
   { id: "explain", label: "explain or find", words: ["explain", "what", "how", "why", "understand", "where", "find", "show", "describe", "overview"], tools: [["glob", "see the layout"], ["grep", "find the place"], ["read", "read it"]] },
+  { id: "research", label: "research", words: ["research", "investigate", "compare", "sources", "evidence", "survey"], tools: [["grep", "search what's here first"], ["read", "read the primary source"]], loop: "split the question, read primary sources, cross-check each claim, then write; mark what stayed unverified" },
+  { id: "data", label: "data analysis", words: ["analyze", "analyse", "dataset", "csv", "spreadsheet", "statistics", "aggregate"], tools: [["read", "inspect the data first"], ["bash", "compute, don't estimate"]], loop: "inspect the data, transform it, compute, sanity-check totals, then report" },
   { id: "git", label: "git", words: ["commit", "branch", "push", "merge", "rebase", "git", "stash", "cherry-pick"], tools: [["bash", "git status first; ask before commit or push"]] },
   { id: "security", label: "security", words: ["auth", "login", "password", "token", "secret", "injection", "xss", "csrf", "security", "permission", "vulnerab"], tools: [["grep", "find where untrusted input enters"], ["read", "follow it"]] },
 ]
@@ -93,7 +95,9 @@ export function classify(request) {
 }
 
 const MAX_SKILLS = 4
-export const MAX_BRIEF = 700
+export const MAX_BRIEF = 900
+// A request this short, in one line, is rarely several parts
+const SMALL = 160
 
 /**
  * The brief for one request, or "" when nothing is worth saying.
@@ -116,6 +120,8 @@ export function brief(request, skills, toolNames) {
   if (!picked.length && !tools.length) return ""
   const lines = ["Routing for this request, chosen by Kriya Harness from its words (a hint, not a rule):"]
   if (intents.length) lines.push(`Intent: ${intents.map((i) => i.label).join("; ")}.`)
+  if (intents[0]?.loop) lines.push(`Way of working: ${intents[0].loop}.`)
+  if (have.has("kriya_plan") && intents.length && request.length <= SMALL && !request.includes("\n")) lines.push("This reads as one small change: do it directly; kriya_plan is for several parts.")
   if (picked.length) lines.push(`Skills likely to help: ${picked.join(", ")}.${have.has("skill") ? " Load the ones that fit with the skill tool before you start." : ""}`)
   if (tools.length) lines.push(`Start with: ${tools.map(([name, why]) => `${name} (${why})`).join(", ")}.`)
   if (have.has("kriya_verify") && intents.some((i) => ["fix", "build", "test", "refactor"].includes(i.id))) lines.push("Finish with kriya_verify: only its result says the work passes.")

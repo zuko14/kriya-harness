@@ -10,7 +10,7 @@ import { daemonPidFile, runDaemon, serviceDefinition } from "../src/daemon.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
 import { CheckpointError, listCheckpoints, trackedRoot, undo } from "../src/checkpoints.js"
-import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, VerifyError } from "../src/verify.js"
+import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, sessionReport, VerifyError } from "../src/verify.js"
 import { projectRoot, setSkillSwitch, SwitchError } from "../src/skill-switches.js"
 import { confirmRule, dismissRule, forgetRule, listRules, RulesError } from "../src/rules.js"
 import { login } from "../src/login.js"
@@ -25,9 +25,9 @@ const HELP = `Kriya Harness (beta)
 
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
-  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--no-browser-tools] [--router] [--no-budget] [--anchor] [--no-open] [--port <n>]
+  kriya [--mode <mode>] [--no-loop] [--loop-v2] [--loop-guard] [--strict-loop] [--defensive] [--recon] [--jit-tools] [--no-browser-tools] [--router] [--no-budget] [--anchor] [--no-open] [--port <n>]
                         open the agent in your browser (local, 127.0.0.1)
-  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--no-browser-tools] [--router] [--no-budget] [--anchor] "<job>"
+  kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--loop-guard] [--strict-loop] [--defensive] [--recon] [--jit-tools] [--no-browser-tools] [--router] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
   kriya usage [--json]  this month's Kriya Harness spend and limit
@@ -63,6 +63,9 @@ Usage:
                         confirm the check the agent runs (the Kriya loop): its exit
                         code alone says whether the work passes
   kriya verify clear    forget this project's check
+  kriya verify status [--session <id>] [--json]
+                        where the newest session here stands, with each check
+                        run as evidence; exits 0 only when verified
   kriya undo            put this repository's files back one step (with the loop
                         the agent saves a checkpoint before each change)
   kriya undo --list     the checkpoints, newest first
@@ -285,6 +288,17 @@ async function main(argv) {
         say(clearCheck(process.cwd()) ? "Forgot this project's check; work here is \"not checked\" again." : "This project had no check.")
         return 0
       }
+      if (action === "status") {
+        const json = rest.includes("--json")
+        const report = await sessionReport(process.cwd(), option(rest, "--session"))
+        if (json) say(JSON.stringify(report))
+        else {
+          say(`Verdict: ${report.status}${report.stale ? " (files changed since the last pass)" : ""}${report.session ? ` (session ${report.session})` : ""}`)
+          for (const s of report.steps) say(`  ${s.status.padEnd(7)} ${s.step} (${s.attempts} run${s.attempts === 1 ? "" : "s"})`)
+          for (const r of report.runs) say(`  ${r.at} ${r.step}: ${r.status}, exit ${r.exitCode ?? "none"}${r.kind ? `, ${r.kind}` : ""}${r.stalled ? `, stopped: ${r.stalled}` : ""} \`${r.command}\``)
+        }
+        return report.status === "verified" ? 0 : 1
+      }
       if (action !== undefined) {
         say(`Unknown verify command ${action}.\n\n${HELP}`)
         return 1
@@ -483,6 +497,16 @@ async function main(argv) {
     case "--no-loop":
     case "--loop-v2":
     case "--no-loop-v2":
+    case "--loop-guard":
+    case "--no-loop-guard":
+    case "--strict-loop":
+    case "--no-strict-loop":
+    case "--defensive":
+    case "--no-defensive":
+    case "--recon":
+    case "--no-recon":
+    case "--jit-tools":
+    case "--no-jit-tools":
     case "--browser-tools":
     case "--no-browser-tools":
     case "--router":
