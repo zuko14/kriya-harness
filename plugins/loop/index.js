@@ -2,7 +2,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm"
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
-import { builderLimits, loopStateText, MAX_STEPS, planStatus, runStep, savePlan } from "../../src/loop.js"
+import { builderLimits, loopStateText, MAX_STEPS, planStatus, readPlan, runStep, savePlan, seededPlan, writeSnapshot } from "../../src/loop.js"
 import { confirmedRules } from "../../src/rules.js"
 import { confirmedCheck, currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 
@@ -193,8 +193,13 @@ export function planTool(host) {
       if (!exec.agent) throw new VerifyError("kriya_plan needs a session.")
       if (host.isBuilder(exec)) throw new VerifyError("A step's builder doesn't plan; build your step and stop.")
       const cwd = await host.cwd(exec)
-      savePlan(cwd, String(exec.agent.id), args, undefined, { v2: Boolean(host.v2) })
-      return { steps: planStatus(cwd, String(exec.agent.id)), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }) }
+      const id = String(exec.agent.id)
+      const seed = seededPlan()
+      // The person drew this plan in Kriya Flows: it isn't the model's to change
+      if (seed && readPlan(cwd, id)) throw new VerifyError("The person set this plan in Kriya. Run its steps with kriya_step; it can't be replanned here.")
+      savePlan(cwd, id, seed ?? args, undefined, { v2: Boolean(host.v2) })
+      writeSnapshot(cwd, id)
+      return { steps: planStatus(cwd, id), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }) }
     },
     presentCall: (args) => ({ card: "generic", title: "Plan", kind: "think", rawInput: typeof args.goal === "string" ? args.goal : "" }),
   })
@@ -237,16 +242,21 @@ export function stepTool(host) {
       if (!exec.agent) throw new VerifyError("kriya_step needs a session.")
       if (host.isBuilder(exec)) throw new VerifyError("A step's builder doesn't run steps; build your step and stop.")
       const cwd = await host.cwd(exec)
-      return runStep({
+      const id = String(exec.agent.id)
+      const n = Math.trunc(Number(args.step))
+      writeSnapshot(cwd, id, { current: n })
+      const result = await runStep({
         cwd,
-        sessionId: String(exec.agent.id),
-        n: Math.trunc(Number(args.step)),
+        sessionId: id,
+        n,
         hasCheck: Boolean((host.checked ?? confirmedCheck)(cwd)),
         ...(host.limits && { limits: host.limits }),
         spawn: (prompt, label, live) => host.spawn(exec, prompt, label, live),
         verify: (label) => host.verify(exec, cwd, label),
         ...(host.steps && { v2: host.steps(exec, cwd) }),
       })
+      writeSnapshot(cwd, id)
+      return result
     },
     presentCall: (args) => ({ card: "generic", title: "Build and check a step", kind: "execute", rawInput: `step ${args.step}` }),
   })

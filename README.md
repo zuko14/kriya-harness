@@ -145,7 +145,7 @@ that off.
 
 Web UI tabs (right sidebar): **Overview** (this computer, the folder, the
 GitHub repository and branch, context and usage, changes, background tasks,
-connectors), **Progress** (goal → plan → build → verify → done from the
+connectors), **Graph** (the plan as a graph, from what really ran), **Progress** (goal → plan → build → verify → done from the
 loop's own check runs) and **Preview** (an app on this computer, localhost
 only, in a frame).
 

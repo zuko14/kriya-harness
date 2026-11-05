@@ -221,6 +221,12 @@
     - id: kriya-preview
       name: '@kriya-ai/harness-preview'
 
+# The Graph tab (plugins/graph): the session's plan drawn as a graph, from the
+# Progress tab's own route. Browser half only; a flow is designed in Kriya
+- insert:
+    - id: kriya-graph
+      name: '@kriya-ai/harness-graph'
+
 # Browser stage 2 (plugins/browser): the agent's browser for apps on this
 # computer (localhost only) on the installed Chrome, and the routes the
 # Preview tab's "Agent's browser" view uses. Off unless kriya was started
