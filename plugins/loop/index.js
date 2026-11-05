@@ -1,9 +1,17 @@
 import { createUserMessage } from "@deepseek-ai/dsh-llm"
 import { defineTool } from "@deepseek-ai/dsh-tools"
 
+import { execFile } from "node:child_process"
+import { existsSync } from "node:fs"
+import { extname, join, resolve } from "node:path"
+
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
-import { builderLimits, loopStateText, MAX_STEPS, planStatus, readPlan, runStep, savePlan, seededPlan, writeSnapshot } from "../../src/loop.js"
+import { rankSkills } from "../../src/intent.js"
+import { builderLimits, loopStateText, MAX_STEPS, nextStep, planStatus, readPlan, runStep, savePlan, seededPlan, writeSnapshot } from "../../src/loop.js"
+import { blastRadius, importers, importGraph, insideFolder, MAX_READ_LINES, outline, ReconError, readRefusal } from "../../src/recon.js"
 import { confirmedRules } from "../../src/rules.js"
+import { projectRoot } from "../../src/skill-switches.js"
+import { TASK_KINDS } from "../../src/strict.js"
 import { confirmedCheck, currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
 
 // The Kriya loop, node half (H14a; KRIYA_LOOP.md in the Kriya repository):
@@ -21,6 +29,17 @@ import { confirmedCheck, currentVerdict, VerifyError, verifyStep } from "../../s
 // name the steps they need, failures carry a class, a pass that changed
 // tests must hold on the originals, a worse attempt is set aside, and the
 // person's confirmed rules reach the builders. Off, everything is as v1.
+// The loop guard (KRIYA_LOOP_GUARD=on, `--loop-guard`): an agent stopping with
+// plan steps still to do is sent back; a step stops spending builders when
+// more can't help; a builder that died on an error isn't an attempt; and a
+// resumed step keeps its last failure. Off, none of it happens.
+// The strict loop (`--strict-loop`, includes the guard): the task contract,
+// the fast rungs before the person's check, weakened tests and silenced
+// compilers refused, bug fixes proved red then green, a step as one
+// transaction. Recon (`--recon`): code_outline, code_impact and bounded
+// reads. JIT tools (`--jit-tools`): a builder gets browser and reverse-
+// engineering tools only when its step needs them, and a hint of the skills
+// that fit. All off by default.
 
 export const name = "kriya-loop"
 export const inject = ["tools", "shell", "workingDirectory", "shellEnv", "systemPrompt"]
@@ -137,7 +156,7 @@ export function verifyTool(host) {
     async execute(args, exec) {
       if (!exec.agent) throw new VerifyError("kriya_verify needs a session.")
       const cwd = await host.cwd(exec)
-      const result = await verifyStep({ cwd, sessionId: String(exec.agent.id), step: args.step, run: (command) => host.run(command, exec, cwd), ...(host.v2 && { v2: host.v2(exec) }) })
+      const result = await verifyStep({ cwd, sessionId: String(exec.agent.id), step: args.step, run: (command) => host.run(command, exec, cwd), ...(host.v2 && { v2: host.v2(exec) }), ...(host.guard && { guard: true }), ...(host.strict && { strict: host.strict(exec) }) })
       const rules = host.v2 && result.status === "fail" ? confirmedRules(cwd) : []
       return rules.length ? { ...result, rules } : result
     },
@@ -162,6 +181,39 @@ const PLAN_STEP_V2 = {
   },
 }
 
+// The task contract: what kriya_plan adds under the strict loop. It can only add to what must hold
+const CONTRACT = {
+  kind: { type: "string", enum: TASK_KINDS, description: "What sort of task this is; it bounds the plan (a surgical_bugfix has at most 2 steps, and its fix must be proved red then green)." },
+  invariants: { type: "array", items: { type: "string" }, description: "Paths that must not change, e.g. db/schema.ts or migrations/*." },
+  acceptance: { type: "array", items: { type: "string" }, description: "Up to 3 commands that must also exit 0, beyond the project's check." },
+}
+
+// The pre-mortem: what kriya_plan adds under the defensive engine
+const PREMORTEM = {
+  premortem: {
+    type: "object",
+    additionalProperties: false,
+    description: "Needed for a plan of 2 or more steps: think through how this breaks before building it.",
+    properties: {
+      failures: { type: "array", items: { type: "object", additionalProperties: false, properties: { what: { type: "string", description: "One way this could crash or misbehave at run time." }, covered_by: { type: "string", description: "The test file, existing or to be written, that proves it can't happen." } } }, description: "At least 2." },
+      blast_radius: { type: "array", items: { type: "string" }, description: "Other features, tables or routes that share this surface." },
+      negatives: { type: "array", items: { type: "string" }, description: "Bad inputs to handle: nulls, empty states, boundaries, timeouts." },
+    },
+  },
+}
+
+/** What the harness itself traced from the plan's files, so the agent can compare it with what it declared */
+function traced(cwd, plan) {
+  const root = projectRoot(cwd)
+  const files = [...new Set(plan.steps.flatMap((s) => s.files))].filter((f) => existsSync(join(root, f)))
+  if (!files.length) return undefined
+  const graph = importGraph(root)
+  const r = blastRadius(graph, files.map((rel) => ({ rel, before: graph.text(rel), after: graph.text(rel) })))
+  const near = [...r.direct, ...r.transitive]
+  if (!near.length && !r.tests.length) return undefined
+  return `Traced from the plan's files: ${near.length} file${near.length === 1 ? "" : "s"} can be reached (${near.slice(0, 8).join(", ")}${near.length > 8 ? ", …" : ""}); ${r.tests.length} test file${r.tests.length === 1 ? "" : "s"} will run before any pass. If your blast_radius misses these, plan for them now.`
+}
+
 export const NO_CHECK_PLAN =
   "No check is confirmed for this project, so each step will be built but not checked. Tell the person now: " +
   "they can confirm one with `kriya verify use \"<command>\"` (for example the project's build or tests) so every step is judged."
@@ -177,6 +229,8 @@ export function planTool(host) {
     parameters: {
       goal: { type: "string", required: true, description: "What the task is for, in one sentence." },
       steps: { type: "array", required: true, items: host.v2 ? PLAN_STEP_V2 : PLAN_STEP, description: `1 to ${MAX_STEPS} ordered steps.` },
+      ...(host.strict && CONTRACT),
+      ...(host.defensive && PREMORTEM),
     },
     output: {
       schema: { type: "object", additionalProperties: true, properties: { steps: { type: "array", required: true, items: { type: "object", additionalProperties: true, properties: {} } } } },
@@ -185,7 +239,7 @@ export function planTool(host) {
           type: "text",
           text: `Plan recorded (${value.steps.length} step${value.steps.length === 1 ? "" : "s"}):\n${renderStatus(value.steps)}\nRun step 1 with kriya_step.${
             value.unchecked ? `\n${NO_CHECK_PLAN}` : ""
-          }`,
+          }${value.radius ? `\n${value.radius}` : ""}`,
         },
       ],
     },
@@ -197,9 +251,9 @@ export function planTool(host) {
       const seed = seededPlan()
       // The person drew this plan in Kriya Flows: it isn't the model's to change
       if (seed && readPlan(cwd, id)) throw new VerifyError("The person set this plan in Kriya. Run its steps with kriya_step; it can't be replanned here.")
-      savePlan(cwd, id, seed ?? args, undefined, { v2: Boolean(host.v2) })
+      savePlan(cwd, id, seed ?? args, undefined, { v2: Boolean(host.v2), strict: Boolean(host.strict), defensive: Boolean(host.defensive) })
       writeSnapshot(cwd, id)
-      return { steps: planStatus(cwd, id), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }) }
+      return { steps: planStatus(cwd, id), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }), ...(host.defensive && { radius: traced(cwd, readPlan(cwd, id)) }) }
     },
     presentCall: (args) => ({ card: "generic", title: "Plan", kind: "think", rawInput: typeof args.goal === "string" ? args.goal : "" }),
   })
@@ -210,13 +264,17 @@ function presentStep(value) {
   const lines = [head]
   if (value.status === "not checked")
     lines.push("No check is confirmed for this project, so the step was built but not checked. Tell the person; they can confirm one with `kriya verify use <number>`.")
-  if (value.status === "blocked") lines.push(`\`${value.command}\` kept failing. Stop and tell the person what failed:`, value.output)
+  if (value.status === "blocked") lines.push(`\`${value.command}\` ${value.stalled ? `was stopped early: ${value.stalled}, so more builders wouldn't help` : "kept failing"}. Stop and tell the person what failed:`, value.output)
+  if (value.status === "interrupted") lines.push("Call kriya_step for this step again; if it comes back interrupted again, stop and tell the person.")
   if (value.status === "pass" && value.verdict) lines.push(`Session verdict so far: ${value.verdict}.`)
   for (const [i, b] of (value.builders ?? []).entries())
     if (b.limit) lines.push(`Builder ${i + 1} was stopped at its limit (${b.limit}); the check ran on the files it left.`)
   const aside = value.builders?.filter((b) => b.setAside).length
   if (aside) lines.push(`${aside} attempt${aside === 1 ? " was" : "s were"} set aside for failing further from passing than an earlier one (kept in kriya undo --list).`)
   if (value.note) lines.push(value.note)
+  if (value.rolledBack) lines.push("The step's files went back to how they were before it; the attempts are kept in kriya undo --list.")
+  const rolled = value.builders?.filter((b) => b.rolledBack).length
+  if (rolled) lines.push("Attempts that broke the build were undone along the way.")
   const last = value.builders?.at(-1)?.summary
   if (last) lines.push(`The builder's own summary (not evidence): ${last}`)
   return lines.filter(Boolean).join("\n")
@@ -254,6 +312,7 @@ export function stepTool(host) {
         spawn: (prompt, label, live) => host.spawn(exec, prompt, label, live),
         verify: (label) => host.verify(exec, cwd, label),
         ...(host.steps && { v2: host.steps(exec, cwd) }),
+        ...(host.guardSteps && { guard: host.guardSteps(exec, cwd) }),
       })
       writeSnapshot(cwd, id)
       return result
@@ -294,6 +353,8 @@ export function builderGuard(limits, host = {}) {
       if (!s) return next()
       s.steps += 1
       s.live.steps = s.steps
+      const tokens = host.tokens?.(agent)
+      if (tokens > (s.live.tokens ?? 0)) s.live.tokens = tokens
       const elapsed = now() - s.started
       const reason = s.steps > limits.maxSteps ? `${limits.maxSteps} steps` : elapsed > limits.maxMinutes * 60_000 ? `${limits.maxMinutes} minutes` : null
       if (reason) {
@@ -341,14 +402,145 @@ export function recheckHook(host) {
   }
 }
 
+// The loop guard: said when an agent stops with plan steps it could still run
+export const finishNotice = (step) =>
+  `The plan isn't finished: step ${step.n} (${step.title}) is ${step.status === "fail" ? "failing" : "not started"}. ` +
+  `Run it with kriya_step. If it can't go on, say exactly why; don't report the task as done.`
+
+/**
+ * The agent/turn-stopping hook (loop guard): the records decide, never what
+ * the model says. Once per turn and step reached, so an agent that keeps
+ * stopping is asked again only after a step has moved, at most once per step.
+ * @param {{ cwd: (exec: any) => Promise<string>, readOnly?: (exec: any) => boolean, rows?: typeof planStatus, message?: (text: string) => any }} host
+ */
+export function finishHook(host) {
+  const rowsOf = host.rows ?? planStatus
+  const message = host.message ?? ((text) => createUserMessage({ content: [{ type: "text", text }], source: { kind: "kriya-loop", form: "notice", summary: "finish the plan" } }))
+  const asked = new WeakMap()
+  return async ({ agent, turn, signal }) => {
+    if (host.readOnly?.({ agent })) return
+    const cwd = await host.cwd({ agent, signal })
+    const rows = rowsOf(cwd, String(agent.id))
+    const next = nextStep(rows)
+    if (!next) return
+    const mark = `${turn}:${next.n}`
+    if (asked.get(agent) === mark) return
+    asked.set(agent, mark)
+    agent.steer(message(finishNotice(next)))
+  }
+}
+
+export const GUIDANCE_STRICT =
+  " Give kriya_plan the task contract: kind, invariants (paths that must not change) and acceptance (commands that must also exit 0). " +
+  "Each check runs cheapest first, so a syntax or type error comes back before the tests run. Tests may be added, never weakened; " +
+  "don't add any, @ts-ignore or empty catches to get past a check. A bug fix must fail on the old code: add the failing test."
+
+export const GUIDANCE_DEFENSIVE =
+  " Think before you build: ask what else this change could break and how it could fail at run time. A plan of 2 or more steps needs a premortem: " +
+  "failures (each with the test that proves it can't happen), blast_radius and negatives. Tests of neighbouring code run before any pass; the diff is " +
+  "checked for broken callers and missing awaits; anything new needs a test with a bad input."
+
+export const GUIDANCE_RECON =
+  ` Before reading a file, call code_outline for its symbols and read only the lines you need (at most ${MAX_READ_LINES} per read). Before changing something shared, call code_impact to see what imports it.`
+
+function reconTools(host) {
+  const OBJECT = { schema: { type: "object", additionalProperties: true, properties: {} } }
+  const guarded = (work) => async (args, exec) => {
+    try {
+      return await work(await host.cwd(exec), args)
+    } catch (error) {
+      if (error instanceof ReconError) throw new VerifyError(error.message)
+      throw error
+    }
+  }
+  return [
+    defineTool({
+      name: "code_outline",
+      description: "A source file's functions, classes, types and constants with their line numbers, and its length. Use it before reading a file, then read only the lines you need.",
+      parameters: { path: { type: "string", required: true, description: "The file, relative to the session's folder." } },
+      output: { ...OBJECT, render: (_a, v) => [{ type: "text", text: `${v.path} (${v.lines} lines)\n${v.symbols.map((s) => `${s.line}: ${s.kind} ${s.name}`).join("\n") || "No symbols recognised."}${v.cut ? `\n… ${v.cut} more` : ""}` }] },
+      execute: guarded((cwd, args) => outline(cwd, args.path)),
+      presentCall: (args) => ({ card: "generic", title: "Outline", kind: "read", rawInput: String(args.path ?? "") }),
+    }),
+    defineTool({
+      name: "code_impact",
+      description: "The project's files that import a file, so you know what a change can break before you make it.",
+      parameters: { path: { type: "string", required: true, description: "The file, relative to the session's folder." } },
+      output: { ...OBJECT, render: (_a, v) => [{ type: "text", text: v.importers.length ? `Imported by:\n${v.importers.join("\n")}` : "Nothing in this project imports it, as far as its import lines show." }] },
+      execute: guarded((cwd, args) => {
+        insideFolder(cwd, args.path)
+        return { importers: importers(cwd, args.path).slice(0, 100) }
+      }),
+      presentCall: (args) => ({ card: "generic", title: "Impact", kind: "read", rawInput: String(args.path ?? "") }),
+    }),
+  ]
+}
+
+/** tools/pre-execute (recon): a read too big to be useful is refused, with what to do instead */
+export function readHook(host) {
+  return async (exec, next) => {
+    if (exec.name === "read" && exec.agent) {
+      const args = exec.arguments && typeof exec.arguments === "object" ? exec.arguments : {}
+      const cwd = await host.cwd(exec)
+      const reason = typeof args.file_path === "string" ? readRefusal(resolve(cwd, args.file_path), args.limit) : undefined
+      if (reason) return { kind: "deny", reason }
+    }
+    return next()
+  }
+}
+
+const PARSERS = { ".js": ["node", ["--check"]], ".mjs": ["node", ["--check"]], ".cjs": ["node", ["--check"]], ".py": ["python3", ["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])"]] }
+
+/** The parse error of one file, or undefined: reads it, never runs it */
+export function parseError(file) {
+  const parser = PARSERS[extname(file)]
+  if (!parser) return Promise.resolve(undefined)
+  return new Promise((done) => execFile(parser[0], [...parser[1], file], { timeout: 10_000 }, (error, _out, stderr) => done(error && !error.killed && error.code !== "ENOENT" ? String(stderr).trim().slice(0, 1200) : undefined)))
+}
+
+/** tools/post-execute (strict): level 1 of the ladder, on the edit itself, so a broken file costs no check run */
+export function syntaxHook(host) {
+  const check = host.parse ?? parseError
+  return async (exec, result, next) => {
+    const decision = await next()
+    const path = exec.arguments?.file_path
+    if (decision.kind !== "accept" || result.isError || !["write", "edit"].includes(exec.name) || typeof path !== "string" || !exec.agent || Object.hasOwn(decision, "content") || Object.hasOwn(decision, "value")) return decision
+    const error = await check(resolve(await host.cwd(exec), path))
+    if (!error) return decision
+    return { ...decision, content: [...(result.content ?? []), { type: "text", text: `This file no longer parses; fix it before going on:\n${error}` }] }
+  }
+}
+
+// Heavy tools by name, and the words in a step that need them
+const HEAVY = [
+  [/^browser_/, /\b(browser|page|ui|css|layout|frontend|screen|visual|html|render\w*|click|form|button)\b/i],
+  [/^rea_/, /\b(reverse|binary|decompil\w*|disassembl\w*|apk|firmware)\b/i],
+]
+
+/** The tools a builder doesn't need for this step */
+export function toolsToHide(names, step) {
+  const text = `${step.title} ${step.doneWhen} ${step.files.join(" ")}`
+  return names.filter((name) => HEAVY.some(([tool, words]) => tool.test(name) && !words.test(text)))
+}
+
 export function apply(ctx) {
   const sandboxPolicy = ctx.shell.sandboxMode === undefined ? undefined : ctx.get("sandboxPolicy")
   const readOnly = (exec) => sandboxPolicy?.resolve({ session: exec.agent.session })?.mode === "read-only"
   const v2 = process.env.KRIYA_LOOP_V2 === "on" ? (exec) => ({ readOnly: readOnly(exec) }) : undefined
+  const defensiveOn = process.env.KRIYA_DEFENSIVE === "on"
+  // The defensive engine's checks are rungs of the strict loop, so it brings it
+  const strictOn = defensiveOn || process.env.KRIYA_STRICT_LOOP === "on"
+  const reconOn = process.env.KRIYA_RECON === "on"
+  const jitOn = process.env.KRIYA_JIT_TOOLS === "on"
+  // The strict loop stands on the guard: it needs signatures and snapshots
+  const guarded = strictOn || process.env.KRIYA_LOOP_GUARD === "on"
+  const strict = strictOn ? (exec) => ({ readOnly: readOnly(exec), defensive: defensiveOn }) : undefined
   // Each agent's folder, as its loop tools last resolved it (loop v2's state section)
   const folders = new WeakMap()
   const host = {
     v2,
+    guard: guarded,
+    strict,
     async cwd(exec) {
       const cwd = await ctx.workingDirectory.ensure(exec.agent, exec.signal)
       if (exec.agent) folders.set(exec.agent, cwd)
@@ -380,15 +572,24 @@ export function apply(ctx) {
   // builder can't plan or run steps itself
   const builders = new Set()
   const limits = builderLimits()
-  const guard = builderGuard(limits)
+  const guard = builderGuard(limits, { tokens: (agent) => { try { return ctx.get("tokenMeter")?.measure(agent.session).totalTokens } catch { return undefined } } })
+  // A builder's mask, waiting for that builder (agent/created runs before its first step)
+  const masks = new Map()
   const loopHost = {
     v2,
+    strict,
+    defensive: defensiveOn,
     limits,
     cwd: host.cwd,
     isBuilder: (exec) => builders.has(String(exec.agent?.id)),
     async spawn(exec, prompt, label, live) {
       const subagents = ctx.get("subagents")
       if (!subagents) throw new VerifyError("kriya_step needs DSH's subagents, which this profile doesn't load.")
+      if (jitOn && live) {
+        const step = readPlan(await host.cwd(exec), String(exec.agent.id))?.steps[live.n - 1]
+        const deny = step ? toolsToHide(ctx.tools.schemas(exec.agent).map((s) => s.name), step) : []
+        if (deny.length) masks.set(exec.agent, deny)
+      }
       const activation = await subagents.startActivation({
         provider: "spawn",
         label,
@@ -399,6 +600,7 @@ export function apply(ctx) {
       const id = String(activation.childId)
       builders.add(id)
       if (live) guard.start(id, live)
+      masks.delete(exec.agent)
       const stop = () => activation.dispose().catch(() => {})
       exec.signal.addEventListener("abort", stop, { once: true })
       // The step limit is checked between steps; a tool call that never
@@ -420,7 +622,27 @@ export function apply(ctx) {
         exec.signal.removeEventListener("abort", stop)
       }
     },
-    verify: (exec, cwd, label) => verifyStep({ cwd, sessionId: String(exec.agent.id), step: label, run: (command) => host.run(command, exec, cwd), ...(v2 && { v2: v2(exec) }) }),
+    verify: (exec, cwd, label) => verifyStep({ cwd, sessionId: String(exec.agent.id), step: label, run: (command) => host.run(command, exec, cwd), ...(v2 && { v2: v2(exec) }), ...(guarded && { guard: true }), ...(strict && { strict: strict(exec) }) }),
+    // Loop guard: what a builder left, to tell an attempt that changed nothing; never in Read only
+    ...((guarded || reconOn || jitOn) && {
+      guardSteps: (exec, cwd) => ({
+        ...(guarded && !readOnly(exec) && { snapshot: (label) => checkpoint(cwd, String(exec.agent.id), label).then((c) => c?.tree, () => undefined) }),
+        ...(strictOn && !readOnly(exec) && { restore: (tree, label) => restoreTree(cwd, tree, label) }),
+        briefing: async (step) => {
+          const lines = []
+          if (reconOn) {
+            const using = [...new Set(step.files.flatMap((file) => { try { return importers(cwd, file) } catch { return [] } }))].slice(0, 20)
+            if (using.length) lines.push(`Files that import what this step touches, which a change can break: ${using.join(", ")}`)
+          }
+          if (jitOn) {
+            const skills = await ctx.get("skills")?.list({ cwd, scope: exec.agent }).catch(() => [])
+            const names = rankSkills(`${step.title} ${step.doneWhen}`, (skills ?? []).filter((s) => s.invocation?.modelInvocable !== false)).slice(0, 2).map((r) => r.name)
+            if (names.length) lines.push(`Skills likely to help this step: ${names.join(", ")}. Load the ones that fit with the skill tool.`)
+          }
+          return lines
+        },
+      }),
+    }),
     // Loop v2: each attempt's files saved on the session's checkpoint ref, and restored from it; never in Read only
     ...(v2 && {
       steps: (exec, cwd) =>
@@ -433,6 +655,15 @@ export function apply(ctx) {
             },
     }),
   }
+  if (reconOn) {
+    for (const tool of reconTools(host)) ctx.tools.register(tool)
+    ctx.on("tools/pre-execute", readHook({ cwd: host.cwd }))
+  }
+  if (strictOn) ctx.on("tools/post-execute", syntaxHook({ cwd: host.cwd }))
+  if (jitOn)
+    ctx.on("agent/created", ({ agent }) => {
+      for (const [parent, deny] of masks) if (ctx.get("agents")?.isOwnedBy(agent.id, parent)) agent.ctx.tools.restrict({ deny })
+    })
   ctx.tools.register(planTool(loopHost))
   ctx.tools.register(stepTool(loopHost))
   ctx.on(
@@ -446,7 +677,8 @@ export function apply(ctx) {
   ctx.on("agent/pre-step", guard.preStep)
   ctx.on("tools/pre-execute", guard.preExecute)
   ctx.on("agent/turn-stopping", recheckHook({ cwd: host.cwd }))
-  ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: v2 ? GUIDANCE + GUIDANCE_V2 : GUIDANCE })
+  if (guarded) ctx.on("agent/turn-stopping", finishHook({ cwd: host.cwd, readOnly }))
+  ctx.systemPrompt.section({ name: "tool:kriya_verify", order: ctx.systemPrompt.getSectionOrder("TOOL_BASH"), text: `${GUIDANCE}${v2 ? GUIDANCE_V2 : ""}${strictOn ? GUIDANCE_STRICT : ""}${defensiveOn ? GUIDANCE_DEFENSIVE : ""}${reconOn ? GUIDANCE_RECON : ""}` })
   // Long tasks: the plan's state per agent, in a late section that
   // compaction never condenses (after DSH's suffix, before the anchor's), so
   // the cached prefix stays the same. The folder is the one the agent's last

@@ -127,3 +127,20 @@ test("IR-RUN-01: kriya run --router puts the brief in the real prompt, from the 
     await fake.close()
   }
 })
+
+test("IR-06: the brief names a way of working for the request's kind of work", () => {
+  const tools = ["kriya_plan", "kriya_verify", "browser_open", "read", "bash", "grep"]
+  assert.match(brief("The checkout page's layout looks wrong on phones", [], tools), /Way of working: render it, look at it/)
+  assert.match(brief("Fix the failing date test", [], tools), /Way of working: reproduce/)
+  assert.deepEqual(classify("Research and compare the retry libraries").map((i) => i.id)[0], "research")
+  assert.deepEqual(classify("Analyze this csv of orders").map((i) => i.id)[0], "data")
+  assert.match(brief("Research and compare the retry libraries", [], tools), /cross-check each claim/)
+})
+
+test("IR-07: a short one-line request isn't told to plan; a long one, or one with no kriya_plan, says nothing", () => {
+  const tools = ["kriya_plan", "kriya_verify", "read"]
+  assert.match(brief("Fix the failing date test", [], tools), /do it directly/)
+  assert.doesNotMatch(brief(`Fix the failing date test. ${"Then more of it. ".repeat(20)}`, [], tools), /do it directly/)
+  assert.doesNotMatch(brief("Fix the date test\nand the parser\nand the docs", [], tools), /do it directly/)
+  assert.doesNotMatch(brief("Fix the failing date test", [], ["read"]), /do it directly/)
+})

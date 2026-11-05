@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs"
 
 import { RANK } from "./failure.js"
-import { MAX_ATTEMPTS, normalStep, readProgress, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
+import { checkPremortem } from "./sentinel.js"
+import { PLAN_LIMITS, taskKind, TASK_KINDS } from "./strict.js"
+import { markStalled, MAX_ATTEMPTS, readProgress, stepLabel, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
 import { projectRoot } from "./skill-switches.js"
 
 // The Kriya loop's plan and steps (H14c; KRIYA_LOOP.md in the Kriya
@@ -20,6 +22,7 @@ const TITLE = 120
 const DONE_WHEN = 300
 const GOAL = 600
 const FILES = 12
+const MAX_ACCEPTANCE = 3
 
 // A step's builder is bounded by code, apart from the turn budget (which
 // gives every agent 150 steps and 60 minutes, so 4 runs of one step could
@@ -63,9 +66,12 @@ function dependencies(value, n) {
  * A plan as the agent proposed it, checked: a goal and 1..MAX_STEPS steps,
  * each with a title, a done-when sentence and the files it expects to touch;
  * with v2, also the earlier steps each one needs (`after`).
- * @returns {{ goal: string, steps: Array<{ title: string, doneWhen: string, files: string[], after?: number[] }> }}
+ * With strict, the task contract too: its kind (which bounds the plan), the
+ * paths that must not change and commands that must also exit 0. A contract
+ * can only add to what must hold; it can't replace the person's check.
+ * @returns {{ goal: string, steps: Array<{ title: string, doneWhen: string, files: string[], after?: number[] }>, kind?: string, invariants?: string[], acceptance?: string[] }}
  */
-export function validatePlan(input, { v2 = false } = {}) {
+export function validatePlan(input, { v2 = false, strict = false, defensive = false } = {}) {
   const goal = clean(input?.goal, GOAL)
   if (!goal) throw new VerifyError("A plan needs a goal: one sentence on what the task is for.")
   const steps = Array.isArray(input?.steps) ? input.steps : []
@@ -81,11 +87,21 @@ export function validatePlan(input, { v2 = false } = {}) {
   })
   const titles = new Set(out.map((s) => s.title.toLowerCase()))
   if (titles.size !== out.length) throw new VerifyError("Two steps have the same title; each step is one distinct piece of work.")
-  return { goal, steps: out }
+  const { premortem, problem } = defensive ? checkPremortem(input?.premortem, out.length) : {}
+  if (problem) throw new VerifyError(problem)
+  return { goal, steps: out, ...(strict && contract(input, goal, out.length)), ...(premortem && { premortem }) }
 }
 
-/** The step label kriya_verify records runs under: "<n> <title>", within its limits */
-export const stepLabel = (plan, n) => normalStep(`${n} ${plan.steps[n - 1].title}`.replace(/[^\p{L}\p{N} ._:/#()-]/gu, " ").replace(/\s+/g, " ").slice(0, 80).trim())
+function contract(input, goal, steps) {
+  const kind = input?.kind ?? taskKind(goal)
+  if (!TASK_KINDS.includes(kind)) throw new VerifyError(`kind is one of: ${TASK_KINDS.join(", ")}.`)
+  if (steps > PLAN_LIMITS[kind]) throw new VerifyError(`A ${kind} plan has at most ${PLAN_LIMITS[kind]} steps; do it directly, or name the kind that fits.`)
+  const list = (value, limit, size) => (Array.isArray(value) ? value : []).map((v) => clean(v, size)).filter(Boolean).slice(0, limit)
+  const acceptance = list(input?.acceptance, MAX_ACCEPTANCE, 300)
+  return { kind, invariants: list(input?.invariants, FILES, 300), acceptance }
+}
+
+export { stepLabel }
 
 /**
  * Saves the session's plan beside its runs. A new plan starts its steps
@@ -157,6 +173,17 @@ export function planStatus(cwd, sessionId) {
 }
 
 /**
+ * The step a stopping agent should have gone on to, if any (loop guard). A
+ * blocked step ends a v1 plan, as the guidance says; in v2 only the steps
+ * that need it. Nothing while a step is being built.
+ */
+export function nextStep(rows) {
+  if (!rows || rows.some((r) => r.building)) return undefined
+  const ready = (r) => (r.after ? r.after.every((d) => ["pass", "built"].includes(rows[d - 1].status)) : !rows.some((o) => o.n < r.n && o.status === "blocked"))
+  return rows.find((r) => ["not started", "fail"].includes(r.status) && ready(r))
+}
+
+/**
  * Loop v2, long tasks: where the work stands, from the loop's own records,
  * for a late system-prompt section that compaction never condenses. A small
  * context window loses older turns to summaries; this keeps the goal, every
@@ -180,7 +207,7 @@ export function loopStateText(cwd, sessionId) {
 }
 
 /** What a fresh builder is told: the goal, the plan, its one step and, on a retry, what failed; with v2, the person's confirmed rules */
-export function builderPrompt(plan, n, previous, rules = [], { limits = builderLimits(), checked = true } = {}) {
+export function builderPrompt(plan, n, previous, rules = [], { limits = builderLimits(), checked = true, briefing = [] } = {}) {
   const step = plan.steps[n - 1]
   const lines = [
     `You are building one step of a larger task. Do only this step, then stop.`,
@@ -194,6 +221,14 @@ export function builderPrompt(plan, n, previous, rules = [], { limits = builderL
     `It is done when: ${step.doneWhen}`,
   ]
   if (step.files.length) lines.push(`Files it is expected to touch: ${step.files.join(", ")}`)
+  if (plan.invariants?.length) lines.push(`These must not change: ${plan.invariants.join(", ")}`)
+  if (plan.acceptance?.length) lines.push(`These commands must also exit 0: ${plan.acceptance.join("; ")}`)
+  if (plan.premortem) {
+    lines.push("", "The plan's pre-mortem, which this work must defend against:")
+    for (const f of plan.premortem.failures) lines.push(`- Could fail: ${f.what} (proved by ${f.coveredBy})`)
+    lines.push(`- Shares this surface: ${plan.premortem.blastRadius.join("; ")}`, `- Bad inputs to handle: ${plan.premortem.negatives.join("; ")}`)
+  }
+  if (briefing.length) lines.push("", ...briefing)
   if (rules.length) lines.push("", "Rules for this project, confirmed by the person:", ...rules)
   lines.push(
     "",
@@ -223,6 +258,27 @@ export function builderPrompt(plan, n, previous, rules = [], { limits = builderL
   return lines.join("\n")
 }
 
+// Attempts in a row that don't parse or type-check before a step's files go back
+export const BROKEN_ATTEMPTS = 2
+
+// How often one step may come back "interrupted" before its builders count as attempts again
+export const MAX_INTERRUPTIONS = 2
+
+/** One builder's record beside the runs: what the bench and KRHE count; never shown to a model */
+function noteBuilder(root, sessionId, builder) {
+  const progress = readProgress(root, sessionId)
+  writeProgress(root, sessionId, { ...progress, builders: [...(progress.builders ?? []), builder] })
+}
+
+/** Counts one interruption of a step; false once the step has had MAX_INTERRUPTIONS */
+function noteInterruption(root, sessionId, label) {
+  const progress = readProgress(root, sessionId)
+  const count = progress.interrupted?.[label] ?? 0
+  if (count >= MAX_INTERRUPTIONS) return false
+  writeProgress(root, sessionId, { ...progress, interrupted: { ...progress.interrupted, [label]: count + 1 } })
+  return true
+}
+
 const textOf = (blocks) =>
   (Array.isArray(blocks) ? blocks : [])
     .filter((b) => b?.type === "text" && typeof b.text === "string")
@@ -241,9 +297,19 @@ const textOf = (blocks) =>
  * Each builder gets a live record (spawn's third argument; the Progress tab
  * reads it) and is bounded by `limits`; one stopped at its limit is still
  * checked, and the result says so. `hasCheck`: whether a check is confirmed.
- * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string, live: { n: number, attempt: number, startedAt: number, steps: number, last?: string, stopped?: string }) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any>, v2?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, rules?: string[] }, hasCheck?: boolean, limits?: { maxSteps: number, maxMinutes: number }, now?: () => number }} input
+ * With the guard (KRIYA_LOOP_GUARD=on): a step resumed after an interruption
+ * starts from its last recorded failure; a builder that died on an error
+ * before changing a file isn't an attempt (the step comes back "interrupted",
+ * at most MAX_INTERRUPTIONS times); and more builders stop being spent when
+ * they can't help: the same failure twice with no file changed, or a check
+ * that can't run. Same attempt bound; only ever fewer builders.
+ * With guard.restore (strict): a step is one transaction. Two attempts in a
+ * row that break the build go back to the files the step began with, and a
+ * blocked step leaves them that way; every replaced state stays in `kriya
+ * undo --list`. Nothing but Kriya's own restore touches the person's git.
+ * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string, live: { n: number, attempt: number, startedAt: number, steps: number, last?: string, stopped?: string }) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any>, v2?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, rules?: string[] }, guard?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, briefing?: (step: any) => Promise<string[]> }, hasCheck?: boolean, limits?: { maxSteps: number, maxMinutes: number }, now?: () => number }} input
  */
-export async function runStep({ cwd, sessionId, n, spawn, verify, v2, hasCheck = true, limits = builderLimits(), now = Date.now }) {
+export async function runStep({ cwd, sessionId, n, spawn, verify, v2, guard, hasCheck = true, limits = builderLimits(), now = Date.now }) {
   const plan = readPlan(cwd, sessionId)
   if (!plan) throw new VerifyError("There's no plan yet: call kriya_plan first.")
   if (!Number.isInteger(n) || n < 1 || n > plan.steps.length) throw new VerifyError(`The plan has steps 1 to ${plan.steps.length}.`)
@@ -260,8 +326,25 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2, hasCheck =
   }
   const label = stepLabel(plan, n)
   const builders = []
-  let previous
+  const root = projectRoot(cwd)
+  const save = v2?.snapshot ?? guard?.snapshot
+  const lastRun = guard && status[n - 1].status === "fail" ? readProgress(root, sessionId).runs.findLast((r) => r.step === label) : undefined
+  let previous = lastRun?.excerpt
+    ? { attempt: status[n - 1].attempts, command: lastRun.command, exitCode: lastRun.exitCode, timedOut: lastRun.timedOut, output: lastRun.excerpt, kind: lastRun.kind, sig: lastRun.sig }
+    : undefined
   let best
+  // The files the next builder starts from
+  let start = guard ? await save?.(`before step ${n}`) : undefined
+  const base = start
+  const briefing = (await guard?.briefing?.(plan.steps[n - 1])) ?? []
+  let broken = 0
+  const rollBack = async (why) => {
+    if (!guard?.restore || !base) return false
+    await guard.restore(base, why)
+    const progress = readProgress(root, sessionId)
+    writeProgress(root, sessionId, { ...progress, rollbacks: (progress.rollbacks ?? 0) + 1 })
+    return true
+  }
   for (;;) {
     const before = status[n - 1]
     if (before.status === "pass") return { status: "pass", step: n, title: plan.steps[n - 1].title, attempts: before.attempts, builders, note: "This step already passed." }
@@ -269,29 +352,54 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2, hasCheck =
     building.set(sessionId, live)
     let built
     try {
-      built = await spawn(builderPrompt(plan, n, previous, v2?.rules, { limits, checked: hasCheck }), `Step ${n}: ${plan.steps[n - 1].title}`, live)
+      built = await spawn(builderPrompt(plan, n, previous, v2?.rules, { limits, checked: hasCheck, briefing }), `Step ${n}: ${plan.steps[n - 1].title}`, live)
     } finally {
       if (building.get(sessionId) === live) building.delete(sessionId)
     }
     builders.push({ stopReason: built.stopReason ?? "completed", summary: textOf(built.output).slice(-600), steps: live.steps, ...(live.stopped && { limit: live.stopped }) })
-    const tree = await v2?.snapshot?.(`attempt ${builders.length} of step ${n}`)
+    noteBuilder(root, sessionId, { step: label, stopReason: builders.at(-1).stopReason, steps: live.steps, ms: now() - live.startedAt, ...(live.tokens && { tokens: live.tokens }), ...(live.stopped && { limit: live.stopped }) })
+    const tree = await save?.(`attempt ${builders.length} of step ${n}`)
+    const untouched = tree !== undefined && tree === start
+    if (guard && built.stopReason === "error" && untouched && noteInterruption(root, sessionId, label))
+      return { status: "interrupted", step: n, title: plan.steps[n - 1].title, builders, note: "The builder stopped on an error before changing any file, so this wasn't an attempt and nothing was checked." }
     const checked = await verify(label)
     if (checked.status === "not configured") {
       // Recorded apart from check runs, so the plan moves on and the verdict stays "not checked"
-      const root = projectRoot(cwd)
       const progress = readProgress(root, sessionId)
       progress.built = [...(progress.built ?? []).filter((b) => b.step !== label), { step: label, at: new Date(now()).toISOString() }]
       writeProgress(root, sessionId, progress)
       return { status: "not checked", step: n, title: plan.steps[n - 1].title, builders, suggestions: checked.suggestions }
     }
+    const undone = checked.status === "blocked" && (await rollBack(`step ${n} blocked`))
     if (checked.status === "pass" || checked.status === "blocked")
-      return { status: checked.status, step: n, title: plan.steps[n - 1].title, attempts: checked.attempts, builders, command: checked.command, output: checked.output ?? "", verdict: checked.verdict }
-    previous = { attempt: checked.attempts, command: checked.command, exitCode: checked.exitCode, timedOut: checked.timedOut, output: checked.output, ...(checked.failure && { kind: checked.failure }) }
+      return { status: checked.status, step: n, title: plan.steps[n - 1].title, attempts: checked.attempts, builders, command: checked.command, output: checked.output ?? "", verdict: checked.verdict, ...(undone && { rolledBack: true }) }
+    const earlier = previous
+    previous = { attempt: checked.attempts, command: checked.command, exitCode: checked.exitCode, timedOut: checked.timedOut, output: checked.output, ...(checked.failure && { kind: checked.failure }), ...(checked.signature && { sig: checked.signature }) }
+    const repeated = guard && checked.signature && earlier?.sig === checked.signature
+    // A builder that died on an error says nothing about the code; its attempts just run out
+    // Only exit 126/127 proves the command can't run; ENOENT or a missing module can be the code's own bug
+    const cantRun = checked.exitCode === 126 || checked.exitCode === 127
+    if (repeated && built.stopReason !== "error" && (untouched || cantRun)) {
+      const reason = untouched ? "the same failure again with no file changed" : "the check can't run on this machine"
+      const after = markStalled(root, sessionId, reason)
+      const undone = await rollBack(`step ${n} blocked`)
+      return { status: "blocked", step: n, title: plan.steps[n - 1].title, attempts: checked.attempts, builders, command: checked.command, output: checked.output ?? "", verdict: after.status, stalled: reason, ...(undone && { rolledBack: true }) }
+    }
+    if (repeated) previous.note = "This is the same failure as the attempt before it, so that approach didn't work: find another cause before changing code."
+    start = tree
+    broken = ["syntax", "type"].includes(checked.failure) ? broken + 1 : 0
+    if (broken >= BROKEN_ATTEMPTS && (await rollBack(`attempts ${checked.attempts - 1} and ${checked.attempts} of step ${n} broke the build`))) {
+      broken = 0
+      start = base
+      builders.at(-1).rolledBack = true
+      previous.note = `The last ${BROKEN_ATTEMPTS} attempts broke the build, so all their changes were undone: the files are as they were before this step. Start again, smaller, and run the check as you go.`
+    }
     if (v2) {
       const rank = RANK[checked.failure] ?? RANK.unknown
       if (best?.tree && v2.restore && rank < best.rank) {
         await v2.restore(best.tree, `back to attempt ${best.attempt} of step ${n}`)
         builders.at(-1).setAside = true
+        start = best.tree
         previous = {
           ...best.previous,
           attempt: checked.attempts,
