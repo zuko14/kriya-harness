@@ -469,11 +469,14 @@
   name: '@deepseek-ai/dsh-mcp-resources'
 - id: tools
   name: '@deepseek-ai/dsh-tools'
-# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-acp-app
+# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-acp-app, @kriya-ai/harness
 - id: system-prompt
   name: '@deepseek-ai/dsh-system-prompt'
   config:
-    personaPrefix: You are a coding agent powered by the {{model}} model.
+    includeHarnessIdentity: false
+    personaPrefix: >-
+      You are Kriya, a coding agent in Kriya Harness, working with the {{model}}
+      model.
 # == @deepseek-ai/dsh-base
 - id: agent-loop
   name: '@deepseek-ai/dsh-agent-loop'
@@ -504,6 +507,7 @@
   name: '@kriya-ai/harness-brand'
 - id: kriya-projects
   name: '@kriya-ai/harness-projects'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-loop
   name: '@kriya-ai/harness-loop'
   disabled: !!js process.env.KRIYA_LOOP !== 'on'
@@ -515,19 +519,25 @@
   disabled: !!js process.env.KRIYA_ANCHOR !== 'on'
 - id: kriya-skills
   name: '@kriya-ai/harness-skills'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-changes
   name: '@kriya-ai/harness-changes'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-overview
   name: '@kriya-ai/harness-overview'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-remote
   name: '@kriya-ai/harness-remote'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-sessions
   name: '@kriya-ai/harness-sessions'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-rea
   name: '@kriya-ai/harness-rea'
   disabled: !!js process.env.KRIYA_MINIMAL === 'on'
 - id: kriya-progress
   name: '@kriya-ai/harness-progress'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-preview
   name: '@kriya-ai/harness-preview'
 - id: kriya-graph

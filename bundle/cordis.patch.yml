@@ -122,6 +122,8 @@
 - insert:
     - id: kriya-projects
       name: '@kriya-ai/harness-projects'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # H14a, the Kriya loop's verify step (plugins/loop): kriya_verify runs the
 # project's check the person confirmed (`kriya verify use`) under the
@@ -189,6 +191,8 @@
 - insert:
     - id: kriya-skills
       name: '@kriya-ai/harness-skills'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # The Changes tab (plugins/changes): a right-sidebar page with every file
 # changed in the session's folder against HEAD and its diff, read-only, on
@@ -196,6 +200,8 @@
 - insert:
     - id: kriya-changes
       name: '@kriya-ai/harness-changes'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # The Overview tab (plugins/overview): a right-sidebar page with one session
 # at a glance (this computer, the folder, the repository and branch, the
@@ -205,6 +211,8 @@
 - insert:
     - id: kriya-overview
       name: '@kriya-ai/harness-overview'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # Remote Control (plugins/remote): the switch in the Overview tab streams a
 # session to the person's Kriya and listens for the Control Center while this
@@ -212,12 +220,16 @@
 - insert:
     - id: kriya-remote
       name: '@kriya-ai/harness-remote'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # Delete session (plugins/sessions): a row in a session's "..." menu; DSH has
 # archive only. Without the web server it doesn't start
 - insert:
     - id: kriya-sessions
       name: '@kriya-ai/harness-sessions'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # Reverse engineering (plugins/rea): two small tools over the pinned REA MCP
 # server, started on first use, and its guidance only on such requests. Off in
@@ -234,6 +246,8 @@
 - insert:
     - id: kriya-progress
       name: '@kriya-ai/harness-progress'
+      # Web UI only: it needs the web server's connection, which the other profiles lack
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
 # The Preview tab (plugins/preview, browser stage 1): an app on this
 # computer (localhost only, never the Web UI's own port) in a frame, with an
@@ -351,3 +365,13 @@
   disabled: true
 - id: product-analytics
   disabled: true
+
+# The agent's identity is Kriya's (owner, 2026-11-06: "completely this was a
+# Kriya harness product"): DSH's fixed opener names DeepSeek Harness, so it is
+# off and the persona line, which DSH documents for "deployments with another
+# identity", says Kriya instead. DSH stays credited in `kriya --version`,
+# SAFETY.md and THIRD_PARTY_NOTICES.md (its MIT licence)
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    personaPrefix: You are Kriya, a coding agent in Kriya Harness, working with the {{model}} model.
