@@ -206,6 +206,30 @@ export function htmlFilter(write) {
   return state
 }
 
+/**
+ * DSH's own terminal lines in Kriya Harness's words (owner, 2026-11-06): the
+ * product people run is Kriya Harness; DSH stays credited in --version and
+ * the notices. Only a line's leading "dsh web:" / "dsh:" changes.
+ */
+export function rebrand(text) {
+  return text
+    .replace(/^dsh web: opening the default browser; pass --no-open to disable/, "Kriya Harness: opening your browser (kriya --no-open to skip)")
+    .replace(/^dsh web: /, "Kriya Harness: ")
+    .replace(/^dsh: /, "kriya: ")
+}
+
+/** Writes a stream's text through `rebrand`, whole lines at a time */
+function relines(stream, write) {
+  let partial = ""
+  stream.setEncoding("utf8")
+  stream.on("data", (chunk) => {
+    const lines = (partial + chunk).split("\n")
+    partial = lines.pop() ?? ""
+    for (const line of lines) write(`${rebrand(line)}\n`)
+  })
+  stream.on("end", () => partial && write(rebrand(partial)))
+}
+
 /** Runs DSH in the foreground, passing the terminal through; resolves with its exit code. */
 export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
@@ -233,11 +257,15 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   })
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, args(profile, rest), {
-      stdio: headless ? ["inherit", "inherit", "pipe"] : "inherit",
+      // stdout: the answer (kriya run) and ACP's protocol frames pass untouched;
+      // the Web UI's stdout carries only log lines, rebranded like stderr
+      stdio: ["inherit", profile === "kriya" ? "pipe" : "inherit", "pipe"],
       env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits),
     })
     let explained = null
-    const filter = htmlFilter((text) => process.stderr.write(text))
+    const filter = htmlFilter((text) => process.stderr.write(rebrand(text)))
+    if (child.stdout) relines(child.stdout, (text) => process.stdout.write(text))
+    if (!headless) relines(child.stderr, (text) => process.stderr.write(text))
     if (headless) {
       let buffered = ""
       // Whole characters per chunk, so a split one never reaches the filter
