@@ -50,6 +50,7 @@ export const LINKED = {
   "@kriya-ai/harness-rea": join(PACKAGE_ROOT, "plugins", "rea"),
   "@kriya-ai/harness-router": join(PACKAGE_ROOT, "plugins", "router"),
   "@kriya-ai/harness-projects": join(PACKAGE_ROOT, "plugins", "projects"),
+  "@kriya-ai/harness-fs-freshness": join(PACKAGE_ROOT, "plugins", "fs-freshness"),
   "@kriya-ai/harness-loop": join(PACKAGE_ROOT, "plugins", "loop"),
   "@kriya-ai/harness-budget": join(PACKAGE_ROOT, "plugins", "budget"),
   "@kriya-ai/harness-anchor": join(PACKAGE_ROOT, "plugins", "anchor"),

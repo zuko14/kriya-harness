@@ -28,7 +28,7 @@ export const START_TIERS = ["balanced", "budget", "escalation"]
  * the plan lacks, and a short outage mustn't leave the picker empty.
  */
 export async function planTiers(device, list = models) {
-  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {}, limits: {}, encodings: [] }
+  const all = { start: START_TIERS[0], allowed: [...START_TIERS], names: {}, limits: {}, images: [], encodings: [] }
   if (!device) return all
   try {
     const answer = await list(device.url, device.token)
@@ -37,7 +37,7 @@ export async function planTiers(device, list = models) {
     const encodings = Array.isArray(answer.bodyEncodings) ? answer.bodyEncodings.filter((e) => typeof e === "string") : []
     const offered = new Set(data.map((model) => model.id))
     const allowed = START_TIERS.filter((tier) => offered.has(tier))
-    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), encodings } : { ...all, encodings }
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings } : { ...all, encodings }
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
@@ -96,7 +96,7 @@ export async function startTier(device, list = models) {
 }
 
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = []) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -112,6 +112,8 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
     KRIYA_MODEL_NAMES: JSON.stringify(Object.fromEntries(Object.entries(names).filter(([t, n]) => START_TIERS.includes(t) && typeof n === "string" && n.length <= 80))),
     // Each tier's context window, output cap and compaction headroom (modelLimits), as JSON. Never from the shell
     KRIYA_MODEL_LIMITS: JSON.stringify(Object.fromEntries(Object.entries(limits).filter(([t]) => START_TIERS.includes(t)))),
+    // The tiers whose model takes images, as GET /models says. Never from the shell
+    KRIYA_MODEL_IMAGES: images.filter((t) => START_TIERS.includes(t)).join(","),
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -260,7 +262,7 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       // stdout: the answer (kriya run) and ACP's protocol frames pass untouched;
       // the Web UI's stdout carries only log lines, rebranded like stderr
       stdio: ["inherit", profile === "kriya" ? "pipe" : "inherit", "pipe"],
-      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits),
+      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(rebrand(text)))

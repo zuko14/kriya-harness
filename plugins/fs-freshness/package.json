@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-fs-freshness",
+  "description": "Kriya Harness: a file whose content didn't change stays fresh for edits, whatever touched its metadata",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

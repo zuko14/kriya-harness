@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { RANK } from "./failure.js"
 import { checkPremortem } from "./sentinel.js"
 import { PLAN_LIMITS, taskKind, TASK_KINDS } from "./strict.js"
-import { markStalled, MAX_ATTEMPTS, readProgress, stepLabel, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
+import { confirmCheck, markStalled, MAX_ATTEMPTS, readProgress, stepLabel, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
 import { projectRoot } from "./skill-switches.js"
 
 // The Kriya loop's plan and steps (H14c; KRIYA_LOOP.md in the Kriya
@@ -241,7 +241,7 @@ export function builderPrompt(plan, n, previous, rules = [], { limits = builderL
   if (!checked)
     lines.push(
       "No check is confirmed for this project, so nothing judges this step after you. Don't spend steps on open-ended manual QA (screenshots, pixel or contrast audits, repeated browser runs): " +
-        "stop once the step's files are written and they build or load without errors."
+        "stop once the step's files are written and they build or load without errors. If the project has no build or test script yet, add a real one (e.g. in package.json): Kriya offers it to the person as the project's check."
     )
   if (previous)
     lines.push(
@@ -309,7 +309,7 @@ const textOf = (blocks) =>
  * undo --list`. Nothing but Kriya's own restore touches the person's git.
  * @param {{ cwd: string, sessionId: string, n: number, spawn: (prompt: string, label: string, live: { n: number, attempt: number, startedAt: number, steps: number, last?: string, stopped?: string }) => Promise<{ output: any[], stopReason?: string }>, verify: (label: string) => Promise<any>, v2?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, rules?: string[] }, guard?: { snapshot?: (label: string) => Promise<string | undefined>, restore?: (tree: string, label: string) => Promise<unknown>, briefing?: (step: any) => Promise<string[]> }, hasCheck?: boolean, limits?: { maxSteps: number, maxMinutes: number }, now?: () => number }} input
  */
-export async function runStep({ cwd, sessionId, n, spawn, verify, v2, guard, hasCheck = true, limits = builderLimits(), now = Date.now }) {
+export async function runStep({ cwd, sessionId, n, spawn, verify, v2, guard, hasCheck = true, limits = builderLimits(), now = Date.now, pickCheck }) {
   const plan = readPlan(cwd, sessionId)
   if (!plan) throw new VerifyError("There's no plan yet: call kriya_plan first.")
   if (!Number.isInteger(n) || n < 1 || n > plan.steps.length) throw new VerifyError(`The plan has steps 1 to ${plan.steps.length}.`)
@@ -362,7 +362,17 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2, guard, has
     const untouched = tree !== undefined && tree === start
     if (guard && built.stopReason === "error" && untouched && noteInterruption(root, sessionId, label))
       return { status: "interrupted", step: n, title: plan.steps[n - 1].title, builders, note: "The builder stopped on an error before changing any file, so this wasn't an attempt and nothing was checked." }
-    const checked = await verify(label)
+    let checked = await verify(label)
+    // A project built from nothing has no check until a step writes one: the person picks it now, so this step
+    // is judged. Asked once a session; the answer comes from the person's UI, never from the model
+    if (checked.status === "not configured" && pickCheck && checked.suggestions?.length && !readProgress(root, sessionId).checkAsked) {
+      const command = await pickCheck(checked.suggestions)
+      if (command) {
+        confirmCheck(cwd, command)
+        hasCheck = true
+        checked = await verify(label)
+      } else writeProgress(root, sessionId, { ...readProgress(root, sessionId), checkAsked: true })
+    }
     if (checked.status === "not configured") {
       // Recorded apart from check runs, so the plan moves on and the verdict stays "not checked"
       const progress = readProgress(root, sessionId)
@@ -371,6 +381,12 @@ export async function runStep({ cwd, sessionId, n, spawn, verify, v2, guard, has
       return { status: "not checked", step: n, title: plan.steps[n - 1].title, builders, suggestions: checked.suggestions }
     }
     const undone = checked.status === "blocked" && (await rollBack(`step ${n} blocked`))
+    // Steps built before there was a check: the check covers the whole project, so they're judged by a run of their own
+    if (checked.status === "pass") {
+      const { built = [] } = readProgress(root, sessionId)
+      const judged = verdict(readProgress(root, sessionId)).steps
+      for (const b of built.filter((b) => !judged.some((s) => s.step === b.step))) checked.verdict = (await verify(b.step)).verdict
+    }
     if (checked.status === "pass" || checked.status === "blocked")
       return { status: checked.status, step: n, title: plan.steps[n - 1].title, attempts: checked.attempts, builders, command: checked.command, output: checked.output ?? "", verdict: checked.verdict, ...(undone && { rolledBack: true }) }
     const earlier = previous

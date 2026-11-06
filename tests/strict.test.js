@@ -7,7 +7,7 @@ import { test } from "node:test"
 
 import { parseError, readHook, syntaxHook, toolsToHide } from "../plugins/loop/index.js"
 import { builderPrompt, runStep, savePlan, validatePlan } from "../src/loop.js"
-import { affectedTests, importers, MAX_READ_LINES, outline, outlineText, ReconError, readRefusal } from "../src/recon.js"
+import { affectedTests, importers, MAX_READ_LINES, outline, outlineText, ReconError, readPage } from "../src/recon.js"
 import { ladder, PLAN_LIMITS, silencers, syntaxCommand, taskKind, weakenedTest } from "../src/strict.js"
 import { confirmCheck, readProgress, trajectory, verdict, verifyStep } from "../src/verify.js"
 import { freshHome } from "./helpers.js"
@@ -238,18 +238,21 @@ test("ST-RC-02: impact finds importers by resolved path, in JS and Python", () =
   assert.deepEqual(importers(dir, "pkg/m.py"), ["pkg/n.py"])
 })
 
-test("ST-RC-03: a read over the limit is refused, with what to do; a small file or a small range isn't", async () => {
-  const dir = repo({ "big.js": "x\n".repeat(MAX_READ_LINES + 50), "small.js": "x\n" })
-  assert.match(readRefusal(join(dir, "big.js")), /code_outline/)
-  assert.match(readRefusal(join(dir, "big.js"), 2000), /at most 400/)
-  assert.equal(readRefusal(join(dir, "big.js"), 100), undefined)
-  assert.equal(readRefusal(join(dir, "small.js")), undefined)
-  assert.equal(readRefusal(join(dir, "gone.js")), undefined, "the read tool reports that")
-  const hook = readHook({ cwd: async () => dir })
-  const allow = async () => ({ kind: "allow" })
-  assert.equal((await hook({ name: "read", agent: {}, arguments: { file_path: "big.js" } }, allow)).kind, "deny")
-  assert.equal((await hook({ name: "read", agent: {}, arguments: { file_path: "big.js", offset: 10, limit: 50 } }, allow)).kind, "allow")
-  assert.equal((await hook({ name: "bash", agent: {}, arguments: {} }, allow)).kind, "allow")
+test("ST-RC-03: a long read comes back as one page saying what's left; a short one is left alone", async () => {
+  const lines = Array.from({ length: MAX_READ_LINES + 50 }, (_, i) => ({ number: i + 11, text: `line ${i + 11}` }))
+  const long = { path: "/p/big.js", offset: 11, lines, totalLines: 900 }
+  const page = readPage(long)
+  assert.match(page, /^<path>\/p\/big\.js<\/path>\n<type>file<\/type>\n<content>\n11: line 11\n/)
+  assert.match(page, /\n410: line 410\n\n\(Showing lines 11-410 of 900\. Use offset=411 to continue/)
+  assert.doesNotMatch(page, /411: line/)
+  assert.equal(readPage({ ...long, lines: lines.slice(0, MAX_READ_LINES) }), undefined)
+  assert.equal(readPage({}), undefined)
+  const hook = readHook()
+  const accept = async () => ({ kind: "accept" })
+  const read = { name: "read", agent: {}, arguments: {} }
+  assert.match((await hook(read, { value: long }, accept)).content[0].text, /Showing lines 11-410/)
+  assert.equal((await hook(read, { isError: true }, accept)).content, undefined)
+  assert.equal((await hook({ ...read, name: "bash" }, { value: long }, accept)).content, undefined)
 })
 
 test("ST-SX-01: a write that breaks parsing says so at once; other tools and clean files don't", async () => {

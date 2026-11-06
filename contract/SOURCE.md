@@ -7,9 +7,9 @@ again from Kriya and update the hash below in the same change.
 
 | Field | Value |
 | --- | --- |
-| Copied | 2026-11-05 (again: POST /live for Remote Control) |
+| Copied | 2026-11-06 (again: `images` on GET /models) |
 | From | Kriya repository `main` (uncommitted) on `0d148ad` |
-| sha256 | `257c0f27d21cd951d70f7bf6feeea24d1810b67a7497e3020a234d68a98dce40` |
+| sha256 | `a9c894b9fb8388dfd1b351130097cba2b4b8e84763368db1bd3dea83b4918c2d` |
 
 When the Kriya side commits the file, replace "From" with that commit.
 `tests/contract.test.js` checks the hash, so a hand edit fails.

@@ -8,7 +8,7 @@ import { extname, join, resolve } from "node:path"
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
 import { rankSkills } from "../../src/intent.js"
 import { builderLimits, loopStateText, MAX_STEPS, nextStep, planStatus, readPlan, runStep, savePlan, seededPlan, writeSnapshot } from "../../src/loop.js"
-import { blastRadius, importers, importGraph, insideFolder, MAX_READ_LINES, outline, ReconError, readRefusal } from "../../src/recon.js"
+import { blastRadius, importers, importGraph, insideFolder, MAX_READ_LINES, outline, ReconError, readPage } from "../../src/recon.js"
 import { confirmedRules } from "../../src/rules.js"
 import { projectRoot } from "../../src/skill-switches.js"
 import { TASK_KINDS } from "../../src/strict.js"
@@ -215,8 +215,43 @@ function traced(cwd, plan) {
 }
 
 export const NO_CHECK_PLAN =
-  "No check is confirmed for this project, so each step will be built but not checked. Tell the person now: " +
-  "they can confirm one with `kriya verify use \"<command>\"` (for example the project's build or tests) so every step is judged."
+  "No check is confirmed for this project yet. When a step leaves a build or test script, Kriya asks the person to pick it, so have the first step add one. " +
+  "Until then steps are built but not checked; the person can also confirm one with `kriya verify use \"<command>\"`."
+
+// Long enough to answer, short enough that a person who walked away doesn't stall a long task
+export const CHECK_QUESTION_MS = 120_000
+const NOT_NOW = "Not now"
+
+/**
+ * The harness itself asks the person which found check to use: the question goes straight to their UI,
+ * so the model can't answer it. Only an offered command they selected counts; a typed one stays
+ * `kriya verify use`. Undefined with no UI (`kriya run`), on no answer, and when the turn stops.
+ * @returns {Promise<string | undefined>}
+ */
+export async function askCheck(questions, exec, found) {
+  const offered = found.slice(0, 3)
+  const answer = await questions
+    ?.ask({
+      agent: exec.agent,
+      signal: AbortSignal.any([exec.signal, AbortSignal.timeout(CHECK_QUESTION_MS)]),
+      questions: [
+        {
+          id: "kriya-check",
+          header: "Check",
+          question: "Which command should decide whether each step works?",
+          detail: "Kriya runs it after every step and sends failures back to be fixed. These came from the project's files, which the agent may have written, so pick one only if it really tests the work. For any other command, run kriya verify use in a terminal: a typed answer here isn't used.",
+          options: [...offered.map((c) => ({ label: c.command, description: `From ${c.source}` })), { label: NOT_NOW, description: "Steps stay not checked. You can pick one later in the Progress tab." }],
+        },
+      ],
+    })
+    .catch(() => undefined)
+  const picked = answer?.answers?.find((a) => a.id === "kriya-check")?.selected?.[0]
+  return offered.find((c) => c.command === picked)?.command
+}
+
+// DSH refuses a tool's output holding an undefined value, after the tool already ran:
+// a recorded plan came back as an error and spent a plan slot. An absent field is simply left out
+const plain = (value) => JSON.parse(JSON.stringify(value))
 
 const renderStatus = (rows) =>
   rows.map((r) => `${r.n}. ${r.title}${r.after?.length ? ` (after ${r.after.join(", ")})` : ""}: ${r.status}${r.attempts ? ` (${r.attempts} run${r.attempts === 1 ? "" : "s"})` : ""}`).join("\n")
@@ -253,7 +288,7 @@ export function planTool(host) {
       if (seed && readPlan(cwd, id)) throw new VerifyError("The person set this plan in Kriya. Run its steps with kriya_step; it can't be replanned here.")
       savePlan(cwd, id, seed ?? args, undefined, { v2: Boolean(host.v2), strict: Boolean(host.strict), defensive: Boolean(host.defensive) })
       writeSnapshot(cwd, id)
-      return { steps: planStatus(cwd, id), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }), ...(host.defensive && { radius: traced(cwd, readPlan(cwd, id)) }) }
+      return plain({ steps: planStatus(cwd, id), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }), ...(host.defensive && { radius: traced(cwd, readPlan(cwd, id)) }) })
     },
     presentCall: (args) => ({ card: "generic", title: "Plan", kind: "think", rawInput: typeof args.goal === "string" ? args.goal : "" }),
   })
@@ -313,9 +348,13 @@ export function stepTool(host) {
         verify: (label) => host.verify(exec, cwd, label),
         ...(host.steps && { v2: host.steps(exec, cwd) }),
         ...(host.guardSteps && { guard: host.guardSteps(exec, cwd) }),
+        ...(host.questions && { pickCheck: (found) => askCheck(host.questions(), exec, found) }),
+      }).catch((error) => {
+        // An abort rejects with DSH's plain reason ({ kind: "user" }), which reads as "[object Object]"
+        throw error instanceof Error ? error : new VerifyError("The step was stopped before it finished.")
       })
       writeSnapshot(cwd, id)
-      return result
+      return plain(result)
     },
     presentCall: (args) => ({ card: "generic", title: "Build and check a step", kind: "execute", rawInput: `step ${args.step}` }),
   })
@@ -476,16 +515,13 @@ function reconTools(host) {
   ]
 }
 
-/** tools/pre-execute (recon): a read too big to be useful is refused, with what to do instead */
-export function readHook(host) {
-  return async (exec, next) => {
-    if (exec.name === "read" && exec.agent) {
-      const args = exec.arguments && typeof exec.arguments === "object" ? exec.arguments : {}
-      const cwd = await host.cwd(exec)
-      const reason = typeof args.file_path === "string" ? readRefusal(resolve(cwd, args.file_path), args.limit) : undefined
-      if (reason) return { kind: "deny", reason }
-    }
-    return next()
+/** tools/post-execute (recon): a long read reaches the model as one page, never as a refusal */
+export function readHook() {
+  return async (exec, result, next) => {
+    const decision = await next()
+    if (exec.name !== "read" || !exec.agent || decision.kind !== "accept" || result.isError || Object.hasOwn(decision, "content")) return decision
+    const text = readPage(result.value ?? {})
+    return text ? { ...decision, content: [{ type: "text", text }] } : decision
   }
 }
 
@@ -576,6 +612,7 @@ export function apply(ctx) {
   // A builder's mask, waiting for that builder (agent/created runs before its first step)
   const masks = new Map()
   const loopHost = {
+    questions: () => ctx.get("userQuestions"),
     v2,
     strict,
     defensive: defensiveOn,
@@ -657,7 +694,7 @@ export function apply(ctx) {
   }
   if (reconOn) {
     for (const tool of reconTools(host)) ctx.tools.register(tool)
-    ctx.on("tools/pre-execute", readHook({ cwd: host.cwd }))
+    ctx.on("tools/post-execute", readHook())
   }
   if (strictOn) ctx.on("tools/post-execute", syntaxHook({ cwd: host.cwd }))
   if (jitOn)

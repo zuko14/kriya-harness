@@ -52,7 +52,7 @@ test("ST-RUN-06: recon and the syntax hook on a builder's real calls; JIT takes 
   const off = await runScenario("builder-tools", { flags: ["--strict-loop", "--recon"] })
   const report = JSON.stringify({ tools: on.builderTools, results: on.builderResults, off: off.builderToolChars, on: on.builderToolChars, stderr: on.stderr }).slice(0, 2500)
   const [read, outline, impact, broken, fixed] = on.builderResults
-  assert.match(read, /at most 400/, report)
+  assert.match(read, /Showing lines 1-400 of \d+\. Use offset=401/, report)
   assert.match(outline, /451: function late/, report)
   assert.match(impact, /Nothing in this project imports it/, report)
   assert.match(broken, /no longer parses/, report)

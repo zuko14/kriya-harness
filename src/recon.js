@@ -234,17 +234,11 @@ export function blastRadius(graph, diffs, { depth = 3 } = {}) {
   }
 }
 
-/** What a read of `limit` lines from `file` would bring in; the refusal text when it's too much */
-export function readRefusal(file, limit) {
-  const asked = Number.isFinite(limit) ? limit : undefined
-  if (asked !== undefined && asked <= MAX_READ_LINES) return undefined
-  let lines
-  try {
-    if (statSync(file).size > 50 * MAX_BYTES) return undefined
-    lines = readFileSync(file, "utf8").split("\n").length
-  } catch {
-    return undefined // the read tool reports a missing or unreadable file
-  }
-  if (Math.min(lines, asked ?? lines) <= MAX_READ_LINES) return undefined
-  return `That reads ${lines} lines; one read takes at most ${MAX_READ_LINES}. Call code_outline for the file's symbols, then read the part you need with offset and limit.`
+/** A long read's first page, in the read tool's own format, saying what's left; undefined when it fits */
+export function readPage({ path, offset, lines, totalLines }) {
+  if (!(lines?.length > MAX_READ_LINES)) return undefined
+  const page = lines.slice(0, MAX_READ_LINES)
+  const end = page.at(-1).number
+  const body = page.map((line) => `${line.number}: ${line.text}`).join("\n")
+  return `<path>${path}</path>\n<type>file</type>\n<content>\n${body}\n\n(Showing lines ${offset}-${end} of ${totalLines}. Use offset=${end + 1} to continue, or code_outline to find the part you need.)\n</content>`
 }

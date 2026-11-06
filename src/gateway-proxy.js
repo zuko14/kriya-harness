@@ -1,6 +1,7 @@
 import { createServer } from "node:http"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
+import { setTimeout as sleep } from "node:timers/promises"
 import { gzipSync } from "node:zlib"
 
 import { BASE_PATH } from "./api.js"
@@ -34,6 +35,14 @@ export const MAX_BODY = 64 * 1024 * 1024
 export const RECHECK_MS = 60_000
 // Before a blocked request is sent once more, unencoded
 export const RETRY_MS = 2_000
+// How long one request waits out a network outage. Under DSH's 5-minute stream timeout, and DSH
+// retries a 502 five times, so a long task survives about 20 minutes offline: its own retries alone
+// run out in about 15 seconds. Connections only: nothing below can have reached Kriya
+export const OUTAGE_MS = 4 * 60_000
+const OUTAGE_WAIT_MS = 15_000
+const NO_CONNECTION = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ENETDOWN", "UND_ERR_CONNECT_TIMEOUT"])
+// A pooled connection the host had closed. The request may have reached Kriya, so once only
+const DEAD_SOCKET = new Set(["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"])
 const DROP_REQUEST = new Set(["host", "connection", "keep-alive", "content-length", "transfer-encoding", "accept-encoding", "expect", "upgrade", "proxy-connection"])
 const DROP_RESPONSE = new Set(["connection", "keep-alive", "content-length", "transfer-encoding", "content-encoding"])
 
@@ -78,7 +87,7 @@ async function readAll(req) {
  * @param {{ target: string, encode: boolean, checkSupport?: () => Promise<boolean>, fetchImpl?: typeof fetch, log?: (text: string) => void, now?: () => number, retryMs?: number }} options
  * @returns {Promise<{ url: string, close: () => Promise<void>, encoding: () => boolean }>} url stands in for device.url inside DSH
  */
-export async function startGatewayProxy({ target, encode, checkSupport, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS }) {
+export async function startGatewayProxy({ target, encode, checkSupport, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
   const origin = new URL(target).origin
   const support = { on: Boolean(encode), checked: now(), pending: null }
   // One question at a time; a failed question changes nothing
@@ -115,7 +124,7 @@ export async function startGatewayProxy({ target, encode, checkSupport, fetchImp
       const plain = body?.length ? body : undefined
       const encodable = Boolean(plain) && /^application\/json\b/i.test(headers["content-type"] ?? "")
       if (encodable && !support.on && now() - support.checked >= RECHECK_MS) await recheck()
-      const send = (encoded) => {
+      const once = (encoded) => {
         const h = { ...headers }
         let sent = plain
         if (encoded) {
@@ -124,6 +133,30 @@ export async function startGatewayProxy({ target, encode, checkSupport, fetchImp
           h["x-kriya-body"] = BODY_ENCODING
         }
         return fetchImpl(`${origin}${req.url}`, { method: req.method, headers: h, body: sent, signal: upstream.signal, redirect: "manual" })
+      }
+      /** One request through an outage: waits while nothing can connect, and tries a dead pooled connection once more */
+      const send = async (encoded) => {
+        const began = now()
+        let waiting = false
+        let retried = false
+        for (let wait = Math.min(1000, outageWaitMs); ; wait = Math.min(wait * 2, outageWaitMs)) {
+          try {
+            const answer = await once(encoded)
+            if (waiting) log("relay: Kriya is reachable again")
+            return answer
+          } catch (e) {
+            const code = e?.cause?.code
+            if (upstream.signal.aborted) throw e
+            if (DEAD_SOCKET.has(code) && !retried) {
+              retried = true
+              continue
+            }
+            if (!NO_CONNECTION.has(code) || now() - began >= outageMs) throw e
+            if (!waiting) log(`relay: can't reach Kriya (${code}); waiting for the network`)
+            waiting = true
+            await sleep(wait, undefined, { signal: upstream.signal })
+          }
+        }
       }
       /** The firewall's block, or null; a 403 web page's body is read here (it is never passed on) */
       const blockOf = async (answer) => {
@@ -156,8 +189,10 @@ export async function startGatewayProxy({ target, encode, checkSupport, fetchImp
       if (!answer.body) return res.end()
       await pipeline(Readable.fromWeb(answer.body), res)
     } catch (e) {
-      if (upstream.signal.aborted) return
-      log(`relay: ${e?.name ?? "error"}`)
+      // DSH hung up: before an answer it's an abort, during one the stream closes early
+      if (e?.name === "AbortError" || e?.code === "ERR_STREAM_PREMATURE_CLOSE") return
+      // The code only: a fetch TypeError's message can quote a header. DSH retries on the 502 below
+      log(`relay: connection to Kriya dropped (${e?.cause?.code ?? e?.name ?? "error"}); retrying`)
       error(502, `Couldn't reach Kriya (${e?.cause?.code ?? e?.name ?? "network error"}).`)
     }
   })
