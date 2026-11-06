@@ -21,6 +21,12 @@ export const SEAMS = [
     users: "plugins/budget (turn budget, U2)",
   },
   {
+    seam: "a local file's version ends in its ctime, and the intent waterfalls can be wrapped",
+    file: "dsh-fs-local/lib/index.js",
+    must: [/FsVersion\(`\$\{info\.dev\}:\$\{info\.ino\}:\$\{info\.size\}:\$\{info\.mtimeNs\}:\$\{info\.ctimeNs\}`\)/],
+    users: "plugins/fs-freshness (edits after a metadata-only change)",
+  },
+  {
     seam: "agent/turn-stopping and Agent.steer",
     file: "dsh-agent/lib/types/runtime-types.d.ts",
     must: [/'agent\/turn-stopping'\(/, /steer\(message: UserMessage\): void/],

@@ -102,10 +102,12 @@
           (process.env.KRIYA_ALLOWED_TIERS ||
           'balanced,budget,escalation').split(',').includes(id)) .map(([id,
           name]) => ({ id, name: typeof names[id] === 'string' && names[id] ?
-          names[id] : name, ...(limits[id] ? { contextWindow:
-          limits[id].contextWindow, maxTokens: limits[id].maxTokens } : {}) })))
-          ((() => { try { return JSON.parse(process.env.KRIYA_MODEL_NAMES ||
-          '{}') } catch { return {} } })(), (() => { try { return
+          names[id] : name, ...((process.env.KRIYA_MODEL_IMAGES ||
+          '').split(',').includes(id) ? { input: ['text', 'image'] } : {}),
+          ...(limits[id] ? { contextWindow: limits[id].contextWindow, maxTokens:
+          limits[id].maxTokens } : {}) }))) ((() => { try { return
+          JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {}
+          } })(), (() => { try { return
           JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {}
           } })())
 # == @deepseek-ai/dsh-base
@@ -506,6 +508,8 @@
 # == @kriya-ai/harness
 - id: ui-brand-kriya
   name: '@kriya-ai/harness-brand'
+- id: kriya-fs-freshness
+  name: '@kriya-ai/harness-fs-freshness'
 - id: kriya-projects
   name: '@kriya-ai/harness-projects'
   disabled: !!js ctx.get('profileContext')?.name !== 'kriya'

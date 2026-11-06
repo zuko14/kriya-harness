@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process"
+import { homedir } from "node:os"
+import { join, sep } from "node:path"
+
 import { chromeInstalled } from "./browser.js"
 import { call, models, me } from "./api.js"
 import { dumpConfig } from "./launch.js"
@@ -9,6 +13,31 @@ import { readDevice } from "./store.js"
 // fix. Exit code 0 only when every check passes.
 
 export const MIN_NODE = [24, 9]
+
+// Whether iCloud syncs ~/Desktop and ~/Documents on this Mac
+function icloudDesktop() {
+  try {
+    return process.platform === "darwin" && execFileSync("defaults", ["read", "com.apple.finder", "FXICloudDriveDesktop"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "1"
+  } catch {
+    return false
+  }
+}
+
+const within = (dir, parent) => dir === parent || dir.startsWith(`${parent}${sep}`)
+
+/** Why `dir` is a poor home for a project, or undefined. Kriya works there; syncing node_modules and builds is what suffers */
+export function syncedFolder(dir, home = homedir(), desktopSynced = icloudDesktop()) {
+  const icloud = "this folder is synced by iCloud, which slows installs and builds and can hold files back; a folder like ~/Developer is better for projects"
+  if (within(dir, join(home, "Library", "Mobile Documents"))) return icloud
+  if (within(dir, join(home, "Library", "CloudStorage"))) return "this folder is synced to the cloud, which slows installs and builds; a folder like ~/Developer is better for projects"
+  return desktopSynced && (within(dir, join(home, "Documents")) || within(dir, join(home, "Desktop"))) ? icloud : undefined
+}
+
+/** Tiers that all run one model can't step up; undefined when they differ or a name is missing */
+export function tierNote(data) {
+  const names = new Set(data.map((m) => m.name))
+  return data.length > 1 && names.size === 1 && data[0].name ? `every tier runs one model (${data[0].name}), so a harder task can't step up: set routing.* in the Owner console` : undefined
+}
 
 export function nodeOk(version = process.versions.node) {
   const [major, minor] = version.split(".").map(Number)
@@ -78,6 +107,9 @@ export async function doctor(io = {}) {
   // Not a failure: everything else works without it
   say(`ok    agent's browser: ${chromeInstalled() ? "ready" : "off (install Chrome, Edge, Brave or Chromium to turn it on)"}`)
 
+  const synced = syncedFolder(process.cwd())
+  if (synced) say(`note  ${synced}`)
+
   const device = readDevice()
   check(!!device, device ? `signed in to ${device.url}` : "signed in", "run kriya login")
   if (device) {
@@ -92,6 +124,8 @@ export async function doctor(io = {}) {
       const list = await models(device.url, device.token)
       const tiers = list.data.map((model) => model.id)
       check(tiers.length > 0, `gateway models: ${tiers.join(", ") || "none"}`, "your plan allows no models")
+      const single = tierNote(list.data)
+      if (single) say(`note  ${single}`)
       // An empty report writes nothing: 400 means the route is on, 404 that it's switched off
       const live = await call(device.url, "POST", "/live", { token: device.token, body: {} }).catch((error) => error.status)
       say(`ok    Remote Control on Kriya: ${live === 404 ? "off (harness.remoteControl in the Owner console)" : "on"}`)

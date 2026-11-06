@@ -32,7 +32,6 @@ export const OUTPUT_LIMIT = 4000
 // What a failed run keeps of its output (loop guard), so a resumed step's next builder still sees it
 const KEPT_OUTPUT = 2500
 const COMMAND_LIMIT = 500
-const STEP = /^[\p{L}\p{N}][\p{L}\p{N} ._:/#()-]{0,79}$/u
 
 export class VerifyError extends Error {}
 
@@ -177,7 +176,7 @@ export function confirmedCheck(cwd) {
 }
 
 /**
- * The person confirms the project's check (CLI only; no tool calls this).
+ * The person confirms the project's check: in the CLI, the Progress tab, or answering the harness's own question. No tool calls this.
  * @param {string} cwd
  * @param {string} command
  */
@@ -485,14 +484,12 @@ export function trimOutput(text, limit = OUTPUT_LIMIT) {
   return `… (${text.length - limit} earlier characters left out)\n${text.slice(-limit)}`
 }
 
-export const normalStep = (step) => {
-  const text = typeof step === "string" && step.trim() ? step.trim() : "all"
-  if (!STEP.test(text)) throw new VerifyError("A step label is a short name: letters, digits, spaces and . _ : / # ( ) -, up to 80 characters.")
-  return text
-}
+// A label is only a name for the runs: models write plan titles with commas and pluses,
+// and refusing those spent a call on nothing, so it's cleaned instead
+export const normalStep = (step) => (typeof step === "string" ? step : "").replace(/[^\p{L}\p{N} ._:/#()-]/gu, " ").replace(/\s+/g, " ").replace(/^[^\p{L}\p{N}]+/u, "").slice(0, 80).trim() || "all"
 
 /** The step label kriya_verify records runs under: "<n> <title>", within its limits */
-export const stepLabel = (plan, n) => normalStep(`${n} ${plan.steps[n - 1].title}`.replace(/[^\p{L}\p{N} ._:/#()-]/gu, " ").replace(/\s+/g, " ").slice(0, 80).trim())
+export const stepLabel = (plan, n) => normalStep(`${n} ${plan.steps[n - 1].title}`)
 
 /**
  * Runs the project's confirmed check for one step and records it.

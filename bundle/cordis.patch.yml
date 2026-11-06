@@ -26,11 +26,14 @@
         # same answer), else "Kriya <tier>"
         # Harness upgrade U3: a tier Kriya gives limits for (KRIYA_MODEL_LIMITS,
         # from GET /models) declares its model's context window and output
-        # cap; the others keep DSH's defaults (262,144 and 32,768)
+        # cap; the others keep DSH's defaults (262,144 and 32,768). A tier
+        # Kriya says takes images (KRIYA_MODEL_IMAGES) declares it, else
+        # DSH refuses every image for it
         models: !!js >-
           ((names, limits) => [['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'], ['escalation', 'Kriya escalation']]
           .filter(([id]) => (process.env.KRIYA_ALLOWED_TIERS || 'balanced,budget,escalation').split(',').includes(id))
           .map(([id, name]) => ({ id, name: typeof names[id] === 'string' && names[id] ? names[id] : name,
+          ...((process.env.KRIYA_MODEL_IMAGES || '').split(',').includes(id) ? { input: ['text', 'image'] } : {}),
           ...(limits[id] ? { contextWindow: limits[id].contextWindow, maxTokens: limits[id].maxTokens } : {}) })))
           ((() => { try { return JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {} } })(),
           (() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })())
@@ -94,6 +97,13 @@
 - insert:
     - id: ui-brand-kriya
       name: '@kriya-ai/harness-brand'
+
+# A file's version in DSH includes ctime, which iCloud and backup tools bump
+# with the content untouched: on a real task in ~/Documents, 40 of 146 edits
+# failed as "changed since it was read". plugins/fs-freshness looks past that
+- insert:
+    - id: kriya-fs-freshness
+      name: '@kriya-ai/harness-fs-freshness'
 
 # Kriya Harness is one product: its features come from Kriya, not from
 # DeepSeek Harness's plugin ecosystem. Off: Creator mode (the `cordis`
