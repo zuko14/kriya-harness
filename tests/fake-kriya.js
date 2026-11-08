@@ -125,6 +125,12 @@ export async function startFakeKriya(script = {}) {
     }
     const fail = (status, error, message, extra = {}) => send(status, { error, message, ...extra })
 
+    const stored = /^\/storage\/([0-9a-f-]{36})$/.exec(url.pathname)
+    if (req.method === "PUT" && stored) {
+      if (script.uploadRefused) return fail(script.uploadRefused, "refused", "Refused.")
+      ;(state.uploads ??= {})[stored[1]] = bytes
+      return send(200, {})
+    }
     if (!url.pathname.startsWith("/api/harness/v1/")) return fail(404, "not_found", "Not found.")
     const version = req.headers["x-kriya-harness"]
     if (typeof version !== "string" || !/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(version))
@@ -194,6 +200,53 @@ export async function startFakeKriya(script = {}) {
         })),
         ...(script.bodyEncodings && { bodyEncodings: ["gzip+base64"] }),
       })
+    // Editing: 404 unless the test says this Kriya has it. An upload goes to `uploads`,
+    // as to Storage: a signed link on this same fake, needing no token
+    if (req.method === "GET" && path === "/editing/manifest") {
+      if (!script.editing) return fail(404, "not_found", "Not found.")
+      return send(200, { manifest: "{}", signature: null })
+    }
+    const previews = /^\/editing\/jobs\/([0-9a-f-]{36})\/previews$/.exec(path)
+    if (req.method === "POST" && previews) {
+      if (script.previewsRefused) return fail(script.previewsRefused, "cap_reached", "Your plan's room for previews is full.")
+      const id = crypto.randomUUID()
+      ;(state.previews ??= []).push({ id, job: previews[1], ...body, finished: false })
+      return send(200, { id, uploadUrl: `http://${req.headers.host}/storage/${id}` })
+    }
+    const finished = /^\/editing\/jobs\/([0-9a-f-]{36})\/previews\/([0-9a-f-]{36})$/.exec(path)
+    if (req.method === "POST" && finished) {
+      const found = (state.previews ?? []).find((p) => p.id === finished[2] && p.job === finished[1])
+      if (!found) return fail(404, "not_found", "Not found.")
+      found.finished = true
+      return send(204)
+    }
+    // Decision cards, notes and new recordings (ED15): 404 unless the test turns them on.
+    // A test answers a card with answerCard(); a device route never can
+    const asked = /^\/editing\/jobs\/([0-9a-f-]{36})\/questions$/.exec(path)
+    if (req.method === "POST" && asked) {
+      if (!script.review) return fail(404, "not_found", "Not found.")
+      const id = crypto.randomUUID()
+      const card = { id, job: asked[1], ...body, status: "open" }
+      ;(state.cards ??= []).push(card)
+      script.onCard?.(card)
+      return send(200, { id, expiresAt: new Date(Date.now() + 60_000).toISOString() })
+    }
+    const polled = /^\/editing\/questions\/([0-9a-f-]{36})$/.exec(path)
+    if (req.method === "GET" && polled) {
+      const card = (state.cards ?? []).find((c) => c.id === polled[1])
+      if (!card) return fail(404, "not_found", "Not found.")
+      return send(200, { status: card.status, ...(card.option !== undefined && { option: card.option }) })
+    }
+    const sentNotes = /^\/editing\/jobs\/([0-9a-f-]{36})\/notes$/.exec(path)
+    if (req.method === "GET" && sentNotes) {
+      if (!script.review) return fail(404, "not_found", "Not found.")
+      return send(200, { notes: state.editNotes?.[sentNotes[1]] ?? [] })
+    }
+    if (req.method === "POST" && path === "/editing/found") {
+      if (!script.watch) return fail(404, "not_found", "Not found.")
+      ;(state.found ??= []).push(body)
+      return send(200, { id: crypto.randomUUID() })
+    }
     // The Control Center (Kriya CONTROL_CENTER.md): the daemon's hello, its
     // long poll (one queued action per poll, claimed), reports and run broadcasts
     if (req.method === "POST" && path === "/daemon/hello") {
@@ -417,6 +470,12 @@ export async function startFakeKriya(script = {}) {
     /** The person answers in Kriya (approved | declined), or the request expires */
     answer: (id, status) => settle(id, status),
     expire: (id) => settle(id, "expired"),
+    /** The person answers a decision card in Kriya (never a device route) */
+    answerCard(id, option) {
+      const card = state.cards.find((c) => c.id === id)
+      card.status = "answered"
+      card.option = option
+    },
     /** Queues an action for the daemon, as the person would in Kriya */
     queue(kind, payload = {}) {
       const id = crypto.randomUUID()

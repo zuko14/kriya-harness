@@ -125,6 +125,7 @@ window.__ModuleLoader__.load({
         h("div", { key: "n", className: `kh-ov-note2${state.unavailable ? " kh-ov-err" : ""}` }, line),
         error && h("div", { key: "e", className: "kh-ov-note2 kh-ov-err", role: "alert" }, error),
         state.on && h("div", { key: "s", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow serving"), h(Toggle, { label: "Allow serving from Kriya", checked: state.serve, disabled: busy, onChange: (serve) => change({ serve }) })),
+        state.on && typeof state.edit === "boolean" && h("div", { key: "e", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow editing"), h(Toggle, { label: "Allow editing from Kriya", checked: state.edit, disabled: busy, onChange: (edit) => change({ edit }) })),
         state.on && h("div", { key: "f", className: "kh-ov-row" }, h("span", { className: "kh-ov-val" }, "Allow Full access"), h(Toggle, { label: "Allow Full access from Kriya", checked: state.fullAccess, disabled: busy, onChange: (fullAccess) => change({ fullAccess }) })),
         state.on && state.fullAccess && h("div", { key: "w", className: "kh-ov-note2 kh-ov-err" }, "Tasks from Kriya can then run with no sandbox and no questions on this computer."),
       ])

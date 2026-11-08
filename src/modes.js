@@ -107,6 +107,9 @@ export const SWITCHES = [
   ["browser-tools", "KRIYA_BROWSER", true],
   // The intent router (plugins/router): on (owner, 2026-11-05, unmeasured)
   ["router", "KRIYA_ROUTER", true],
+  // The Editing Studio (track E): off until the owner turns it on; off, nothing
+  // under src/edit/ loads
+  ["edit", "KRIYA_EDIT", false],
 ]
 
 /** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */

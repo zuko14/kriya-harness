@@ -94,6 +94,18 @@ export const SEAMS = [
     users: "plugins/loop (--jit-tools)",
   },
   {
+    seam: "sidebar.panellist: a list slot of global panel rows, each opening its main panel",
+    file: "dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts",
+    must: [/'sidebar\.panellist': \{\s*kind: 'list';/],
+    users: "plugins/edit (Editing Studio row, ED6), plugins/projects",
+  },
+  {
+    seam: "connection.fetch.register: an exact route inside Connection's fence, owner peers only",
+    file: "dsh-client-connection/lib/types/rpc.d.ts",
+    must: [/register\(route: ConnectionFetchRoute\): \(\) => Promise<void>;/, /readonly fetch: \(request: Request\) => Promise<Response>;/, /a 403 response for an exact route and a non-owner Peer/],
+    users: "plugins/edit (POST /api/kriya.edit.launch, ED6), plugins/projects and the other page routes",
+  },
+  {
     seam: "tools.restrict masks tools on one agent's context",
     file: "dsh-tools/lib/index.js",
     must: [/restrict\(filter\)/],

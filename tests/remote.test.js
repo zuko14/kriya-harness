@@ -150,3 +150,27 @@ test("RC-08: a kriya daemon already listening is left alone", async () => {
   assert.equal(r.status("s1").daemon, "external")
   await r.close()
 })
+
+test("RC-D1: Allow editing sits beside Allow serving, by the same rules, and only with editing on", async () => {
+  const before = process.env.KRIYA_EDIT
+  try {
+    delete process.env.KRIYA_EDIT
+    const off = setup()
+    await off.r.set("s1", { on: true }, session)
+    assert.equal("edit" in off.r.status("s1"), false, "off: the same answer as ever")
+
+    process.env.KRIYA_EDIT = "on"
+    const { r, daemons } = setup()
+    await r.set("s1", { on: true }, session)
+    assert.equal(r.status("s1").edit, false, "never on by default")
+    assert.equal(daemons[0].allowEdit, false)
+    await r.set("s1", { edit: true }, session)
+    assert.equal(r.status("s1").edit, true)
+    // Nothing left on: no allowance stays behind for the next time
+    await r.set("s1", { on: false }, session)
+    assert.equal(r.status("s1").edit, false)
+  } finally {
+    if (before === undefined) delete process.env.KRIYA_EDIT
+    else process.env.KRIYA_EDIT = before
+  }
+})

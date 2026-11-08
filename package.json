@@ -17,6 +17,7 @@
     "bundle/",
     "plugins/",
     "contract/",
+    "studio/dist/",
     "SAFETY.md",
     "THIRD_PARTY_NOTICES.md",
     "README.md"
@@ -28,6 +29,9 @@
   },
   "scripts": {
     "test": "node --test \"tests/*.test.js\"",
+    "test:media": "node --test --test-concurrency=1 --test-timeout=280000 \"tests/edit/media/*.test.js\"",
+    "bench:m": "node tests/edit/bench-m/run.js",
+    "build:studio": "node studio/build.js",
     "check:pins": "node scripts/check-pins.js",
     "check:seams": "node scripts/check-seams.js",
     "check:notices": "node scripts/notices.js --check",
@@ -47,6 +51,7 @@
     "@fontsource-variable/fraunces": "5.3.0",
     "@fontsource-variable/geist": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
-    "ajv": "8.17.1"
+    "ajv": "8.17.1",
+    "esbuild": "0.28.2"
   }
 }

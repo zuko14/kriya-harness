@@ -32,9 +32,9 @@ export const stateFile = () => join(kriyaHome(), "remote.json")
 export function readState(file = stateFile()) {
   try {
     const kept = JSON.parse(readFileSync(file, "utf8"))
-    return { sessions: kept.sessions ?? {}, fullAccess: kept.fullAccess === true, serve: kept.serve === true }
+    return { sessions: kept.sessions ?? {}, fullAccess: kept.fullAccess === true, serve: kept.serve === true, edit: kept.edit === true }
   } catch {
-    return { sessions: {}, fullAccess: false, serve: false }
+    return { sessions: {}, fullAccess: false, serve: false, edit: false }
   }
 }
 
@@ -90,7 +90,7 @@ export function remote(host) {
   // Listening follows the switches; an update never stops a running task
   async function syncDaemon() {
     const wanted = folders()
-    const options = { folders: wanted, allowFullAccess: state.fullAccess, allowServe: state.serve }
+    const options = { folders: wanted, allowFullAccess: state.fullAccess, allowServe: state.serve, allowEdit: state.edit }
     const device = host.device()
     if (!wanted.length || !device || external()) {
       if (listening) {
@@ -201,8 +201,9 @@ export function remote(host) {
       }
       if (typeof change.serve === "boolean") state.serve = change.serve
       if (typeof change.fullAccess === "boolean") state.fullAccess = change.fullAccess
+      if (typeof change.edit === "boolean") state.edit = change.edit
       // Nothing left on: no allowance stays behind for the next time
-      if (!Object.keys(state.sessions).length) state.serve = state.fullAccess = false
+      if (!Object.keys(state.sessions).length) state.serve = state.fullAccess = state.edit = false
       save()
       await syncDaemon()
       schedule(0)
@@ -226,6 +227,8 @@ export function remote(host) {
         folderOffered: on && offeredProjects([state.sessions[id].folder ?? ""]).length > 0,
         serve: state.serve,
         fullAccess: state.fullAccess,
+        // Only with editing on: off, this answer is what it always was (ET-REG-01)
+        ...(process.env.KRIYA_EDIT === "on" && { edit: state.edit }),
       }
     },
     /** A deleted session leaves the stream */
@@ -278,9 +281,9 @@ export function apply(ctx) {
           const session = await sessionOf(id)
           if (!body || !session) return reply({ error: "That session isn't known here." }, 400)
           if (body.on === true && !readDevice()) return reply({ error: "Sign in with kriya login first." }, 400)
-          // The two allowances exist only while Remote Control is on
-          if ((body.serve === true || body.fullAccess === true) && !r.state.sessions[id]) return reply({ error: "Turn on Remote Control first." }, 400)
-          await r.set(id, { on: body.on, serve: body.serve, fullAccess: body.fullAccess }, session)
+          // The allowances exist only while Remote Control is on
+          if ((body.serve === true || body.fullAccess === true || body.edit === true) && !r.state.sessions[id]) return reply({ error: "Turn on Remote Control first." }, 400)
+          await r.set(id, { on: body.on, serve: body.serve, fullAccess: body.fullAccess, edit: body.edit }, session)
           return reply(r.status(id))
         },
       }),

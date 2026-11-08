@@ -756,6 +756,263 @@
       }
     },
     {
+      "method": "GET",
+      "path": "/editing/manifest",
+      "auth": true,
+      "request": null,
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "manifest": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 524288
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9+/]{86}==$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["manifest", "signature"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/editing/jobs/{id}/previews",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["preview", "poster", "clip", "report"]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1073741824
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "durationFlicks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["kind", "bytes", "sha256"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "uploadUrl": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": ["id", "uploadUrl"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/editing/jobs/{id}/previews/{pid}",
+      "auth": true,
+      "request": null,
+      "response": null
+    },
+    {
+      "method": "POST",
+      "path": "/editing/jobs/{id}/questions",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["take", "hook", "file", "name", "taste"]
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "options": {
+            "minItems": 2,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "clip": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": ["label"],
+              "additionalProperties": false
+            }
+          },
+          "defaultOption": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 3600
+          }
+        },
+        "required": ["kind", "prompt", "options", "defaultOption", "timeoutSeconds"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "expiresAt"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/editing/questions/{id}",
+      "auth": true,
+      "request": null,
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["open", "answered", "defaulted", "expired"]
+          },
+          "option": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          }
+        },
+        "required": ["status"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/editing/jobs/{id}/notes",
+      "auth": true,
+      "request": null,
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "atFlicks": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000
+                }
+              },
+              "required": ["id", "atFlicks", "body"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["notes"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/editing/found",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{16}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 604800
+          }
+        },
+        "required": ["project", "name", "seconds"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      }
+    },
+    {
       "method": "POST",
       "path": "/daemon/hello",
       "auth": true,
@@ -777,6 +1034,9 @@
                 "type": "boolean"
               },
               "handoff": {
+                "type": "boolean"
+              },
+              "edit": {
                 "type": "boolean"
               }
             },
@@ -887,7 +1147,8 @@
                       "handoff",
                       "pull",
                       "serve_start",
-                      "serve_stop"
+                      "serve_stop",
+                      "edit"
                     ]
                   },
                   "payload": {
