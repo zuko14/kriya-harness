@@ -38,7 +38,7 @@ Usage:
   kriya pull [<workspace id>]
                         bring a workspace's changes back on a new branch
                         kriya/pull-<id> (default: your last handoff)
-  kriya daemon [--folder <path>]… [--allow-full-access] [--allow-serve]
+  kriya daemon [--folder <path>]… [--allow-full-access] [--allow-serve] [--allow-edit]
                         let Kriya (/harness, your phone) run tasks, health checks,
                         rule decisions, handoff and pull on this computer, in this
                         folder and each --folder only, while it runs
@@ -220,6 +220,16 @@ async function main(argv) {
     }
     case "doctor":
       return (await doctor()) ? 0 : 1
+    // Track E: nothing under src/edit/ loads unless the switch is on
+    case "edit": {
+      useLoop(args)
+      if (process.env.KRIYA_EDIT !== "on") {
+        say("Editing is off. Set KRIYA_EDIT=on, or add --edit, to use it.")
+        return 1
+      }
+      const { editCommand } = await import("../src/edit/runtime/cli.js")
+      return editCommand(args)
+    }
     // This month's Kriya Harness spend from Kriya's own ledger (GET /me);
     // --json is one line for scripts, KriyaBench's spend meter among them
     case "usage": {
@@ -385,12 +395,14 @@ async function main(argv) {
       const folders = []
       let allowFullAccess = false
       let allowServe = false
+      let allowEdit = false
       for (let i = 0; i < args.length; i++) {
         if (args[i] === "--folder" && args[i + 1]) folders.push(args[++i])
         else if (args[i] === "--allow-full-access") allowFullAccess = true
         else if (args[i] === "--allow-serve") allowServe = true
+        else if (args[i] === "--allow-edit") allowEdit = true
         else {
-          say("Usage: kriya daemon [install|uninstall] [--folder <path>]… [--allow-full-access] [--allow-serve]")
+          say("Usage: kriya daemon [install|uninstall] [--folder <path>]… [--allow-full-access] [--allow-serve] [--allow-edit]")
           return 1
         }
       }
@@ -402,7 +414,7 @@ async function main(argv) {
         const { dirname } = await import("node:path")
         const service = serviceDefinition({
           bin: new URL(import.meta.url).pathname,
-          args: [...offered.flatMap((f) => ["--folder", f]), ...(allowFullAccess ? ["--allow-full-access"] : []), ...(allowServe ? ["--allow-serve"] : [])],
+          args: [...offered.flatMap((f) => ["--folder", f]), ...(allowFullAccess ? ["--allow-full-access"] : []), ...(allowServe ? ["--allow-serve"] : []), ...(allowEdit ? ["--allow-edit"] : [])],
         })
         if (!service) {
           say("kriya daemon install supports macOS (launchd) and Linux (systemd). Run kriya daemon in a terminal instead.")
@@ -437,7 +449,9 @@ async function main(argv) {
       process.once("SIGINT", () => stop.abort())
       process.once("SIGTERM", () => stop.abort())
       writeFileSync(daemonPidFile(), String(process.pid), { mode: 0o600 })
-      await runDaemon({ device, folders: offered, allowFullAccess, allowServe, signal: stop.signal, log: say })
+      // Asking for it by name turns editing on for this daemon and its Edit Host
+      if (allowEdit) process.env.KRIYA_EDIT = "on"
+      await runDaemon({ device, folders: offered, allowFullAccess, allowServe, allowEdit, signal: stop.signal, log: say })
       rmSync(daemonPidFile(), { force: true })
       say("kriya daemon stopped.")
       return 0
@@ -511,6 +525,8 @@ async function main(argv) {
     case "--no-browser-tools":
     case "--router":
     case "--no-router":
+    case "--edit":
+    case "--no-edit":
     case "--no-budget":
     case "--no-anchor":
     case "--no-open":

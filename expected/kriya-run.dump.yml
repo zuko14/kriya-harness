@@ -513,6 +513,11 @@
 - id: kriya-projects
   name: '@kriya-ai/harness-projects'
   disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
+- id: kriya-edit
+  name: '@kriya-ai/harness-edit'
+  disabled: !!js >-
+    process.env.KRIYA_EDIT !== 'on' || ctx.get('profileContext')?.name !==
+    'kriya'
 - id: kriya-loop
   name: '@kriya-ai/harness-loop'
   disabled: !!js process.env.KRIYA_LOOP !== 'on'

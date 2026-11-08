@@ -135,7 +135,8 @@ computer from Kriya's `/harness` page or your phone. The daemon long-polls
 Kriya and runs each action with the same routines as the terminal. It runs
 only in the folder it starts in and each `--folder` you give (never your
 home folder, never a path typed in Kriya); Full access and serving work from
-Kriya only with `--allow-full-access` / `--allow-serve`; a task in Ask mode
+Kriya only with `--allow-full-access` / `--allow-serve` (an edit from Kriya only
+with `--allow-edit`, or **Allow editing from Kriya** in Remote Control); a task in Ask mode
 still sends its approvals to Kriya. `kriya daemon install` keeps it running
 in the background (launchd on macOS, a systemd user unit on Linux; logs in
 `~/.kriya/daemon.log`); `kriya daemon uninstall` stops it. Every `kriya`,

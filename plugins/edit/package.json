@@ -1,0 +1,23 @@
+{
+  "name": "@kriya-ai/harness-edit",
+  "description": "The Editing Studio row of the Kriya Harness Web UI: opens the Studio, the Edit Host's own app, in the same tab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "UNLICENSED"
+}

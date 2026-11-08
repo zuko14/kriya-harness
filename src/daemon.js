@@ -162,6 +162,9 @@ export function externalDaemon(file = daemonPidFile()) {
  *   folders: string[],
  *   allowFullAccess?: boolean,
  *   allowServe?: boolean,
+ *   allowEdit?: boolean,
+ *   editHost?: { hand: (job: object) => Promise<any>, cancel: (body: object) => Promise<{ known: boolean }> },
+ *   env?: Record<string, string | undefined>,
  *   signal?: AbortSignal,
  *   log?: (line: string) => void,
  *   kriya?: { bin: string, node: string },
@@ -176,10 +179,53 @@ export async function runDaemon(options) {
   const send = await deviceSender(device)
 
   const running = new Map() // dispatch id → { child, canceled }
-  let serving = null // { child, project }
+  let serving = null // { child, project, id }
   let helloAt = 0
 
+  // Editing (track E). Edits never enter `running`, so MAX_RUNNING stays the person's
+  // tasks (EH-02), and the Host, detached, outlives this process (EH-05). With KRIYA_EDIT
+  // off none of this does anything: no request, no field, the old cancel path.
+  const editSwitch = (options.env ?? process.env).KRIYA_EDIT === "on"
+  const editing = new Set()
+  const canceling = new Set() // forwarded to the Host and not yet over
+  let allowEdit = Boolean(options.allowEdit)
+  let editAdvertised = false
+  const editHost = options.editHost ?? {
+    async hand(job) {
+      const { ensureHost, hostCall } = await import("./edit/host/client.js")
+      await ensureHost()
+      return hostCall(kriyaHome(), "POST", "/internal/job", job)
+    },
+    async cancel(body) {
+      const { hostCall } = await import("./edit/host/client.js")
+      return hostCall(kriyaHome(), "POST", "/internal/cancel", body)
+    },
+    // After a restart the Host isn't up yet, and a watched folder needs it to be
+    async wake() {
+      const { watchedFolders } = await import("./edit/host/watch.js")
+      if (!watchedFolders({ home: kriyaHome() }).length) return
+      const { ensureHost } = await import("./edit/host/client.js")
+      await ensureHost()
+    },
+  }
+  // Strict schemas: a field only after this server said it knows editing (EH-01)
+  const refreshEdit = async () => {
+    if (editSwitch && allowEdit && !editAdvertised) {
+      try {
+        await call(device.url, "GET", "/editing/manifest", { token: device.token })
+        editAdvertised = true
+      } catch {
+        // Not on this Kriya yet; asked again at the next hello
+      }
+    }
+    if (editSwitch && allowEdit && editAdvertised) {
+      capabilities.edit = true
+      await editHost.wake?.().catch((error) => log(`kriya daemon: the Edit Host didn't start: ${error.message}`))
+    } else delete capabilities.edit
+  }
+
   const hello = async () => {
+    await refreshEdit()
     await send("POST", "/daemon/hello", { daemonVersion: CLIENT_VERSION, capabilities, projects: projects.map((p) => ({ id: p.id, name: p.name, path: p.shown, git: p.git })), rules: projectRules(projects) })
     helloAt = Date.now()
   }
@@ -189,6 +235,7 @@ export async function runDaemon(options) {
       projects = offeredProjects(next.folders)
       capabilities.fullAccess = Boolean(next.allowFullAccess)
       capabilities.serve = Boolean(next.allowServe)
+      allowEdit = Boolean(next.allowEdit)
       return hello().catch(() => (helloAt = 0))
     }
   const report = (id, status, result) => send("POST", `/dispatch/${id}`, { status, ...(result && { result }) }).catch((error) => log(`kriya daemon: couldn't report ${id.slice(0, 8)}: ${error.message}`))
@@ -265,6 +312,20 @@ export async function runDaemon(options) {
       const answer = r.code === 0 ? r.out.trim() || errors : [r.out.trim(), errors].filter(Boolean).join("\n\n")
       return report(id, stopped ? "canceled" : r.code === 0 ? "done" : "failed", { exitCode: r.code, answer: tail(answer), ...(progress && { plan: progress.plan }) })
     }
+    if (kind === "edit") {
+      if (!capabilities.edit) return report(id, "failed", { code: "not_allowed" })
+      await report(id, "running")
+      editing.add(id)
+      try {
+        await editHost.hand({ dispatch: id, folder: folder.path, job: payload.job, brief: payload.brief, effort: payload.effort, ...(payload.recipe && { recipe: payload.recipe }), ...(payload.revisionOf && { revisionOf: payload.revisionOf }), ...(payload.change && { change: payload.change }) })
+        log(`kriya daemon: an edit in ${folder.shown} went to the Edit Host`)
+      } catch (error) {
+        editing.delete(id)
+        log(`kriya daemon: the Edit Host didn't take it: ${error.message}`)
+        return report(id, "failed", { code: "runtime_missing" })
+      }
+      return
+    }
     if (kind === "handoff" || kind === "pull") {
       if (!folder.git) return refuse("Handoff and pull need a git repository.")
       await report(id, "running")
@@ -279,7 +340,7 @@ export async function runDaemon(options) {
       if (!capabilities.serve) return refuse("Serving from Kriya is off on this computer.")
       if (serving) return refuse(`Already serving ${serving.project.name}.`)
       const proc = spawn(kriya.node, [kriya.bin, "serve", folder.path], { cwd: folder.path, env: { ...process.env, KRIYA_DISPATCH_ID: id }, stdio: "ignore" })
-      serving = { child: proc, project: folder }
+      serving = { child: proc, project: folder, id }
       proc.on("close", () => {
         if (serving?.child === proc) serving = null
         report(id, "done", { output: `Stopped serving ${folder.name}.` })
@@ -298,12 +359,31 @@ export async function runDaemon(options) {
       const next = await call(device.url, "GET", `/dispatch/next?wait=${options.once ? 0 : POLL_WAIT_S}`, { token: device.token, signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout((POLL_WAIT_S + 15) * 1000)]) })
       failures = 0
       for (const id of next.cancel ?? []) {
+        // First, so cancelling an edit never reaches `kriya serve` (EH-03). After a
+        // restart the set is empty, so an id that's no one's goes to the Host too; the
+        // Host's "don't know it" closes it at once, or Kriya's poll runs hot (EH-04)
+        if (editSwitch && (editing.has(id) || (!running.has(id) && serving?.id !== id))) {
+          if (canceling.has(id)) continue
+          canceling.add(id)
+          const closed = () => {
+            editing.delete(id)
+            return report(id, "canceled", { code: "unknown" })
+          }
+          editHost
+            .cancel({ dispatch: id })
+            .then(({ known }) => (known ? null : closed()), closed)
+            .catch(() => {})
+          continue
+        }
         const job = running.get(id)
         if (job) {
           job.canceled = true
           job.child.kill("SIGTERM")
         } else if (serving && id) serving.child.kill("SIGTERM")
       }
+      // While the Host stops a job Kriya answers this poll at once: don't hammer it
+      if (canceling.size && !next.dispatch && next.cancel?.every((id) => canceling.has(id))) await new Promise((done) => setTimeout(done, options.once ? 0 : 2_000))
+      for (const id of canceling) if (!next.cancel?.includes(id)) canceling.delete(id)
       if (next.dispatch) {
         const work = handle(next.dispatch).catch((error) => report(next.dispatch.id, "failed", { error: String(error?.message ?? error).slice(0, 500) }))
         if (options.once) await work

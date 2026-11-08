@@ -109,6 +109,31 @@ go to the model with every request.
   has the device world turned on. Signing the device out in Kriya (Account →
   Devices) disconnects it within minutes.
 
+### Edits from Kriya
+
+Off unless you turn on **Allow editing from Kriya** in Remote Control or start
+`kriya daemon --allow-edit`, with editing on. An agent in Kriya can then ask this
+computer for one edit at a time, in a folder you offered, after you approve that exact
+job. Your footage and project stay here. The job reports its stage, percent, which
+checks passed and a reason code, never a file name or a transcript. One small preview
+of its own output goes straight to Kriya's storage, if your plan keeps previews, so you
+can watch it on your phone. Whether the checks passed is what this computer says; Kriya
+can only check the preview file itself.
+
+When a choice is really yours, your phone can show it: which of two files you meant, or
+which of two takes, with a few seconds of each as small clips. Each has a default, so a
+question nobody answers never stops an edit. Notes you send from your phone come back here
+as requests in your own words, checked like any other edit.
+
+`kriya edit watch <folder>` is off until you run it, for that folder only. When a new
+recording settles, Kriya hears its name and how long it is, and nothing else. Nothing runs
+until you tap its card. `kriya edit unwatch <folder>` stops it.
+
+Kriya notices how you edit, on this computer, in `~/.kriya/edit/taste.json`: the caption look
+and the zoom you keep choosing across projects. Nothing changes until you say yes, in the
+Studio or on a "Remember this?" card, which carries that one sentence and nothing else. Every
+rule is listed on the Studio's home page, and you can remove it there.
+
 ## What Kriya Harness keeps on this machine
 
 - `~/.kriya/device.json`: this device's sign-in token, readable only by your

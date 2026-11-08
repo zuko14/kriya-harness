@@ -135,6 +135,16 @@
       # Web UI only: it needs the web server's connection, which the other profiles lack
       disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
+# The Editing Studio row (plugins/edit, track E): an "Editing Studio" row in the
+# sidebar that opens the Edit Host's own Studio app in the same tab, through one
+# route inside Connection's fence. Off unless kriya was started with --edit
+# (KRIYA_EDIT=on): off, no row, route or DOM exists and nothing under src/edit loads
+- insert:
+    - id: kriya-edit
+      name: '@kriya-ai/harness-edit'
+      # Web UI only, and only with the switch on
+      disabled: !!js process.env.KRIYA_EDIT !== 'on' || ctx.get('profileContext')?.name !== 'kriya'
+
 # H14a, the Kriya loop's verify step (plugins/loop): kriya_verify runs the
 # project's check the person confirmed (`kriya verify use`) under the
 # session's own sandbox and reports pass, fail or blocked from its exit
