@@ -1,6 +1,9 @@
 // The Host owns jobs (EDD-03): each lives in its project's journal, so a job in
 // progress when the Host dies resumes on the next start with no finished node redone.
 
+import { existsSync } from "node:fs"
+import { basename, dirname, join, resolve } from "node:path"
+
 import { projectAt } from "../core/history.js"
 
 // A render is of the version it was asked for, not whatever the project has become by
@@ -69,6 +72,44 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
       const number = state.journal.addJob({ kind: request.kind ?? "render", projectVersion: state.log.head, request })
       void run(state, number, request)
       return view(state, state.journal.job(number))
+    },
+
+    /**
+     * The project's finished films, newest first: renders, and the masters makes and revisions
+     * wrote. Only files in its exports folder that still exist; `current` says whether the film
+     * shows the project as it is now (a render is of the version it was asked for).
+     */
+    renders(state) {
+      const exportsDir = resolve(join(state.folder, "exports"))
+      const out = []
+      for (const row of state.journal.jobs("done")) {
+        let file = null
+        let version = null
+        let quality = "master"
+        let verdict = null
+        if (row.kind === "render") {
+          file = row.dispatch
+          version = row.project_version
+          try {
+            quality = JSON.parse(row.request ?? "{}").quality ?? "draft"
+          } catch {}
+        } else if (row.kind === "make" || row.kind === "revise") {
+          try {
+            const done = JSON.parse(row.dispatch ?? "{}")
+            ;({ file = null, head: version = null, verdict = null } = done)
+          } catch {}
+        } else continue
+        if (typeof file !== "string" || dirname(resolve(file)) !== exportsDir || !existsSync(file)) continue
+        out.push({ job: row.id, kind: row.kind, quality, name: basename(file), verdict, current: version !== null && version === state.log.head, at: row.finished_at })
+      }
+      // The Engine names a film by what it shows, so two jobs can share a file: listed once, newest
+      const seen = new Set()
+      return out.reverse().filter((r) => !seen.has(r.name) && seen.add(r.name))
+    },
+    /** A finished film's path, only through renders(): never a path the browser names. */
+    renderFile(state, number) {
+      const found = this.renders(state).find((r) => r.job === number)
+      return found ? join(state.folder, "exports", found.name) : null
     },
 
     async list() {

@@ -93,9 +93,11 @@ async function readJson(req) {
   }
 }
 
-function sendFile(req, res, file) {
+function sendFile(req, res, file, { download = false } = {}) {
   const { size } = statSync(file)
   const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream"
+  // A download keeps the export's own name (made by the Engine: letters, digits, dashes)
+  if (download) res.setHeader("content-disposition", `attachment; filename="${basename(file).replace(/[^\w.-]/g, "_")}"`)
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "")
   if (req.headers.range && !range) return refuse(res, 416, "Bad range.")
   if (!range) {
@@ -323,6 +325,13 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         return say(200, withMedia(state, await projects.addAsset(state, path)))
       }
       if (parts[2] === "upload" && method === "POST") return upload(req, res, state, url)
+      // The finished films, to watch in Finish before downloading: listed, then streamed by job number
+      if (parts[2] === "renders" && parts.length === 3 && method === "GET") return say(200, { renders: jobs.renders(state) })
+      if (parts[2] === "renders" && parts.length === 4 && method === "GET") {
+        const file = /^\d{1,9}$/.test(parts[3]) ? jobs.renderFile(state, Number(parts[3])) : null
+        if (!file) return refuse(res, 404, "That film isn't there any more.")
+        return sendFile(req, res, file, { download: url.searchParams.get("download") === "1" })
+      }
       if (parts[2] === "plan" && method === "GET") {
         const { version } = await tools()
         // The solver's timeline too: the Studio's monitor and timeline place clips from it

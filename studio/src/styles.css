@@ -122,7 +122,15 @@ a { color: var(--teal); }
 .workspace[data-mode="direct"] :is(.area-bin, .area-timeline, .area-finish) { display: none; }
 .workspace[data-mode="edit"] .grid { grid-template-columns: 280px minmax(0, 1fr) 320px; grid-template-areas: "bin monitor transcript" "timeline timeline timeline"; }
 .workspace[data-mode="edit"] :is(.area-kriya, .area-strip, .area-finish) { display: none; }
-.workspace[data-mode="finish"] .grid { grid-template-columns: minmax(0, 1fr) 360px; grid-template-areas: "monitor finish"; }
+.area-final { grid-area: final; display: none; }
+.workspace[data-mode="finish"] .area-final { display: block; }
+.workspace[data-mode="finish"] .grid { grid-template-columns: minmax(0, 1fr) 360px; grid-template-areas: "final finish" "monitor finish"; }
+.final-film { width: 100%; max-height: 62vh; background: #000; border-radius: 8px; display: block; }
+.final .row { margin-top: 8px; }
+.final .row select { flex: 1 1 220px; width: auto; min-width: 0; max-width: 100%; }
+.final .note.stale { color: var(--saffron); }
+.final [hidden] { display: none; }
+.did li.watch::before { content: none; }
 .workspace[data-mode="finish"] :is(.area-bin, .area-kriya, .area-transcript, .area-strip, .area-timeline) { display: none; }
 
 .monitor-frame { display: flex; justify-content: center; align-items: center; min-height: 200px; }
@@ -185,7 +193,7 @@ a { color: var(--teal); }
 
 /* Review mode under 760 px (UX_SPEC §12): preview, Kriya, export. No timeline, no bin */
 @media (max-width: 760px) {
-  .grid, .workspace[data-mode] .grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "monitor" "kriya" "transcript" "finish"; padding: 8px; }
+  .grid, .workspace[data-mode] .grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "final" "monitor" "kriya" "transcript" "finish"; padding: 8px; }
   .workspace[data-mode] :is(.area-bin, .area-timeline, .area-strip) { display: none; }
   .workspace[data-mode="edit"] .area-kriya { display: block; }
   .modes { margin-left: 0; width: 100%; }
