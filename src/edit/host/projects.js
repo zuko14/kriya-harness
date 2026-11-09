@@ -28,7 +28,10 @@ import { createIndexer, layersFor } from "../index/index.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { editHome } from "./paths.js"
 import { createTaste } from "./taste.js"
-import { extractDna } from "../engine/dna.js"
+import { analyseReference } from "../engine/reference.js"
+import { briefOf, planCut } from "../director/plan.js"
+import { MOODS, writeMusicBed } from "../engine/music-bed.js"
+import { SFX, writeSfx } from "../engine/sfx.js"
 
 function atomicWrite(file, text) {
   const part = `${file}.${process.pid}.tmp`
@@ -206,7 +209,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
     },
 
     /** Brings a file in by reference: probed, fingerprinted, never copied or written. */
-    async addAsset(state, path, { reference = false } = {}) {
+    async addAsset(state, path, { reference = false, rights = "unknown", rightsNote, extraFacts = {} } = {}) {
       const real = guardPath(path, [...roots, state.folder])
       // A .cube is a LUT (ED13): read and checked here, before FFmpeg ever sees it, never probed as media
       const lut = extname(real).toLowerCase() === ".cube"
@@ -217,13 +220,14 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
           throw new EngineFailure("input", "refused", error.message)
         }
       }
-      const { facts } = lut ? { facts: {} } : await probe(real)
+      const { facts: probed } = lut ? { facts: {} } : await probe(real)
+      const facts = { ...probed, ...extraFacts }
       const id = `a${state.log.current.assets.length + 1}`
       const within = relative(state.folder, real)
       const stored = within.startsWith("..") || isAbsolute(within) ? real : within.split(sep).join("/")
       // A reference is measured for its style only (EDD-23); the person confirmed they may use it
-      if (reference && !facts.width) throw new EngineFailure("input", "refused", "A reference needs to be a video.")
-      const op = { op: "add_asset", id, kind: reference ? "reference" : lut ? "lut" : kindOf(facts), fingerprint: await fingerprint(real), path: stored, linked: true, rights: "unknown", ...(reference ? { rightsNote: "The person confirmed they may use it as a style reference." } : {}), facts }
+      if (reference && !facts.width && !facts.hasAudio) throw new EngineFailure("input", "refused", "A reference needs to be a video, an image or a piece of music.")
+      const op = { op: "add_asset", id, kind: reference ? "reference" : lut ? "lut" : kindOf(facts), fingerprint: await fingerprint(real), path: stored, linked: true, rights: reference ? "unknown" : rights, ...(reference ? { rightsNote: "The person confirmed they may use it as a style reference." } : rightsNote ? { rightsNote } : {}), facts }
       const result = change(state, { ops: [op], author: "code" })
       if (!result.ok) throw new EngineFailure("input", "refused", result.diagnostics[0].message)
       return state.log.current.assets.at(-1)
@@ -296,6 +300,31 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       return { applied: ops.length + fixes.length, dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })) }
     },
 
+    /** The Director's plan for the whole cut: proposed, never made until the person approves it. */
+    async plan(state, { text, history = [], previous = null, choices = {}, job = 0, signal } = {}) {
+      const references = []
+      for (const ref of state.log.current.assets.filter((a) => a.kind === "reference")) {
+        const found = await this.referenceAnalysis(state, ref.id, { signal }).catch(() => null)
+        if (found) references.push({ name: ref.path.split(/[\\/]/).at(-1), lines: found.lines })
+      }
+      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, signal })
+      // The exact brief an approval makes, so the Studio sends back what was shown
+      return { ...plan, brief: briefOf(plan.settings) }
+    },
+
+    /** A reference's classified analysis (reference.js), kept by its fingerprint so it's measured once. */
+    async referenceAnalysis(state, assetId, { signal } = {}) {
+      const asset = state.log.current.assets.find((a) => a.id === assetId && a.kind === "reference")
+      if (!asset) throw new EngineFailure("input", "unknown_asset", "There is no such reference in this project.")
+      const dir = join(dirOf(state.id), "cache", "refs")
+      const file = join(dir, `${asset.fingerprint}.json`)
+      if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8"))
+      const found = await analyseReference(sourcesOf(state)(assetId), asset.facts, { signal })
+      mkdirSync(dir, { recursive: true })
+      atomicWrite(file, JSON.stringify(found))
+      return found
+    },
+
     /** The person's fix of a misheard word; captions, the transcript and the Director read it from now on. */
     correctWord(state, word, text) {
       const clean = cleanWord(text)
@@ -316,6 +345,71 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const asset = request.asset ?? video[0]?.id
       if (!asset || !video.some((a) => a.id === asset)) throw new EngineFailure("input", "no_take", "Add a video first.")
       if (!state.index.words.some((w) => w.asset === asset)) await this.indexAsset(state, asset, { signal })
+      // References, classified (reference.js), numbers only and never placed on a track
+      // (EDD-23): a video's pace and captions, an image's or video's colour, music's tempo and mood
+      const styled = []
+      let captionsFromReference = false
+      const fromRefs = {}
+      const refIds = [...new Set([request.brief?.reference, ...(request.brief?.references ?? [])].filter(Boolean))]
+      for (const id of replay ? [] : refIds) {
+        const ref = state.log.current.assets.find((a) => a.id === id && a.kind === "reference")
+        if (!ref) continue
+        const name = ref.path.split(/[\\/]/).at(-1)
+        try {
+          const found = await this.referenceAnalysis(state, id, { signal })
+          const seconds = (request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS
+          if (found.pace?.every) {
+            fromRefs.punches = Math.min(8, Math.max(1, Math.round(seconds / found.pace.every / 2)))
+            styled.push(`Took the pace of ${name}: its picture changes every ${found.pace.every.toFixed(1)} s, so ${fromRefs.punches} punch-ins`)
+          }
+          if (found.captions && !request.brief.captions && !state.engine.motion().missing) {
+            fromRefs.captions = "clean"
+            captionsFromReference = true
+            styled.push(`${name} has captions, so this cut has them too`)
+          }
+          // An image says the most about colour, so it wins over a video's
+          if (found.colour && !request.brief.grade && (found.kind === "image" || !fromRefs.customGrade)) {
+            fromRefs.customGrade = found.colour.grade
+            styled.push(`Took the colour of ${name}: ${found.colour.words.join(", ")}`)
+          }
+          if (found.music && !request.brief.music) {
+            request = { ...request, brief: { ...request.brief, music: `generated:${found.music.mood}`, musicBpm: found.music.bpm ?? undefined } }
+            styled.push(`Music follows ${name}: ${/^[aeiou]/.test(found.music.mood) ? "an" : "a"} ${found.music.mood} bed${found.music.bpm ? ` at ${found.music.bpm} bpm` : ""}`)
+          }
+        } catch (error) {
+          if (signal?.aborted) throw error
+          styled.push(`${name} couldn't be measured (${error.message}), so its style wasn't used.`)
+        }
+      }
+      // "generated:<mood>": a bed Kriya writes itself (music-bed.js), so a cut can have music with no file to find
+      const mood = /^generated:(\w+)$/.exec(request.brief?.music ?? "")?.[1]
+      if (mood && Object.hasOwn(MOODS, mood) && !replay) {
+        const seconds = Math.ceil((request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS) + 15
+        const media = join(state.folder, "media")
+        mkdirSync(media, { recursive: true })
+        const bpm = request.brief.musicBpm
+        const tag = `kriya-music-${mood}${bpm ? `-${bpm}bpm` : ""}-${seconds}s.wav`
+        const file = join(media, tag)
+        const known = state.log.current.assets.find((a) => a.kind === "audio" && a.path.endsWith(tag))
+        if (!existsSync(file)) writeMusicBed(file, { mood, seconds, bpm })
+        const bed = known ?? (await this.addAsset(state, file, { rights: "own", rightsNote: "Made by Kriya's music generator: no one else's recording." }))
+        request = { ...request, brief: { ...request.brief, music: bed.id } }
+      }
+      // Sound design Kriya writes itself (sfx.js): a cut sound and an intro sound, each knowing its peak
+      const wanted = { cut: request.brief?.cutSound, intro: request.brief?.introSound }
+      if (!replay && (wanted.cut || wanted.intro)) {
+        const media = join(state.folder, "media")
+        mkdirSync(media, { recursive: true })
+        const sfx = {}
+        for (const [slot, kind] of Object.entries(wanted)) {
+          if (!kind || !Object.hasOwn(SFX, kind)) continue
+          const file = join(media, `kriya-sfx-${kind}.wav`)
+          const made = writeSfx(file, kind)
+          const known = state.log.current.assets.find((a) => a.kind === "audio" && a.path.endsWith(`kriya-sfx-${kind}.wav`))
+          sfx[slot] = (known ?? (await this.addAsset(state, file, { rights: "own", rightsNote: "Made by Kriya's sound generator: no one else's recording.", extraFacts: { peak: made.peak } }))).id
+        }
+        request = { ...request, brief: { ...request.brief, sfx } }
+      }
       // The song's beats, so the music can be fitted on its downbeats
       const song = request.brief?.music && state.log.current.assets.find((a) => a.id === request.brief.music && a.kind === "audio")
       if (song && !state.index.beats?.some((b) => b.asset === song.id)) await this.indexAsset(state, song.id, { signal })
@@ -325,29 +419,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       // replay uses what the job really used. Captions only where they can render
       const recorded = replay?.answers.find((a) => a.task === "brief_extra")
       const extra = recorded ? JSON.parse(recorded.value) : { ...taste.defaults(), ...(picks && { picks }) }
-      // A style reference (EDD-23): measured to numbers only, never placed on a track. Its
-      // pace sets how often the picture changes (punch-ins), and its captions turn ours on
-      const styled = []
-      let captionsFromReference = false
-      const reference = request.brief?.reference && state.log.current.assets.find((a) => a.id === request.brief.reference && a.kind === "reference")
-      if (reference && !replay) {
-        try {
-          const dna = await extractDna(sourcesOf(state)(reference.id), { signal })
-          const seconds = (request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS
-          if (dna.pace.median) {
-            extra.punches = Math.min(8, Math.max(1, Math.round(seconds / dna.pace.median / 2)))
-            styled.push(`Took the pace of your reference: its picture changes every ${dna.pace.median.toFixed(1)} s, so ${extra.punches} punch-ins`)
-          }
-          if (dna.captions.present && !request.brief.captions && !extra.captions && !state.engine.motion().missing) {
-            extra.captions = "clean"
-            captionsFromReference = true
-            styled.push("Your reference has captions, so this cut has them too")
-          }
-        } catch (error) {
-          if (signal?.aborted) throw error
-          styled.push(`Your reference couldn't be measured (${error.message}), so its style wasn't used.`)
-        }
-      }
+      Object.assign(extra, fromRefs)
       // Captions only where they can render: a missing runtime or Chrome drops them with a note,
       // rather than failing the whole cut at render (found in use: every render failed)
       const motionMissing = state.engine.motion().missing

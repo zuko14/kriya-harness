@@ -186,6 +186,21 @@ const OPS = {
       clips.splice(op.after === null ? 0 : clips.indexOf(clipOf(s, op.after)) + 1, 0, clip)
     },
   },
+  // A cold open (ED story): a moment from later plays first, then the story starts. The
+  // clip is marked an echo, so captions and anchors stay on the moment itself; mono puts it
+  // in black and white, the classic teaser
+  cold_open: {
+    fields: { asset: "id", from: "ref", to: "ref", "mono?": "bool" },
+    run(op, s) {
+      const asset = assetOf(s, op.asset, SEQUENCED)
+      checkRange(s, asset, sourceEdge(s, op.from, asset.id, "start"), sourceEdge(s, op.to, asset.id, "end"))
+      const clip = addClip(s, "base", { source: { asset: asset.id, in: op.from, out: op.to }, echo: true })
+      const clips = sequenceOf(s).clips
+      clips.pop()
+      clips.splice(0, 0, clip)
+      if (op.mono) setEffect(clip, { type: "grade", saturation: 0, gain: 1.12, vignette: 0.4 })
+    },
+  },
   remove_range: {
     fields: { "asset?": "id", from: "ref", to: "ref" },
     run(op, s) {
@@ -463,10 +478,14 @@ const OPS = {
 
   // Colour
   grade: {
-    fields: { clip: "id", "lift?": "num", "gamma?": "num", "gain?": "num", "saturation?": "num" },
+    // temperature in kelvin (6500 neutral, lower is warmer), vibrance -2 to 2, vignette 0 to 1
+    fields: { clip: "id", "lift?": "num", "gamma?": "num", "gain?": "num", "saturation?": "num", "temperature?": "num", "vibrance?": "num", "vignette?": "num" },
     run(op, s) {
-      const values = given(op, ["lift", "gamma", "gain", "saturation"])
-      if (Object.keys(values).length === 0) refuse("needs_a_value", "give at least one of lift, gamma, gain or saturation")
+      const values = given(op, ["lift", "gamma", "gain", "saturation", "temperature", "vibrance", "vignette"])
+      if (Object.keys(values).length === 0) refuse("needs_a_value", "give at least one of lift, gamma, gain, saturation, temperature, vibrance or vignette")
+      if (values.temperature !== undefined && (values.temperature < 2000 || values.temperature > 12000)) refuse("bad_value", "temperature is between 2000 and 12000 kelvin")
+      if (values.vibrance !== undefined && Math.abs(values.vibrance) > 2) refuse("bad_value", "vibrance is between -2 and 2")
+      if (values.vignette !== undefined && (values.vignette < 0 || values.vignette > 1)) refuse("bad_value", "vignette is between 0 and 1")
       setEffect(writable(s, op.clip), { type: "grade", ...values })
     },
   },

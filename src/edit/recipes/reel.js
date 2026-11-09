@@ -32,12 +32,13 @@ export const FORMATS = {
   "4:5": { width: 1080, height: 1350, preset: "portrait-4x5" },
 }
 
-/** Colour looks, as the grade FFmpeg's eq can render (gamma, saturation, brightness, contrast). Data, applied by code. */
+/** Colour looks as FFmpeg renders them: eq, colortemperature, vibrance and vignette. Data, applied by code. */
 export const GRADES = {
-  vivid: { saturation: 1.25, gain: 1.08 },
-  cinematic: { saturation: 0.88, gain: 1.12, gamma: 0.95 },
-  bright: { lift: 0.04, gamma: 1.1 },
-  mono: { saturation: 0 },
+  vivid: { saturation: 1.15, gain: 1.06, vibrance: 0.35 },
+  cinematic: { saturation: 0.9, gain: 1.12, gamma: 0.95, temperature: 7200, vignette: 0.45 },
+  warm: { temperature: 5200, saturation: 1.05, vibrance: 0.2, vignette: 0.2 },
+  bright: { lift: 0.04, gamma: 1.1, vibrance: 0.2 },
+  mono: { saturation: 0, gain: 1.1, vignette: 0.3 },
 }
 
 /** The recipe in the brief's frame: canvas and export follow `brief.format`. */
@@ -160,7 +161,9 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   calls += story.calls
   slots.story = story.source
   if (story.reason) notes.push(`Story: ${story.reason} Kept every line, in order.`)
-  const hook = variant.noHook ? null : story.value.hook
+  // A hook the person approved in the Director's plan wins over the model's pick
+  const planned = typeof brief.hook === "string" && lines.some((l) => l.id === brief.hook) ? brief.hook : null
+  const hook = variant.noHook ? null : (planned ?? story.value.hook)
   let chosen = lines.filter((l) => !story.value.drop.includes(l.id) || mustKeep.includes(l.id))
 
   // Length: fit under the maximum, the hook and must-keeps always in
@@ -168,20 +171,34 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   const required = new Set([...mustKeep, ...(hook ? [hook] : [])])
   if (chosen.reduce((sum, l) => sum + lengthOf(l), 0) > max) chosen = fitLines(chosen, max, required)
   const total = chosen.reduce((sum, l) => sum + lengthOf(l), 0)
-  if (total < recipe.target.min) notes.push(`The footage gives ${(total / FLICKS).toFixed(1)} s of usable speech, under the ${recipe.target.min / FLICKS} s the recipe aims for.`)
+  // Short footage sets the length: a 29 s take makes a 29 s cut, not a cut that "needs you"
+  // for missing a 30 s target nobody can meet (found in use)
+  const asked = brief.targetDuration ?? recipe.target.default
+  const target = total > 0 && total < asked ? total : asked
+  if (target < asked) notes.push(`The footage gives ${(total / FLICKS).toFixed(1)} s of usable speech, so the cut is that long (you asked for about ${Math.round(asked / FLICKS)} s).`)
   if (hook && chosen.some((l) => l.id === hook)) chosen = [chosen.find((l) => l.id === hook), ...chosen.filter((l) => l.id !== hook)]
   if (hook && chosen[0]?.id === hook && lines[0]?.id !== hook) notes.push(`Moved "${hook}" to the front as the hook.`)
 
   // The cut: replace whatever is there with the kept runs
   const sequence = project.sequences.find((q) => q.id === project.active)
   const base = new Set(sequence.tracks.filter((t) => t.role === "base").map((t) => t.id))
+  // The last cut's captions and music go with it: they hang on its words, and a second
+  // make left them all on screen twice (found in use, 2026-11-09)
+  const rebuilt = new Set(sequence.tracks.filter((t) => ["base", "caption", "music"].includes(t.role)).map((t) => t.id))
   const ops = [
-    ...sequence.clips.filter((c) => base.has(c.track)).map((c) => ({ op: "ripple_delete", clip: c.id })),
-    { op: "set_brief", format: recipe.id, targetDuration: brief.targetDuration ?? recipe.target.default, mustKeep: brief.mustKeep ?? [], mustCut: brief.mustCut ?? [], effort: brief.effort ?? "best", ...(brief.language ? { language: brief.language } : {}) },
+    ...sequence.clips.filter((c) => rebuilt.has(c.track)).map((c) => ({ op: "ripple_delete", clip: c.id })),
+    { op: "set_brief", format: recipe.id, targetDuration: target, mustKeep: brief.mustKeep ?? [], mustCut: brief.mustCut ?? [], effort: brief.effort ?? "best", ...(brief.language ? { language: brief.language } : {}) },
     { op: "set_format", width: recipe.canvas.width, height: recipe.canvas.height, fps: recipe.deliverable.fps },
     ...(project.deliverables.some((d) => d.preset === recipe.deliverable.preset) ? [] : [{ op: "add_deliverable", ...deliverableFor(brief) }]),
   ]
   for (const line of chosen) for (const run of runsOf(line)) ops.push({ op: "keep_range", asset, from: { word: run[0].id, edge: "start" }, to: { word: run.at(-1).id, edge: "end" } })
+  // A cold open: a later moment first (an echo, so captions stay on the moment), in black and white
+  const takeWords = new Set(index.words.filter((w) => w.asset === asset).map((w) => w.id))
+  const cold = brief.coldOpen && takeWords.has(brief.coldOpen.from) && takeWords.has(brief.coldOpen.to) ? brief.coldOpen : null
+  if (cold) {
+    ops.push({ op: "cold_open", asset, from: { word: cold.from, edge: "start" }, to: { word: cold.to, edge: "end" }, mono: cold.mono !== false })
+    notes.push(`Opened cold on "${index.words.find((w) => w.id === cold.from).text} …"${cold.mono !== false ? " in black and white" : ""}, then the story starts.`)
+  }
   let step = apply(project, ops, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel's cut was refused: ${step.diagnostics[0].message}`)
 
@@ -215,7 +232,17 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   const clips = step.project.sequences.find((q) => q.id === step.project.active).clips.filter((c) => base.has(c.track))
   const framing = crops ? clips.map((c) => (subject ? { op: "reframe", clip: c.id, mode: "subject" } : { op: "reframe", clip: c.id, mode: "fixed", x: Math.max(0, Math.round((facts.width - cropWidth) / 2)) })) : []
   // The template's colour look, on every picture clip
-  const grading = GRADES[brief.grade] ? clips.map((c) => ({ op: "grade", clip: c.id, ...GRADES[brief.grade] })) : []
+  // The look on every story clip; a cold open keeps its own black and white
+  const look = GRADES[brief.grade] ?? (brief.customGrade && typeof brief.customGrade === "object" ? brief.customGrade : null)
+  const grading = look ? clips.filter((c) => !c.echo).map((c) => ({ op: "grade", clip: c.id, ...look })) : []
+  // Sound design: an effect on every cut of the story, a riser into it after a cold open.
+  // Each is placed by its peak, so the loudest moment lands on the cut
+  const storyClips = clips.filter((c) => !c.echo)
+  const cutSounds = brief.sfx?.cut ? storyClips.slice(1).map((c) => ({ op: "add_sfx", asset: brief.sfx.cut, peak_at: { clip: c.id, edge: "start" } })) : []
+  const introSound = brief.sfx?.intro && cold && storyClips[0] ? [{ op: "add_sfx", asset: brief.sfx.intro, peak_at: { clip: storyClips[0].id, edge: "start" } }] : []
+  const sounds = [...cutSounds, ...introSound]
+  // Background noise out of the voice: FFmpeg's own denoise, EQ, de-ess and compression (clean_voice)
+  const cleaning = brief.cleanVoice ? clips.map((c) => ({ op: "clean_voice", clip: c.id, strength: 0.6 })) : []
 
   // Captions, when the brief asks for a look: pages of the kept words, timed to the speech
   const captions = LOOKS[brief.captions] ? chosen.flatMap((l) => runsOf(l)).flatMap((run) => pages(run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
@@ -223,7 +250,7 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   const song = brief.music ? project.assets.find((a) => a.id === brief.music && a.kind === "audio") : null
   if (brief.music && !song) notes.push(`There is no sound "${brief.music}" in this project, so the reel has no music.`)
   const music = song ? [{ op: "set_music", asset: song.id }, { op: "music_shape", fit: true, fadeIn: Math.round(FLICKS * 0.3) }, { op: "duck" }] : []
-  const all = [...ops, ...punches, ...framing, ...grading, ...captions, ...music]
+  const all = [...ops, ...punches, ...framing, ...grading, ...cleaning, ...captions, ...music, ...sounds]
   step = apply(project, all, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
   return { ops: all, project: step.project, notes, calls, slots }

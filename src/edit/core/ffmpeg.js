@@ -60,11 +60,15 @@ export const animatedZoom = (zoom) => zoom !== undefined && (zoom.x !== undefine
 
 // A colour match (ED13) is its baked .cube, measured by the Engine; then the person's own values.
 // shortcut: eq only approximates lift, gain and ev; a full lift/gamma/gain grade isn't built
-function gradeSteps({ gamma, saturation, lift, gain, ev, match }, input) {
+function gradeSteps({ gamma, saturation, lift, gain, ev, match, temperature, vibrance, vignette }, input) {
   const steps = match ? [filter("lut3d", { file: input(match.key) })] : []
+  if (temperature !== undefined) steps.push(filter("colortemperature", { temperature: Math.round(temperature) }))
   const brightness = (lift ?? 0) + (ev ?? 0) / 8
   const options = Object.fromEntries(Object.entries({ gamma, saturation, brightness: brightness || undefined, contrast: gain }).filter(([, value]) => value !== undefined))
   if (Object.keys(options).length) steps.push(filter("eq", options))
+  if (vibrance !== undefined) steps.push(filter("vibrance", { intensity: vibrance.toFixed(3) }))
+  // A lens-like darkening at the edges: the angle grows with the strength
+  if (vignette) steps.push(filter("vignette", { angle: (0.25 + 0.45 * vignette).toFixed(3) }))
   return steps
 }
 

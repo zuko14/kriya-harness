@@ -25,7 +25,7 @@ export const EFFECTS = {
   reframe: { mode: { enum: ["subject", "fixed"] }, "x?": "int", "y?": "int" },
   zoom: { scale: "num", "ease?": "str", "x?": "int", "y?": "int" },
   matte: { "model?": "str" },
-  grade: { "lift?": "num", "gamma?": "num", "gain?": "num", "saturation?": "num", "ev?": "num", "match?": "id" },
+  grade: { "lift?": "num", "gamma?": "num", "gain?": "num", "saturation?": "num", "ev?": "num", "match?": "id", "temperature?": "num", "vibrance?": "num", "vignette?": "num" },
   lut: { asset: "id" },
   stabilize: { "strength?": "num" },
   fade: { "in?": "flicks", "out?": "flicks" },
@@ -96,6 +96,8 @@ export const SHAPES = {
             effects: { list: "effect" },
             speed: "rate",
             "linkGroup?": "str",
+            // A cold open's teaser: the same words again, before the story. Anchors skip it
+            "echo?": "bool",
             "audioLead?": "flicks",
             "audioLag?": "flicks",
             createdBy: AUTHOR,

@@ -8,7 +8,7 @@ import { newProject } from "../src/edit/core/project.js"
 import { cutsOf, verdictOf } from "../src/edit/gates/index.js"
 import { compare, rankOf, search, STOPS } from "../src/edit/loop/loop.js"
 import { makeReel, planVerdict, rebase } from "../src/edit/loop/make.js"
-import { REEL_TALKING_HEAD } from "../src/edit/recipes/reel.js"
+import { planReel, REEL_TALKING_HEAD } from "../src/edit/recipes/reel.js"
 import { ROOT } from "./helpers.js"
 import { indexOf, lengthOf } from "./edit/script.js"
 
@@ -86,12 +86,21 @@ test("ET-LOOP-04: an attempt that fails at F0 renders nothing", async () => {
   const index = indexOf()
   let renders = 0
   const ask = async ({ fallback }) => ({ value: fallback(), source: "default", calls: 0 })
-  // A brief no cut of this footage can meet: F0 sees it from the plan alone
-  const result = await makeReel({ project: rawProject(), head: null, index, asset: "a1", brief: { targetDuration: 300 * FLICKS }, ask, render: async () => (renders++, assert.fail("no render")), sourcePath: () => "/nope" })
+  // A brief no cut of this footage can meet (its story can't fit in 5 s): F0 sees it from the plan alone
+  const result = await makeReel({ project: rawProject(), head: null, index, asset: "a1", brief: { targetDuration: 5 * FLICKS }, ask, render: async () => (renders++, assert.fail("no render")), sourcePath: () => "/nope" })
   assert.equal(renders, 0)
   assert.ok(result.outcome.history.slice(1).every((h) => h.verdict.level === "F0" && h.verdict.briefMisses > 0))
   const verdict = planVerdict(result.outcome.history[1].candidate.project, index, REEL_TALKING_HEAD)
   assert.equal(verdict.briefMisses, 1)
+})
+
+test("a brief longer than the footage makes a cut as long as the footage, not an impossible one", async () => {
+  const index = indexOf()
+  const ask = async ({ fallback }) => ({ value: fallback(), source: "default", calls: 0 })
+  const made = await planReel({ project: rawProject(), index, asset: "a1", brief: { targetDuration: 300 * FLICKS }, ask })
+  assert.ok(made.project.brief.targetDuration < 300 * FLICKS, "the target follows the footage")
+  assert.match(made.notes.join(" "), /so the cut is that long \(you asked for about 300 s\)/)
+  assert.equal(planVerdict(made.project, index, REEL_TALKING_HEAD).briefMisses, 0)
 })
 
 test("ET-LOOP-07: rebase keeps the person's edit and drops only what conflicts with it, listed", () => {

@@ -11,7 +11,7 @@ const FLICKS = 705_600_000
 
 // What the console may ask for: edits that render today, captions and titles included
 // (drawn in the runtime's Chrome when it has no HyperFrames)
-export const CONSOLE_OPS = ["keep_range", "remove_range", "use_take", "reorder", "trim", "split", "ripple_delete", "punch_in", "reframe", "speed", "set_format", "mark", "caption_style", "caption_edit", "caption_emphasis", "add_title", "grade"]
+export const CONSOLE_OPS = ["keep_range", "remove_range", "use_take", "reorder", "trim", "split", "ripple_delete", "punch_in", "reframe", "speed", "set_format", "mark", "caption_style", "caption_edit", "caption_emphasis", "add_title", "grade", "clean_voice", "set_level"]
 export const CAPTION_LOOKS = ["clean", "karaoke", "boxed"]
 
 const ID = { type: "string", maxLength: 64 }
@@ -65,6 +65,11 @@ export const OPS_SCHEMA = {
           gamma: { type: "number", minimum: 0.5, maximum: 2 },
           gain: { type: "number", minimum: 0.5, maximum: 2 },
           saturation: { type: "number", minimum: 0, maximum: 2 },
+          temperature: { type: "number", minimum: 2000, maximum: 12000 },
+          vibrance: { type: "number", minimum: -2, maximum: 2 },
+          vignette: { type: "number", minimum: 0, maximum: 1 },
+          strength: { type: "number", minimum: 0, maximum: 1 },
+          db: { type: "number", minimum: -40, maximum: 20 },
         },
         required: ["op"],
         additionalProperties: false,
@@ -164,6 +169,10 @@ export function describe(op, index) {
       return `Added the title "${op.text}" at ${place(op.at)}`
     case "grade":
       return `Graded ${op.clip}${op.saturation !== undefined ? `, saturation ${op.saturation}` : ""}${op.gain !== undefined ? `, contrast ${op.gain}` : ""}${op.gamma !== undefined ? `, gamma ${op.gamma}` : ""}${op.lift !== undefined ? `, lift ${op.lift}` : ""}`
+    case "clean_voice":
+      return `Cleaned the background noise out of ${op.clip}'s voice`
+    case "set_level":
+      return `Set ${op.clip} to ${op.db} dB`
     case "add_deliverable":
       return `Set up the export: ${op.size?.width ?? "?"}×${op.size?.height ?? "?"}${op.loudness ? `, mastered to ${op.loudness.lufs} LUFS` : ""}${op.burnCaptions ? ", captions burned in" : ""}`
     default:
@@ -226,29 +235,44 @@ function clipsView(project, index) {
 }
 
 const JOIN = /^\s*(?:-|–|—|to|until|till|and|through)\s*$/i
+// Seconds as people type them, typos included: s, sec, secs, second, seconds, secods, secnds
+const UNIT = "(?:s|sec\\w*|se?c?o?n?d?s?\\b)(?![a-z])"
 
 /**
  * Times in the person's words, on the cut's timeline: 0:05, 1:02.5, 5s, 5 sec, 5 seconds,
  * and ranges joined by to, -, until or and ("from 5 to 9 seconds", "between 0:05 and 0:09").
  * @returns {{ at: number, to?: number }[]} in flicks
  */
-export function timesIn(text) {
-  const tokens = [...String(text).matchAll(/(\d{1,2}):(\d{2}(?:\.\d+)?)|(\d+(?:\.\d+)?)(\s*(?:s|secs?|seconds?)\b)?/gi)].map((m) => ({
+export function timesIn(text, { duration = null } = {}) {
+  const said = String(text)
+  // Relative stretches first: "the first 5 seconds", "the last 5 s" (needs the cut's length)
+  const relative = []
+  for (const m of said.matchAll(new RegExp(`\\b(first|last|final|opening)\\s+(\\d+(?:\\.\\d+)?)\\s*${UNIT}`, "gi"))) {
+    const n = Math.round(Number(m[2]) * FLICKS)
+    if (/first|opening/i.test(m[1])) relative.push({ at: 0, to: n })
+    else if (duration) relative.push({ at: Math.max(0, duration - n), to: duration })
+  }
+  const text2 = said.replace(new RegExp(`\\b(first|last|final|opening)\\s+\\d+(?:\\.\\d+)?\\s*${UNIT}`, "gi"), (m) => " ".repeat(m.length))
+  const tokens = [...text2.matchAll(new RegExp(`(\\d{1,2}):(\\d{2}(?:\\.\\d+)?)|(\\d+(?:\\.\\d+)?)(\\s*${UNIT})?`, "gi"))].map((m) => ({
     t: m[1] !== undefined ? Number(m[1]) * 60 + Number(m[2]) : Number(m[3]),
     unit: m[1] !== undefined || !!m[4],
     start: m.index,
     end: m.index + m[0].length,
   }))
-  const between = (a, b) => String(text).slice(a.end, b.start)
+  const between = (a, b) => text2.slice(a.end, b.start)
+  const before = (tok) => text2.slice(Math.max(0, tok.start - 24), tok.start)
   // A bare number is a time only as the first half of a range whose second half is one
   const times = tokens.filter((tok, i) => tok.unit || (tokens[i + 1]?.unit && JOIN.test(between(tok, tokens[i + 1]))))
-  const out = []
+  const out = [...relative]
   for (let i = 0; i < times.length; i++) {
     const next = times[i + 1]
+    const at = Math.round(times[i].t * FLICKS)
     if (next && JOIN.test(between(times[i], next)) && next.t > times[i].t) {
-      out.push({ at: Math.round(times[i].t * FLICKS), to: Math.round(next.t * FLICKS) })
+      out.push({ at, to: Math.round(next.t * FLICKS) })
       i++
-    } else out.push({ at: Math.round(times[i].t * FLICKS) })
+    } else if (duration && /\b(?:after|from|form|frm|fron|since|onwards?|starting(?: at)?|beyond|past)\s*(?:the\s*)?$/i.test(before(times[i]))) out.push({ at, to: duration })
+    else if (/\b(?:before|until|till|up to|upto)\s*(?:the\s*)?$/i.test(before(times[i]))) out.push({ at: 0, to: at })
+    else out.push({ at })
   }
   return out.slice(0, 8)
 }
@@ -265,9 +289,9 @@ function sourceAt(picture, t) {
  * arithmetic on flicks: the clip, the words (with ids) and the captions there.
  */
 export function timesView(text, project, index) {
-  const asked = timesIn(text)
-  if (!asked.length) return ""
   const { picture, captions, duration } = solve(project, index)
+  const asked = timesIn(text, { duration })
+  if (!asked.length) return ""
   const words = index.words ?? []
   const wordAt = (piece, t) => words.find((w) => w.asset === piece.asset && t >= w.start && t < w.end) ?? words.find((w) => w.asset === piece.asset && w.start >= t && w.start < piece.out)
   const quote = (list) => JSON.stringify(list.map((w) => w.text).join(" ").replace(/[<>]/g, "").slice(0, 300))
@@ -281,14 +305,18 @@ export function timesView(text, project, index) {
     }
     const end = Math.min(to, duration)
     const pieces = picture.filter((p) => p.at < end && p.end > at)
-    const inside = pieces.flatMap((p) => {
+    const spans = pieces.map((p) => {
       const from = sourceAt(picture, Math.max(at, p.at))?.t ?? p.in
-      const until = Math.max(from, (sourceAt(picture, Math.min(end, p.end) - 1)?.t ?? p.out) + 1)
-      return words.filter((w) => w.asset === p.asset && w.end > from && w.start < until)
+      const until = Math.min(p.out, Math.max(from + 1, (sourceAt(picture, Math.min(end, p.end) - 1)?.t ?? p.out) + 1))
+      return { asset: p.asset, from, until }
     })
+    const inside = spans.flatMap(({ asset, from, until }) => words.filter((w) => w.asset === asset && w.end > from && w.start < until))
     const on = captions.filter((c) => c.at < end && c.end > at).map((c) => `caption ${c.clip}`)
     const spoken = inside.length ? `words ${inside[0].id} to ${inside.at(-1).id}: ${quote(inside)}` : "no words spoken"
-    return `${clock(at)}-${clock(end)}: clip${pieces.length === 1 ? "" : "s"} ${pieces.map((p) => p.clip).join(", ") || "?"}, ${spoken}${on.length ? `; ${on.join(", ")}` : ""}.`
+    // The exact operation to take this stretch out, in each source's own flicks, so a removal
+    // never depends on where words happen to fall (found in use: "remove from 25 seconds")
+    const removal = spans.map(({ asset, from, until }) => JSON.stringify({ op: "remove_range", asset, from, to: until })).join(" ")
+    return `${clock(at)}-${clock(end)}: clip${pieces.length === 1 ? "" : "s"} ${pieces.map((p) => p.clip).join(", ") || "?"}, ${spoken}${on.length ? `; ${on.join(", ")}` : ""}. To take it out exactly: ${removal}`
   })
   return `Times the person mentioned, worked out by code on the cut's timeline:\n${lines.join("\n")}`
 }
@@ -310,7 +338,7 @@ export async function revise({ ask, project, index, text, selection, history = [
   const request = [
     `${earlier}The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
     "Answer with JSON only. Put in `ops` the operations that do exactly what they ask, and nothing else.",
-    "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor.",
+    "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch the person names by time, use the exact remove_range given for it above, unchanged; for a stretch named by words, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor; to take background noise out of the voice, clean_voice on each picture clip; to warm or cool the picture, grade with temperature (lower is warmer, 6500 neutral), vibrance or vignette.",
     "Put one plain sentence in `say`: what you changed, or the answer if they asked a question.",
     "If they ask to fix or correct the transcript (names, misheard words), put each wrong word in `corrections` as {word: its id, text: the right word}, only where you are confident from the context.",
     "If they ask for the whole video to be made, directed, edited or improved (not one part of it), set `direct` to an object (with `seconds` and a caption look if they say so) and leave `ops` empty: the Director makes the whole cut.",
