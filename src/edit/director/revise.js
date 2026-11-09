@@ -70,12 +70,26 @@ export const OPS_SCHEMA = {
     direct: {
       anyOf: [
         { type: "null" },
+        { type: "boolean" },
         { type: "object", properties: { seconds: { type: "integer", minimum: 5, maximum: 600 }, captions: { type: "string", enum: ["clean", "karaoke", "boxed"] } }, additionalProperties: false },
       ],
     },
   },
   required: ["ops"],
   additionalProperties: false,
+}
+
+/**
+ * What models often send that means nothing: every optional field present as null,
+ * and empty lists or no `ops` at all. Tidied before the schema, never invented.
+ */
+export function tidyConsole(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value
+  const ops = Array.isArray(value.ops) ? value.ops.map((op) => (op && typeof op === "object" ? Object.fromEntries(Object.entries(op).filter(([key, v]) => v !== null || key === "after")) : op)) : (value.ops ?? [])
+  const out = { ...value, ops }
+  if (out.corrections === null) delete out.corrections
+  if (out.direct === false) out.direct = null
+  return out
 }
 
 /** A correction's text: one word or a short name, no markup or line breaks. */
@@ -205,12 +219,12 @@ export async function revise({ ask, project, index, text, selection, signal }) {
     const tried = apply(project, ops, { index, author: "agent" })
     return tried.applied ? [] : tried.diagnostics.map((d) => `operation ${d.op + 1}: ${d.message}`)
   }
-  const answer = await ask({ task: "console", tier: "budget", schema: OPS_SCHEMA, view, request, maxOutput: 2000, check, fallback: () => ({ ops: [] }), signal, priority: 0 })
+  const answer = await ask({ task: "console", tier: "budget", schema: OPS_SCHEMA, view, request, maxOutput: 2000, check, clean: tidyConsole, fallback: () => ({ ops: [] }), signal, priority: 0 })
   const ops = answer.value.ops
   const tried = ops.length ? apply(project, ops, { index, author: "agent" }) : null
   // A correction that changes nothing, or isn't a known word, isn't offered
   const corrections = (answer.value.corrections ?? []).map((c) => ({ word: c.word, text: cleanWord(c.text) })).filter((c) => words.has(c.word) && c.text && c.text !== words.get(c.word).text)
-  const direct = answer.value.direct && typeof answer.value.direct === "object" ? answer.value.direct : null
+  const direct = answer.value.direct === true ? {} : answer.value.direct && typeof answer.value.direct === "object" ? answer.value.direct : null
   return {
     ops: tried?.applied ? ops : [],
     changes: tried?.applied ? ops.map((op) => describe(op, index)) : [],

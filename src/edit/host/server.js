@@ -117,7 +117,7 @@ const statusOf = (error) => ({ outside_project: 403, missing_file: 404, exists: 
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenTtlMs, port, onActivity, onStop, onLive = () => {}, sse, log, pid }) {
+export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenTtlMs, port, onActivity, onStop, onLive = () => {}, sse, log, pid, stamp = null, busy = () => 0 }) {
   const tokens = new Map() // sha256 of a launch token → { expires, back }
   const sessions = new Set()
   const mediaSecret = randomBytes(32)
@@ -385,7 +385,7 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
     const url = new URL(req.url, "http://host")
     try {
       if (overSocket) {
-        if (url.pathname === "/internal/info") return json(res, 200, { pid, port: port() })
+        if (url.pathname === "/internal/info") return json(res, 200, { pid, port: port(), stamp, busy: busy() })
         if (url.pathname === "/internal/launch" && req.method === "POST") {
           const token = mintToken((await readJson(req)).back)
           return json(res, 200, { token, url: `http://127.0.0.1:${port()}/launch#${token}` })

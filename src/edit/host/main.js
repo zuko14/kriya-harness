@@ -12,7 +12,7 @@ import { createScheduler, DEFAULT_SLOTS } from "../graph/scheduler.js"
 import { createGovernor } from "../loop/governor.js"
 import { kriyaHome } from "../../paths.js"
 import { createJobs } from "./jobs.js"
-import { editHome, lockPath, portPath, socketPath } from "./paths.js"
+import { codeStamp, editHome, lockPath, portPath, socketPath } from "./paths.js"
 import { createProjects } from "./projects.js"
 import { createHandler } from "./server.js"
 import { createTavi } from "./tavi.js"
@@ -76,7 +76,9 @@ const watcher = createWatcher({ home, send: tavi.post, log })
 let lastActive = Date.now()
 let inFlight = 0 // a request still running isn't idle, however long it takes
 let port = 0
-const handle = createHandler({ home, roots, projects, jobs, tavi, tools: readTools, tokenTtlMs, port: () => port, onActivity: (change = 0) => ((inFlight += change), (lastActive = Date.now())), onStop: () => shutdown(), onLive: () => (liveAt = Date.now()), sse, log, pid: process.pid })
+// What code this process runs, so an outdated Host is replaced once it's idle (client.js)
+const stamp = codeStamp()
+const handle = createHandler({ home, roots, projects, jobs, tavi, tools: readTools, tokenTtlMs, port: () => port, stamp, busy: () => jobs.count() + tavi.pending(), onActivity: (change = 0) => ((inFlight += change), (lastActive = Date.now())), onStop: () => shutdown(), onLive: () => (liveAt = Date.now()), sse, log, pid: process.pid })
 const web = createServer((req, res) => handle(req, res, false))
 const local = createServer((req, res) => handle(req, res, true))
 

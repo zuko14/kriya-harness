@@ -7,7 +7,7 @@ import { request } from "node:http"
 import { join } from "node:path"
 
 import { kriyaHome } from "../../paths.js"
-import { editHome, logPath, socketPath } from "./paths.js"
+import { codeStamp, editHome, logPath, socketPath } from "./paths.js"
 
 const START_MS = 15_000
 
@@ -33,10 +33,34 @@ export function hostCall(home, method, path, body) {
 
 const contact = (home) => hostCall(home, "GET", "/internal/info").catch(() => null)
 
-/** The running Host, started if need be. @returns {Promise<{ pid: number, port: number }>} */
-export async function ensureHost({ env = process.env, home = kriyaHome() } = {}) {
+const gone = async (pid) => {
+  for (let i = 0; i < 100; i++) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return
+    }
+    await new Promise((done) => setTimeout(done, 50))
+  }
+}
+
+/** Jobs a Host is running; an old Host doesn't report it, so its job list is asked. */
+const activeOf = async (home, live) =>
+  live.busy ?? (await hostCall(home, "GET", "/jobs").then(({ jobs }) => jobs.filter((j) => ["pending", "running"].includes(j.status)).length).catch(() => 1))
+
+/**
+ * The running Host, started if need be. A Host running older code than this one is
+ * stopped and replaced, unless it's in the middle of work: then it's left to finish.
+ * @returns {Promise<{ pid: number, port: number }>}
+ */
+export async function ensureHost({ env = process.env, home = kriyaHome(), stamp = codeStamp() } = {}) {
   const live = await contact(home)
-  if (live) return live
+  if (live && live.stamp === stamp) return live
+  if (live) {
+    if (await activeOf(home, live)) return live
+    await stopHost(home)
+    await gone(live.pid)
+  }
   mkdirSync(editHome(home), { recursive: true })
   const log = openSync(logPath(home), "a")
   const main = join(import.meta.dirname, "main.js")

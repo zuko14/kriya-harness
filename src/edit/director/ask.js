@@ -60,32 +60,42 @@ export function schemaErrors(schema, value, path = "$") {
  * A reply cut off by its output limit says so, since "too long" is what to fix.
  */
 export function parseReply(text, finish) {
-  const raw = String(text ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim()
-  try {
-    return { value: JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) }
-  } catch {
-    // The first balanced {...}, skipping braces inside strings
-    for (let start = raw.indexOf("{"); start !== -1; start = raw.indexOf("{", start + 1)) {
-      let depth = 0
-      let quoted = false
-      for (let i = start; i < raw.length; i++) {
-        const c = raw[i]
-        if (quoted) {
-          if (c === "\\") i++
-          else if (c === '"') quoted = false
-        } else if (c === '"') quoted = true
-        else if (c === "{") depth++
-        else if (c === "}" && --depth === 0) {
-          try {
-            return { value: JSON.parse(raw.slice(start, i + 1)) }
-          } catch {
-            break
-          }
-        }
+  // Some providers send the content as parts: [{ type: "text", text }]
+  const joined = Array.isArray(text) ? text.map((part) => (typeof part === "string" ? part : (part?.text ?? ""))).join("") : text
+  const raw = String(joined ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim()
+  // A trailing comma is the commonest near-miss; a comma before a closer is never meaningful
+  const lenient = (json) => {
+    try {
+      return { value: JSON.parse(json) }
+    } catch {
+      try {
+        return { value: JSON.parse(json.replace(/,(\s*[}\]])/g, "$1")) }
+      } catch {
+        return null
       }
     }
-    return { problem: finish === "length" || !raw ? "was cut off before it finished (too long)" : "isn't valid JSON" }
   }
+  const whole = lenient(raw.replace(/^```(?:json)?\s*|\s*```$/g, ""))
+  if (whole) return whole
+  // The first balanced {...}, skipping braces inside strings
+  for (let start = raw.indexOf("{"); start !== -1; start = raw.indexOf("{", start + 1)) {
+    let depth = 0
+    let quoted = false
+    for (let i = start; i < raw.length; i++) {
+      const c = raw[i]
+      if (quoted) {
+        if (c === "\\") i++
+        else if (c === '"') quoted = false
+      } else if (c === '"') quoted = true
+      else if (c === "{") depth++
+      else if (c === "}" && --depth === 0) {
+        const found = lenient(raw.slice(start, i + 1))
+        if (found) return found
+        break
+      }
+    }
+  }
+  return finish === "length" || !raw ? { problem: "was cut off before it finished (too long)", kind: "cut_off" } : { problem: "isn't valid JSON", kind: "no_json" }
 }
 
 /**
@@ -102,10 +112,11 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
   // through the Governor's backoff for half an hour
   let unavailable = false
   /**
-   * @param {{ task: string, tier?: string, schema: object, recipe?: string, view: string, request: string, maxOutput: number, check?: (value: any) => string[], fallback: () => any, priority?: number, signal?: AbortSignal }} slot
+   * @param {{ task: string, tier?: string, schema: object, recipe?: string, view: string, request: string, maxOutput: number, check?: (value: any) => string[], clean?: (value: any) => any, fallback: () => any, priority?: number, signal?: AbortSignal }} slot
+   *   clean: tidies a parsed answer before the schema sees it (a model's nulls for absent fields)
    * @returns {Promise<{ value: any, source: "model" | "repaired" | "default", reason?: string, calls: number }>}
    */
-  return async function ask({ task, tier = "budget", schema, recipe = "", view, request, maxOutput, check = () => [], fallback, priority = PRIORITY.job, signal }) {
+  return async function ask({ task, tier = "budget", schema, recipe = "", view, request, maxOutput, check = () => [], clean = (value) => value, fallback, priority = PRIORITY.job, signal }) {
     const messages = [
       { role: "system", content: `${DIRECTOR_CORE}\n\n${recipe}`.trim() },
       { role: "user", content: `${view}\n\n${request}` },
@@ -135,8 +146,12 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
       const usage = reply?.usage ?? {}
       const content = reply?.choices?.[0]?.message?.content
       const parsed = parseReply(content, reply?.choices?.[0]?.finish_reason)
-      const problems = parsed.problem ? [parsed.problem] : [...schemaErrors(schema, parsed.value), ...(schemaErrors(schema, parsed.value).length ? [] : check(parsed.value))]
-      record({ task, tier, input_tokens: usage.prompt_tokens ?? null, cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? null, output_tokens: usage.completion_tokens ?? null, ms: Date.now() - started, result: problems.length ? "invalid" : attempt ? "repaired" : "ok" })
+      if (!parsed.problem) parsed.value = clean(parsed.value)
+      const shape = parsed.problem ? [] : schemaErrors(schema, parsed.value)
+      const problems = parsed.problem ? [parsed.problem] : [...shape, ...(shape.length ? [] : check(parsed.value))]
+      // Why it was refused, never what it said: the journal holds no answer (ES-12)
+      const why = parsed.kind ?? (shape.length ? "schema" : "meaning")
+      record({ task, tier, input_tokens: usage.prompt_tokens ?? null, cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? null, output_tokens: usage.completion_tokens ?? null, ms: Date.now() - started, result: problems.length ? `invalid:${why}` : attempt ? "repaired" : "ok" })
       if (!problems.length) return { value: parsed.value, source: attempt ? "repaired" : "model", calls }
       if (attempt === 0) {
         // One repair, with the exact reasons
