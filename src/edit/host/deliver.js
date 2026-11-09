@@ -64,7 +64,14 @@ export async function writeDelivery({ file, title, project, parent, plan, source
   const rights = project.assets.filter((a) => used.has(a.id)).map((a) => ({ id: a.id, rights: a.rights, role: a.role }))
   const report = reportPath(file)
   writeFileSync(report, reportHtml({ receipt, title, before, after, changes, notes, rights, repairs }))
-  return { receipt: receiptFile, report, verdict: receipt.verdict }
+  // What the viewer's description must carry (CC BY asks for it): who made what was borrowed, and what's quoted
+  const credits = [...project.assets.filter((a) => used.has(a.id) && a.rights !== "own" && a.rightsNote && a.kind !== "reference").map((a) => a.rightsNote), ...plan.tiles.filter((t) => t.node.blockId === "term").map((t) => `"${t.node.variables.quote}" ${t.node.variables.source}${t.node.variables.page ? `, ${t.node.variables.page}` : ""}`)]
+  let creditsFile = null
+  if (credits.length) {
+    creditsFile = `${file}.credits.txt`
+    writeFileSync(creditsFile, `${[...new Set(credits)].join("\n")}\n`)
+  }
+  return { receipt: receiptFile, report, verdict: receipt.verdict, ...(creditsFile ? { credits: creditsFile } : {}) }
 }
 
 /**

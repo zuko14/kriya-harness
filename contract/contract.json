@@ -786,6 +786,194 @@
       }
     },
     {
+      "method": "GET",
+      "path": "/editing/features",
+      "auth": true,
+      "request": null,
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "visuals": {
+            "type": "boolean"
+          },
+          "playbooks": {
+            "type": "boolean"
+          },
+          "mediaSearch": {
+            "type": "boolean"
+          }
+        },
+        "required": ["visuals", "playbooks", "mediaSearch"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/editing/media",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "queries": {
+            "minItems": 1,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 80
+            }
+          }
+        },
+        "required": ["queries"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": ["wikimedia", "nasa", "openverse"]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["image", "video"]
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      },
+                      "thumb": {
+                        "type": "string"
+                      },
+                      "width": {
+                        "type": ["number", "null"]
+                      },
+                      "height": {
+                        "type": ["number", "null"]
+                      },
+                      "licence": {
+                        "type": "string"
+                      },
+                      "rights": {
+                        "type": "string",
+                        "enum": ["public_domain", "licensed"]
+                      },
+                      "creator": {
+                        "type": "string"
+                      },
+                      "page": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "source",
+                      "kind",
+                      "title",
+                      "url",
+                      "thumb",
+                      "width",
+                      "height",
+                      "licence",
+                      "rights",
+                      "creator",
+                      "page"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["query", "items"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["results"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/editing/define",
+      "auth": true,
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "terms": {
+            "minItems": 1,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 80
+            }
+          }
+        },
+        "required": ["terms"],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "definitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "term": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "quote": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "string"
+                },
+                "licence": {
+                  "type": "string"
+                }
+              },
+              "required": ["term", "title", "quote", "source", "page", "licence"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["definitions"],
+        "additionalProperties": false
+      }
+    },
+    {
       "method": "POST",
       "path": "/editing/jobs/{id}/previews",
       "auth": true,

@@ -5,7 +5,7 @@
 
 import { availableParallelism } from "node:os"
 
-export const DEFAULT_SLOTS = { cpu: Math.max(2, availableParallelism() - 2), gpu: 1, encoder: 2, chrome: 1, model: 2, disk: 2 }
+export const DEFAULT_SLOTS = { cpu: Math.max(2, availableParallelism() - 2), gpu: 1, encoder: 2, chrome: Math.min(3, Math.max(1, Math.floor(availableParallelism() / 3))), model: 2, disk: 2 }
 
 export function createScheduler(slots = DEFAULT_SLOTS) {
   const held = new Map()

@@ -250,7 +250,7 @@ test("QG-08 and QG-09 on rendered masters: a clear karaoke page passes; yellow o
   assert.equal(clear["QG-08"].status, "passed", JSON.stringify(clear["QG-08"]))
   assert.equal(clear["QG-09"].status, "passed", JSON.stringify(clear["QG-09"]))
 
-  const yellow = await gates("yellow", [{ op: "set_look", caption: { color: "#ffd23f" } }, { op: "caption_style", look: "clean", words: page }])
+  const yellow = await gates("yellow", [{ op: "set_look", caption: { color: "#ffd23f", stroke: "none" } }, { op: "caption_style", look: "clean", words: page }])
   assert.equal(yellow["QG-09"].status, "failed")
   assert.equal(yellow["QG-09"].numbers.first.kind, "low_contrast", JSON.stringify(yellow["QG-09"].numbers))
 

@@ -7,7 +7,7 @@ import { join } from "node:path"
 
 import { outputFaces } from "../core/faces.js"
 import { segmentArgs } from "../core/ffmpeg.js"
-import { safeZoneFor } from "../core/layout.js"
+import { isSceneBlock, safeZoneFor } from "../core/layout.js"
 import { wholeSegment } from "../core/plan.js"
 import { captionComposition, READING_LIMITS, scriptOf } from "../engine/captions.js"
 import { compositionFor, measureText } from "../engine/motion.js"
@@ -15,6 +15,7 @@ import { compositionFor, measureText } from "../engine/motion.js"
 const FLICKS = 705_600_000
 const SETTLE_MS = { caption: 350, block: 950 } // the entrances' lengths, so a beat sees text at rest
 
+const MIN_PAGE_SECONDS = 1.2
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 const frameMs = (fps) => (1000 * fps.d) / fps.n
 const rounded = (box) => ({ x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h) })
@@ -85,7 +86,10 @@ export function judgeLayout({ plan, project, index, measured }) {
     if (box.clipped) fail("clipped", item)
     // Behind-the-speaker text may cross the face: the matte draws the speaker over it
     const behind = item.tile.node.behind === true && !item.tile.front
-    if (!behind) {
+    // A scene covers the frame while it's on: no face is in the picture under its text or its captions
+    // Other footage laid over the whole frame hides it the same way
+    const covered = plan.tiles.some((tile) => isSceneBlock(tile.node) && tile.at <= item.t && item.t < tile.end) || wholeSegment(plan).node.overlays.some((o) => o.at <= item.t && item.t < o.end)
+    if (!behind && !covered) {
       const face = faces.find((f) => Math.abs(f.t - item.t) <= FLICKS * 0.6 && overlaps(box, f.box))
       if (face) fail("on_face", item, { face: face.box })
     }
@@ -142,6 +146,14 @@ export function boxContrast(rgb, width, height, box, { colours, plate }, share =
   return values.length ? values[Math.floor(values.length * share)] : null
 }
 
+/** The contrast of text against its own outline, when the outline is thick enough to read as one; else null. */
+export function strokeContrast({ colours, stroke, strokeWidth, size }) {
+  const edge = parseColour(stroke)
+  if (!edge || !(strokeWidth >= Math.max(2, (size ?? 0) * 0.05))) return null
+  const texts = (colours ?? []).map(parseColour).filter(Boolean).map((c) => luminance(c.rgb))
+  return texts.length ? Math.min(...texts.map((t) => contrast(t, luminance(edge.rgb)))) : null
+}
+
 /** Raw RGB frames of the plan, without the tiles `without` names, at frame numbers. */
 async function stills(plan, frames, { inputPath, tilePath, run, without }) {
   const { width, height } = plan.output
@@ -176,7 +188,10 @@ export async function judgeLegibility({ plan, measured, inputPath, tilePath, run
     const pictures = await stills(plan, frames, { inputPath, tilePath, run, without })
     if (pictures.length !== frames.length) throw new Error("the frames behind the text couldn't be read")
     for (const item of own) {
-      const value = boxContrast(pictures[frames.indexOf(frameOf(item.t))], width, height, item.box, item.box)
+      const seen = boxContrast(pictures[frames.indexOf(frameOf(item.t))], width, height, item.box, item.box)
+      // A real outline separates text from any picture: it counts as what's behind the text (found on real footage)
+      const outline = strokeContrast(item.box)
+      const value = seen === null ? null : Math.max(seen, outline ?? 0)
       if (value === null) continue
       worst = Math.min(worst, value)
       if (value < thresholds.contrast) fail("low_contrast", item, { contrast: Math.round(value * 100) / 100, needed: thresholds.contrast })
@@ -189,7 +204,8 @@ export async function judgeLegibility({ plan, measured, inputPath, tilePath, run
     const words = item.tile.node.words.length
     const script = scriptOf(item.tile.node.text)
     const rate = words / Math.max(seconds, 1e-3)
-    if (rate > READING_LIMITS[script]) fail("too_fast", item, { wordsPerSecond: Math.round(rate * 100) / 100, limit: READING_LIMITS[script], script })
+    // Captions show what's said, so a fast speaker's page can't be slower than the speech. What a reader can't take is a page that flashes by
+    if (rate > READING_LIMITS[script] && seconds < MIN_PAGE_SECONDS) fail("too_fast", item, { wordsPerSecond: Math.round(rate * 100) / 100, limit: READING_LIMITS[script], script })
   }
   const numbers = { texts: items.length, worstContrast: worst === Infinity ? null : Math.round(worst * 100) / 100, needed: thresholds.contrast, failures: failures.length }
   return { status: failures.length ? "failed" : "passed", numbers, failures }

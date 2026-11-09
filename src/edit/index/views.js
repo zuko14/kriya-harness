@@ -59,6 +59,15 @@ export function paperEdit(raw, { assets, budget = BUDGETS.paper } = {}) {
   return fence("Paper edit: one sentence a line, [sentence id, word ids, seconds, flags] then the words as heard.", lines, budget, (left) => `[${left} more sentences not shown: ask for a slice]`)
 }
 
+/**
+ * The phrases a scene can start and end on, for the visual beats slot. `[a1:w12-a1:w19 2.4s] "…"`
+ * @param {{ from: string, to: string, start: number, end: number, text: string }[]} phrases
+ */
+export function phraseView(phrases, budget = BUDGETS.paper) {
+  const lines = phrases.map((p) => `[${p.from}-${p.to} ${seconds(p.end - p.start)}s] ${quote(p.text)}`)
+  return fence("The speech in phrases: [first word id-last word id, seconds] then the words as heard.", lines, budget, (left) => `[${left} more phrases not shown]`)
+}
+
 /** The shot digest: ids, exact flicks, length, faces, movement and picture flags. */
 export function shotDigest(raw, { assets, budget = BUDGETS.shots } = {}) {
   const faces = new Map()

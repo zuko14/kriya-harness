@@ -77,8 +77,8 @@ test("phrase breaks: 2 to 5 words a page, at clause ends, no orphan, a number ke
   }
 })
 
-test("looks: three of Kriya's own; overrides are typed, and anything else is dropped", () => {
-  assert.deepEqual(Object.keys(LOOKS).sort(), ["boxed", "clean", "karaoke"])
+test("looks: Kriya's own; overrides are typed, and anything else is dropped", () => {
+  assert.deepEqual(Object.keys(LOOKS).sort(), ["boxed", "clean", "karaoke", "minimal", "pop", "story"])
   const look = lookOf("karaoke", { color: "#00ff00", accent: "red; background:url(x)", size: 9, font: "comic", evil: "<script>" })
   assert.equal(look.color, "#00ff00")
   assert.equal(look.accent, LOOKS.karaoke.accent, "a colour that isn't a hex colour is ignored")

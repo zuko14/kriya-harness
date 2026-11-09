@@ -157,7 +157,8 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
       })
     : []
   const blockTiles = timeline.overlays
-    .filter((overlay) => overlay.block)
+    // A definition with no clear place stays out (the solver has said why), rather than land on a face
+    .filter((overlay) => overlay.block && !(overlay.block.blockId === "term" && !overlay.placement))
     .map((overlay) => {
       const node = { kind: "block", ...overlay.block, placement: overlay.placement, duration: overlay.end - overlay.at, ...(overlay.behind ? { behind: true } : {}) }
       return { key: key(node, []), kind: "block", at: overlay.at, end: overlay.end, node }

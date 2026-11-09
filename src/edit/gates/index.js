@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
 
 import { busOf, speechSpans } from "../core/audio.js"
+import { isSceneBlock } from "../core/layout.js"
 import { wholeSegment } from "../core/plan.js"
 import { solve } from "../core/solver.js"
 import { measureLoudness } from "../engine/loudness.js"
@@ -306,7 +307,8 @@ async function qg04(input) {
 async function qg07({ file, plan, run, thresholds }) {
   const health = readHealth(await run("ffmpeg", healthArgs(file), { timeoutMs: 600_000 }))
   const picture = wholeSegment(plan).node.picture.sort((a, b) => a.at - b.at)
-  const holds = picture.filter((p) => p.hold).map(({ at, end }) => ({ at, end }))
+  // A freeze the plan asks for; and a scene may rest on a finished diagram while the voice explains it
+  const holds = [...picture.filter((p) => p.hold), ...plan.tiles.filter((tile) => isSceneBlock(tile.node))].map(({ at, end }) => ({ at, end }))
   const cuts = picture.slice(1).map((p, i) => ({ t: p.at, same: p.asset === picture[i].asset && !p.hold && !picture[i].hold }))
   return outcome("QG-07", judgeHealth(health, { duration: plan.duration, fps: plan.output.fps, holds, cuts }, thresholds))
 }
@@ -324,10 +326,16 @@ async function qg10({ plan, run, thresholds, tilePath, binDir, work }) {
   try {
     // Each tile at rest, over mid grey, as the reader sees it
     for (const [i, tile] of tiles.entries()) {
-      const at = Math.min(((tile.end - tile.at) / FLICKS) * 0.9, tile.kind === "caption" ? 0.4 : 1)
-      await run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", at.toFixed(3), "-i", tilePath(tile.key), "-f", "lavfi", "-i", `color=c=0x808080:s=${plan.output.width}x${plan.output.height}`, "-filter_complex", "[1:v][0:v]overlay=shortest=1", "-frames:v", "1", "-y", join(dir, `t${String(i).padStart(4, "0")}.png`)], { timeoutMs: 60_000 })
+      const length = (tile.end - tile.at) / FLICKS
+      // A scene's labels come in as they're said, so it's read when they're all in, before it fades
+      const at = isSceneBlock(tile.node) ? Math.max(0, length - 0.5) : Math.min(length * 0.9, tile.kind === "caption" ? 0.4 : 1)
+      // The tile from zero: a seek rounded to just before a frame made the overlay's first output plain grey, an empty read (found on real footage)
+      await run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", at.toFixed(3), "-i", tilePath(tile.key), "-f", "lavfi", "-i", `color=c=0x808080:s=${plan.output.width}x${plan.output.height}`, "-filter_complex", "[0:v]setpts=PTS-STARTPTS[tile];[1:v][tile]overlay=shortest=1", "-frames:v", "1", "-y", join(dir, `t${String(i).padStart(4, "0")}.png`)], { timeoutMs: 60_000 })
     }
-    const seen = readOcr(await run(helper.path, [dir], { timeoutMs: 300_000 }))
+    let seen = readOcr(await run(helper.path, [dir], { timeoutMs: 300_000 }))
+    // The reader swallows its own errors: every tile blank at once is the reader, not the screen (found under load).
+    // One more read; a render that's really blank still fails
+    if (tiles.length > 1 && tiles.every((_, i) => !seen.get(`t${String(i).padStart(4, "0")}.png`)?.text)) seen = readOcr(await run(helper.path, [dir], { timeoutMs: 300_000 }))
     const judged = judgeCopy(tiles.map((tile, i) => {
       const read = seen.get(`t${String(i).padStart(4, "0")}.png`)
       return { tile, seen: read?.text ?? "", unsure: read?.unsure ?? [] }

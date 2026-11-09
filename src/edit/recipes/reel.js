@@ -4,10 +4,12 @@
 // −14 LUFS. Code does the editing; the model makes two small choices (the hook and
 // the lines to drop; the emphasis words), each with a default that needs no model.
 
+import { isSceneBlock } from "../core/layout.js"
 import { apply } from "../core/ops.js"
 import { solve } from "../core/solver.js"
-import { LOOKS, pages } from "../engine/captions.js"
+import { LOOKS, pages, readablePages } from "../engine/captions.js"
 import { paperEdit } from "../index/views.js"
+import { sceneOps } from "./scene-clips.js"
 
 const FLICKS = 705_600_000
 
@@ -183,11 +185,20 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   // A hook the person approved in the Director's plan wins over the model's pick
   const planned = typeof brief.hook === "string" && lines.some((l) => l.id === brief.hook) ? brief.hook : null
   const hook = variant.noHook ? null : (planned ?? story.value.hook)
-  let chosen = lines.filter((l) => !story.value.drop.includes(l.id) || mustKeep.includes(l.id))
+  // The lines under an approved scene stay: fitting the length mustn't take a scene the person approved (found on real footage)
+  const wordsById = new Map(index.words.map((w) => [w.id, w]))
+  const sceneLines = [...(brief.scenes ?? []), ...(brief.pictures ?? [])].flatMap((scene) => {
+    const from = wordsById.get(scene.from)
+    const to = wordsById.get(scene.to)
+    return from && to ? lines.filter((l) => l.start < to.end && from.start < l.end).map((l) => l.id) : []
+  })
+  let chosen = lines.filter((l) => !story.value.drop.includes(l.id) || mustKeep.includes(l.id) || sceneLines.includes(l.id))
 
   // Length: fit under the maximum, the hook and must-keeps always in
-  const max = Math.round(recipe.target.max * (variant.tighter ?? 1))
-  const required = new Set([...mustKeep, ...(hook ? [hook] : [])])
+  // With scenes, the length the person asked for is the limit, even past the reel's 60 s
+  const longest = brief.scenes?.length || brief.pictures?.length ? Math.max(recipe.target.max, brief.targetDuration ?? 0) : recipe.target.max
+  const max = Math.round(longest * (variant.tighter ?? 1))
+  const required = new Set([...mustKeep, ...sceneLines, ...(hook ? [hook] : [])])
   if (chosen.reduce((sum, l) => sum + lengthOf(l), 0) > max) chosen = fitLines(chosen, max, required)
   const total = chosen.reduce((sum, l) => sum + lengthOf(l), 0)
   // Short footage sets the length: a 29 s take makes a 29 s cut, not a cut that "needs you"
@@ -205,7 +216,8 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   // make left them all on screen twice (found in use, 2026-11-09)
   const rebuilt = new Set(sequence.tracks.filter((t) => ["base", "caption", "music"].includes(t.role)).map((t) => t.id))
   const ops = [
-    ...sequence.clips.filter((c) => rebuilt.has(c.track)).map((c) => ({ op: "ripple_delete", clip: c.id })),
+    // Scenes too: an earlier make's scenes hang on the words of that cut
+    ...sequence.clips.filter((c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
     { op: "set_brief", format: recipe.id, targetDuration: target, mustKeep: brief.mustKeep ?? [], mustCut: brief.mustCut ?? [], effort: brief.effort ?? "best", ...(brief.language ? { language: brief.language } : {}) },
     { op: "set_format", width: recipe.canvas.width, height: recipe.canvas.height, fps: recipe.deliverable.fps },
     ...(project.deliverables.some((d) => d.preset === recipe.deliverable.preset) ? [] : [{ op: "add_deliverable", ...deliverableFor(brief) }]),
@@ -227,16 +239,20 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   // Emphasis: a few words worth a punch-in; a reference's pace can ask for more (EDD-23)
   const most = Number.isInteger(brief.punches) && brief.punches > 0 ? Math.min(brief.punches, 8) : recipe.punch.max
   const kept = chosen.flatMap((l) => runsOf(l).flat())
-  const keptIds = new Set(kept.map((w) => w.id))
+  // The approved plan's scenes, on the cut as solved. A zoom or title under one would never be seen
+  const scenes = brief.scenes?.length || brief.pictures?.length || brief.terms?.length ? sceneOps({ scenes: brief.scenes ?? [], pictures: brief.pictures ?? [], terms: brief.terms ?? [], project: step.project, index, asset, kept, captions: !!LOOKS[brief.captions], sound: { scene: brief.sfx?.scene, reveal: brief.sfx?.reveal } }) : { ops: [], covered: new Set(), notes: [] }
+  notes.push(...scenes.notes)
+  const visible = kept.filter((w) => !scenes.covered.has(w.id))
+  const keptIds = new Set(visible.map((w) => w.id))
   const emphasis = await ask({
     task: "emphasis",
     schema: EMPHASIS_SCHEMA,
     recipe: recipe.notes,
-    view: paperEdit({ ...scoped, sentences: chosen }, { assets: [asset] }),
+    view: paperEdit({ ...scoped, sentences: chosen.filter((l) => l.words.some((w) => keptIds.has(w.id))) }, { assets: [asset] }),
     request: `Pick up to ${most} single words to emphasise with a quick zoom: numbers, names, the point of a line. Word ids only.`,
     maxOutput: 200,
     check: ({ emphasis: picked }) => picked.filter((id) => !keptIds.has(id)).map((id) => `"${id}" isn't a kept word`),
-    fallback: () => ({ emphasis: kept.filter((w) => /\d/.test(w.text)).slice(0, most).map((w) => w.id) }),
+    fallback: () => ({ emphasis: visible.filter((w) => /\d/.test(w.text)).slice(0, most).map((w) => w.id) }),
     signal,
   })
   calls += emphasis.calls
@@ -260,7 +276,9 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   // Sound design: an effect on every cut of the story, a riser into it after a cold open.
   // Each is placed by its peak, so the loudest moment lands on the cut
   const storyClips = clips.filter((c) => !c.echo)
-  const cutSounds = brief.sfx?.cut ? storyClips.slice(1).map((c) => ({ op: "add_sfx", asset: brief.sfx.cut, peak_at: { clip: c.id, edge: "start" } })) : []
+  // A playbook's restraint: a sound on every nth cut, not on all of them
+  const every = Number.isInteger(brief.soundEvery) && brief.soundEvery > 1 ? brief.soundEvery : 1
+  const cutSounds = brief.sfx?.cut ? storyClips.slice(1).filter((_, i) => i % every === 0).map((c) => ({ op: "add_sfx", asset: brief.sfx.cut, peak_at: { clip: c.id, edge: "start" } })) : []
   const introSound = brief.sfx?.intro && cold && storyClips[0] ? [{ op: "add_sfx", asset: brief.sfx.intro, peak_at: { clip: storyClips[0].id, edge: "start" } }] : []
   const sounds = [...cutSounds, ...introSound]
 
@@ -300,12 +318,14 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const cleaning = brief.cleanVoice ? clips.map((c) => ({ op: "clean_voice", clip: c.id, strength: 0.6 })) : []
 
   // Captions, when the brief asks for a look: pages of the kept words, timed to the speech
-  const captions = LOOKS[brief.captions] ? chosen.flatMap((l) => runsOf(l)).flatMap((run) => pages(run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
+  const captions = LOOKS[brief.captions] ? chosen.flatMap((l) => runsOf(l)).flatMap((run) => readablePages(pages(run), run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
   // Music, when the brief names a sound in the project: fitted on its downbeats, ducked under the speech (ED9)
   const song = brief.music ? project.assets.find((a) => a.id === brief.music && a.kind === "audio") : null
   if (brief.music && !song) notes.push(`There is no sound "${brief.music}" in this project, so the reel has no music.`)
   const music = song ? [{ op: "set_music", asset: song.id }, { op: "music_shape", fit: true, fadeIn: Math.round(FLICKS * 0.3) }, { op: "duck" }] : []
-  const all = [...ops, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...captions, ...music, ...sounds, ...ramps]
+  const captionLook = { ...(brief.captionStyle ?? {}), ...(brief.holdCaptions ? { hold: true } : {}) }
+  const style = LOOKS[brief.captions] && Object.keys(captionLook).length ? [{ op: "set_look", caption: captionLook }] : []
+  const all = [...ops, ...style, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...scenes.ops, ...captions, ...music, ...sounds, ...ramps]
   step = apply(project, all, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
   return { ops: all, project: step.project, notes, calls, slots }

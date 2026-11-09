@@ -176,11 +176,12 @@ function removeFrom(s, op, asset, from, to) {
 const OPS = {
   // Selection
   keep_range: {
-    fields: { asset: "id", from: "ref", to: "ref", "after?": { nullable: "id" } },
+    // exact: cut where it's asked, not moved off a word or padded (a montage's cuts stay on the beat)
+    fields: { asset: "id", from: "ref", to: "ref", "after?": { nullable: "id" }, "exact?": "bool" },
     run(op, s) {
       const asset = assetOf(s, op.asset, SEQUENCED)
       checkRange(s, asset, sourceEdge(s, op.from, asset.id, "start"), sourceEdge(s, op.to, asset.id, "end"))
-      const clip = addClip(s, "base", { source: { asset: asset.id, in: op.from, out: op.to } })
+      const clip = addClip(s, "base", { source: { asset: asset.id, in: op.from, out: op.to }, ...(op.exact ? { seamIn: true, seamOut: true } : {}) })
       if (op.after === undefined) return
       const clips = sequenceOf(s).clips
       clips.pop()

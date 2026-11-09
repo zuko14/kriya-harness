@@ -12,6 +12,7 @@ import { solve } from "../core/solver.js"
 import { LOOKS } from "../engine/captions.js"
 import { ENGINE_VERSION, guardPath } from "../engine/index.js"
 import { cleanRefs } from "../engine/reference.js"
+import { cleanScene } from "../engine/scenes.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
@@ -377,6 +378,26 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (brief.broll === "own") clean.broll = "own"
           // The person's trims from an approved plan, in seconds of the take: up to eight, in order, checked
           if (Array.isArray(brief.cuts)) clean.cuts = brief.cuts.filter((c) => c && Number.isFinite(c.from) && Number.isFinite(c.to) && c.from >= 0 && c.to > c.from && c.to <= 86_400).slice(0, 8).map((c) => ({ from: Math.round(c.from * 705_600_000), to: Math.round(c.to * 705_600_000) }))
+          const allowed = await projects.features()
+          if (Number.isInteger(brief.soundEvery) && brief.soundEvery >= 2 && brief.soundEvery <= 8 && allowed.playbooks) clean.soundEvery = brief.soundEvery
+          if (allowed.playbooks) {
+            clean.holdCaptions = true
+            if (brief.montage === true) clean.montage = true
+            if (brief.multicam && safeId(brief.multicam.master) && Array.isArray(brief.multicam.angles) && brief.multicam.angles.length >= 2 && brief.multicam.angles.length <= 6 && brief.multicam.angles.every((a, i) => safeId(a?.asset) && a.speaker === i)) clean.multicam = { master: brief.multicam.master, angles: brief.multicam.angles.map((a) => ({ asset: a.asset, speaker: a.speaker })) }
+            const style = brief.captionStyle
+            if (style && typeof style === "object" && /^#[0-9a-f]{6}$/i.test(style.accent ?? "")) clean.captionStyle = { accent: style.accent }
+          }
+          // Only ids this project's plan found: the Host holds their URLs and licences, so a browser can't supply one
+          if (allowed.mediaSearch) {
+            const foundId = (id) => typeof id === "string" && /^[A-Za-z0-9:_. -]{3,160}$/.test(id)
+            if (Array.isArray(brief.pictures)) clean.pictures = brief.pictures.filter((p) => p && foundId(p.id) && safeId(p.from) && safeId(p.to)).slice(0, 8).map(({ id, from, to }) => ({ id, from, to }))
+            if (Array.isArray(brief.terms)) clean.terms = brief.terms.filter((t) => t && foundId(t.id) && safeId(t.at)).slice(0, 4).map(({ id, at }) => ({ id, at }))
+          }
+          // Animated scenes from an approved plan, only while the server's switch is on; the recipe checks each again against the speech
+          if (Array.isArray(brief.scenes) && brief.scenes.length && (await projects.features()).visuals) {
+            clean.scenes = brief.scenes.slice(0, 12).map(cleanScene).filter(Boolean)
+            clean.sceneSound = brief.sceneSound !== false
+          }
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))
@@ -386,6 +407,25 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         const { text } = await readJson(req)
         if (typeof text !== "string" || text.length > 60 || /[\n\r<>]/.test(text)) return refuse(res, 400, "Give the word as it should read, in up to 60 characters.")
         return say(200, { word: projects.correctWord(state, decodeURIComponent(parts[3]), text) })
+      }
+      // A found picture's small version for the Plan Card
+      if (parts[2] === "found-thumb" && parts.length === 3 && method === "GET") {
+        const { file, type } = await projects.foundThumb(state, url.searchParams.get("id") ?? "")
+        res.writeHead(200, { ...HEADERS, "content-type": type, "cross-origin-resource-policy": "same-origin" })
+        return createReadStream(file).pipe(res)
+      }
+      // One scene on the Plan Card, as the render will draw it. A document of its own, sandboxed, with no network
+      if (parts[2] === "scene-preview" && parts.length === 3 && method === "GET") {
+        if (!(await projects.features()).visuals) return refuse(res, 404, "Animated scenes aren't on.")
+        let scene = null
+        try {
+          scene = JSON.parse(url.searchParams.get("scene") ?? "null")
+        } catch {
+          return refuse(res, 400, "That isn't a scene.")
+        }
+        const html = projects.scenePreview(state, scene, url.searchParams.get("format"))
+        res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'; sandbox allow-scripts" })
+        return res.end(html)
       }
       // The Director's plan: proposed in words with its settings; nothing is made here
       if (parts[2] === "plan" && parts.length === 3 && method === "POST") {

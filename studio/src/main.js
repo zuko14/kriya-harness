@@ -650,8 +650,10 @@ async function workspace(id) {
   const choicesNow = () => ({ ...briefNow(), ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}) })
   const wordText = (wid) => index.words.find((w) => w.id === wid)?.text ?? wid
   const clockOf = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, "0")}`
+  let planGenre = null
   function settingsLine(settings = {}) {
     const parts = [
+      planGenre,
       settings.format,
       settings.seconds ? `about ${settings.seconds} s` : null,
       settings.captions && settings.captions !== "none" ? `${settings.captions} captions` : "no captions",
@@ -666,18 +668,168 @@ async function workspace(id) {
       settings.angles ? "wide and tight angles" : null,
       settings.broll === "own" ? "B-roll from your clips" : null,
       settings.titles ? "title cards" : null,
+      settings.scenes?.length ? `${settings.scenes.length} animated scene${settings.scenes.length === 1 ? "" : "s"}` : null,
+      settings.pictures?.length ? `${settings.pictures.length} licensed picture${settings.pictures.length === 1 ? "" : "s"}` : null,
+      settings.terms?.length ? `${settings.terms.length} cited definition${settings.terms.length === 1 ? "" : "s"}` : null,
+      settings.song ? "your song" : null,
+      settings.montage ? "cut on its beats" : null,
+      settings.multicam ? `${settings.multicam.angles.length} cameras, following who speaks` : null,
       settings.ramps ? "a speed ramp into the story" : null,
       settings.cuts?.length ? `trims ${settings.cuts.map((c) => `${clockOf(c.from)}–${clockOf(c.to)}`).join(", ")} of the take` : null,
     ]
     return parts.filter(Boolean).join(" · ")
   }
+  /**
+   * The plan's animated scenes: each one playing as the render will draw it, with what it can
+   * be swapped to and a way to keep the speaker there instead. What's left is what an approval makes.
+   */
+  function sceneCards(plan, changed) {
+    const choices = plan.sceneChoices ?? { kinds: {}, themes: {}, swaps: [] }
+    const format = plan.settings.format ?? makeFormat.value
+    const wide = format === "16:9"
+    const size = wide ? { w: 1920, h: 1080, show: 200 } : format === "1:1" ? { w: 1080, h: 1080, show: 150 } : format === "4:5" ? { w: 1080, h: 1350, show: 136 } : { w: 1080, h: 1920, show: 120 }
+    const rows = plan.settings.scenes.map((scene, i) => ({ scene, swaps: choices.swaps[i] ?? [scene.kind] }))
+    const list = h("ul", { class: "scene-list" })
+    const save = () => {
+      plan.settings.scenes = rows.map((row) => row.scene)
+      if (rows.length) plan.brief.scenes = plan.settings.scenes
+      else delete plan.brief.scenes
+      changed()
+    }
+    const source = (scene) => `/projects/${id}/scene-preview?format=${encodeURIComponent(format)}&scene=${encodeURIComponent(JSON.stringify(scene))}`
+    const timeOf = (scene) => {
+      const seconds = (flicks) => clockOf(flicks / 705_600_000)
+      const from = index.words?.find((w) => w.id === scene.from)
+      const to = index.words?.find((w) => w.id === scene.to)
+      return from && to ? `${seconds(from.start)}–${seconds(to.end)}` : ""
+    }
+    const draw = () => {
+      clear(list)
+      if (!rows.length) list.append(h("li", { class: "note small" }, "No animated scenes: the speaker stays on screen."))
+      for (const row of rows) {
+        const frame = h("iframe", { title: `Preview of the scene "${row.scene.title || row.scene.items[0].text}"`, sandbox: "allow-scripts", loading: "lazy", src: source(row.scene) })
+        frame.style.width = `${size.w}px`
+        frame.style.height = `${size.h}px`
+        frame.style.transform = `scale(${size.show / size.w})`
+        const picture = h("div", { class: "scene-picture" }, frame)
+        picture.style.width = `${size.show}px`
+        picture.style.height = `${Math.round((size.show * size.h) / size.w)}px`
+        const kind = h("select", { class: "field select", "aria-label": "Draw this scene as", onchange: () => ((row.scene = { ...row.scene, kind: kind.value }), save(), (frame.src = source(row.scene))) }, row.swaps.map((option) => h("option", { value: option }, choices.kinds[option] ?? option)))
+        kind.value = row.scene.kind
+        list.append(
+          h(
+            "li",
+            { class: "scene-row" },
+            picture,
+            h(
+              "div",
+              { class: "scene-info" },
+              h("p", { class: "small" }, h("span", { class: "scene-time" }, timeOf(row.scene)), ` ${row.scene.title || row.scene.items[0].text}`),
+              h("p", { class: "note small" }, row.scene.items.map((item) => `${item.text}${item.value !== undefined ? ` ${item.value}${item.unit ?? ""}` : ""}`).join(" · ")),
+              h(
+                "div",
+                { class: "row" },
+                kind,
+                h("button", { type: "button", class: "btn", onclick: () => (frame.src = source(row.scene)) }, "Play again"),
+                h("button", { type: "button", class: "btn", onclick: () => (rows.splice(rows.indexOf(row), 1), save(), draw()) }, "Keep the speaker"),
+              ),
+            ),
+          ),
+        )
+      }
+    }
+    const look = h(
+      "select",
+      { class: "field select", "aria-label": "Look of the scenes", onchange: () => { for (const row of rows) row.scene = { ...row.scene, theme: look.value }; save(); draw() } },
+      Object.entries(choices.themes).map(([value, label]) => h("option", { value }, label)),
+    )
+    look.value = rows[0].scene.theme
+    draw()
+    return h("div", { class: "scenes" }, h("div", { class: "row scene-head" }, h("p", { class: "lead" }, "Animated scenes"), look), list)
+  }
+  /** Real pictures found for what's named: each with its licence and credit, swappable, removable. Nothing downloads until approval. */
+  function pictureCards(plan, changed) {
+    const list = h("ul", { class: "scene-list" })
+    const save = () => {
+      plan.brief.pictures = plan.settings.pictures.map(({ from, to, id: found }) => ({ from, to, id: found }))
+      if (!plan.brief.pictures.length) delete plan.brief.pictures
+      changed()
+    }
+    const draw = () => {
+      clear(list)
+      if (!plan.settings.pictures.length) list.append(h("li", { class: "note small" }, "No pictures: the speaker stays on screen."))
+      for (const picture of plan.settings.pictures) {
+        const shown = () => picture.options.find((o) => o.id === picture.id) ?? picture.options[0]
+        const thumb = h("img", { class: "found-thumb", alt: shown().title, loading: "lazy", src: `/projects/${id}/found-thumb?id=${encodeURIComponent(picture.id)}` })
+        const credit = h("p", { class: "note small" }, `${shown().licence} · ${shown().creator}`)
+        const pick = h("select", { class: "field select", "aria-label": "Use this picture", onchange: () => {
+          picture.id = pick.value
+          thumb.src = `/projects/${id}/found-thumb?id=${encodeURIComponent(picture.id)}`
+          thumb.alt = shown().title
+          credit.textContent = `${shown().licence} · ${shown().creator}`
+          save()
+        } }, picture.options.map((o) => h("option", { value: o.id }, o.title.slice(0, 60))))
+        pick.value = picture.id
+        list.append(h("li", { class: "scene-row" }, thumb, h("div", { class: "scene-info" }, h("p", { class: "small" }, picture.query), credit, h("div", { class: "row" }, pick, h("button", { type: "button", class: "btn", onclick: () => {
+          plan.settings.pictures.splice(plan.settings.pictures.indexOf(picture), 1)
+          save()
+          draw()
+        } }, "Keep the speaker")))))
+      }
+    }
+    draw()
+    return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Real pictures"), list)
+  }
+  /** Definitions shown on screen: quoted, with where they come from. */
+  function termCards(plan, changed) {
+    const list = h("ul", { class: "scene-list" })
+    const draw = () => {
+      clear(list)
+      for (const term of plan.settings.terms) {
+        list.append(h("li", { class: "scene-row" }, h("div", { class: "scene-info" }, h("p", { class: "small" }, h("b", {}, term.term), ` “${term.quote}” ${term.source}`), h("button", { type: "button", class: "btn", onclick: () => {
+          plan.settings.terms.splice(plan.settings.terms.indexOf(term), 1)
+          plan.brief.terms = plan.settings.terms.map(({ at, id: found, term: said }) => ({ at, id: found, term: said }))
+          if (!plan.brief.terms.length) delete plan.brief.terms
+          changed()
+          draw()
+        } }, "Don't show this"))))
+      }
+    }
+    draw()
+    return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Definitions"), list)
+  }
+  /** The film's caption look and highlight colour, on the card. */
+  function captionChoice(plan, changed) {
+    const looks = { clean: "Clean", karaoke: "Karaoke", boxed: "Boxed", pop: "Pop", story: "Story", minimal: "Minimal" }
+    const colours = { "#ffd23f": "Yellow", "#ffb347": "Amber", "#4fd1c5": "Teal", "#ff7ab6": "Pink", "#ffffff": "White" }
+    const look = h("select", { class: "field select", "aria-label": "Caption look", onchange: () => {
+      plan.brief.captions = look.value
+      plan.settings.captions = look.value
+      changed()
+    } }, Object.entries(looks).map(([value, label]) => h("option", { value }, label)))
+    look.value = plan.brief.captions
+    const colour = h("select", { class: "field select", "aria-label": "Highlight colour", onchange: () => {
+      if (colour.value) plan.brief.captionStyle = { accent: colour.value }
+      else delete plan.brief.captionStyle
+      plan.settings.captionStyle = plan.brief.captionStyle
+      changed()
+    } }, [h("option", { value: "" }, "Look's own colour"), ...Object.entries(colours).map(([value, label]) => h("option", { value }, label))])
+    colour.value = plan.brief.captionStyle?.accent ?? ""
+    return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Captions"), h("div", { class: "row" }, look, colour))
+  }
   function planBlock(plan) {
+    planGenre = plan.genreLabel ? `reads as: ${plan.genreLabel}` : null
+    const line = h("p", { class: "note small" }, settingsLine(plan.settings))
     const box = h(
       "div",
       { class: "proposal plan" },
       h("p", { class: "lead" }, "The Director's plan, not made yet"),
       plan.steps.length ? h("ol", { class: "steps" }, plan.steps.map((step) => h("li", {}, ...withTimes(step)))) : null,
-      h("p", { class: "note small" }, settingsLine(plan.settings)),
+      line,
+      plan.settings.scenes?.length ? sceneCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
+      plan.settings.pictures?.length ? pictureCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
+      plan.settings.terms?.length ? termCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
+      plan.brief.captions ? captionChoice(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       h(
         "div",
         { class: "row" },
@@ -765,7 +917,7 @@ async function workspace(id) {
   const verdictWords = { delivered: "Checked", delivered_with_notes: "Checked, with notes", blocked: "Needs you", not_checked: "Not checked" }
   // What the Director makes: the length, captions, music and a style reference, all optional
   const makeLength = h("select", { id: "make-length", class: "field select" }, [["", "Length: auto (30–60 s)"], ["30", "30 seconds"], ["45", "45 seconds"], ["60", "60 seconds"], ["90", "90 seconds"]].map(([value, label]) => h("option", { value }, label)))
-  const makeCaptions = h("select", { id: "make-captions", class: "field select" }, [["", "No captions"], ["clean", "Captions: clean"], ["karaoke", "Captions: karaoke"], ["boxed", "Captions: boxed"]].map(([value, label]) => h("option", { value }, label)))
+  const makeCaptions = h("select", { id: "make-captions", class: "field select" }, [["", "No captions"], ["clean", "Captions: clean"], ["karaoke", "Captions: karaoke"], ["boxed", "Captions: boxed"], ["pop", "Captions: pop"], ["story", "Captions: story"], ["minimal", "Captions: minimal"]].map(([value, label]) => h("option", { value }, label)))
   const makeMusic = h("select", { id: "make-music", class: "field select" })
   const makeFormat = h("select", { id: "make-format", class: "field select" }, [["9:16", "Format: 9:16 (Reels, Shorts)"], ["16:9", "Format: 16:9 (YouTube)"], ["1:1", "Format: 1:1 (square post)"], ["4:5", "Format: 4:5 (feed post)"]].map(([value, label]) => h("option", { value }, label)))
   const makeGrade = h("select", { id: "make-grade", class: "field select" }, [["", "Look: natural"], ["vivid", "Look: vivid"], ["cinematic", "Look: cinematic (cool, vignette)"], ["warm", "Look: warm"], ["bright", "Look: bright"], ["mono", "Look: black and white"]].map(([value, label]) => h("option", { value }, label)))

@@ -227,6 +227,20 @@ a { color: var(--teal); }
 .send { display: grid; gap: 6px; }
 .extras { display: flex; flex-wrap: wrap; gap: 0 14px; }
 .plan .steps { margin: 4px 0; padding-left: 20px; display: grid; gap: 4px; }
+.scenes { display: grid; gap: 8px; }
+.scene-head { justify-content: space-between; align-items: center; }
+.scene-head .field { width: auto; }
+.scene-info .field { width: auto; flex: 1 1 140px; min-width: 0; }
+.scene-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.proposal .scene-row { display: flex; gap: 10px; align-items: flex-start; justify-content: flex-start; }
+.found-thumb { flex: none; width: 120px; height: 90px; object-fit: cover; border-radius: 6px; background: #000; }
+.scenes .row .field { width: auto; flex: 1 1 120px; min-width: 0; }
+.scene-picture { flex: none; overflow: hidden; border-radius: 6px; background: #000; }
+.scene-picture iframe { border: 0; display: block; transform-origin: 0 0; pointer-events: none; }
+.scene-info { min-width: 0; display: grid; gap: 4px; }
+.scene-info p { margin: 0; overflow-wrap: anywhere; }
+.scene-info .row { flex-wrap: wrap; gap: 6px; }
+.scene-time { font-family: ui-monospace, "JetBrains Mono", monospace; color: var(--teal); }
 .refs-direct { margin: 0; }
 .refs-direct:empty { display: none; }
 .ref .ref-lines { list-style: none; padding: 0; margin: 2px 0; font-size: 13px; color: var(--ink-2); display: grid; gap: 2px; }

@@ -13,6 +13,7 @@ import { search } from "./loop.js"
 import { repairLadder } from "./repair.js"
 
 const FLICKS = 705_600_000
+const TEXT_GATES = new Set(["QG-08", "QG-09", "QG-10", "QG-11"])
 
 /** F0: what the plan alone shows. Nothing renders for an attempt that fails here (ET-LOOP-04). */
 export function planVerdict(project, index, recipe, { engineVersion = "f0", runtimeVersion = "f0" } = {}) {
@@ -38,15 +39,16 @@ export function planVerdict(project, index, recipe, { engineVersion = "f0", runt
  *   gateKit?: { tilePath?: Function, motion?: object, work?: string }, the Engine's tiles and Chrome, for QG-08 and QG-09
  * }} input
  */
-export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {} }) {
-  const recipe = recipeFor(brief)
+export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null }) {
+  // planner: a recipe with no variants to try (a programme, a montage), instead of the reel
+  const recipe = plannerRecipe ?? recipeFor(brief)
   let calls = 0
   const notes = []
   const slots = {}
 
   const variantOf = async (variant) => {
     onStage("story")
-    const made = await planReel({ project, index, asset, ask, brief, variant, signal })
+    const made = planner ? await planner() : await planReel({ project, index, asset, ask, brief, variant, signal })
     calls += made.calls
     Object.assign(slots, made.slots)
     for (const note of made.notes) if (!notes.includes(note)) notes.push(note)
@@ -73,13 +75,14 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
     }
     Object.assign(candidate, { project: attempt.project, ops: attempt.ops, file: attempt.file, plan: attempt.plan, gates: attempt.checked })
     const checked = attempt.checked
-    return { level: "F5", blocking: checked.blocking, briefMisses: checked.briefMisses, notes: checked.notes, quality: f0.quality, verdict: checked.verdict }
+    return { level: "F5", blocking: checked.blocking, briefMisses: checked.briefMisses, notes: checked.notes, quality: f0.quality, verdict: checked.verdict, failed: checked.gates?.filter((g) => g.status === "failed" && g.severity !== "note").map((g) => g.id) ?? [] }
   }
 
   const outcome = await search({
     start: { start: true, project },
     // Round 1: the recipe as planned. Later rounds: a tighter cut, then the original order
-    propose: async (best, round) => [await variantOf(round === 1 ? {} : round === 2 ? { tighter: 0.85 } : { noHook: true })],
+    // Another length or order can't fix what's wrong with how text is drawn: those rounds only cost time
+    propose: async (best, round) => (round > 1 && (planner || (best.verdict.briefMisses === 0 && best.verdict.failed?.length && best.verdict.failed.every((id) => TEXT_GATES.has(id)))) ? [] : [await variantOf(round === 1 ? {} : round === 2 ? { tighter: 0.85 } : { noHook: true })]),
     evaluate,
     signal,
     rounds: 3,

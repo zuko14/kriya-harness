@@ -29,7 +29,30 @@ export function safeZoneFor(project) {
   return zone
 }
 
-const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+/** A cutaway scene's block (VISUAL_SCENES.md): it covers the frame, so the speaker's face isn't in the picture under it. */
+export const isSceneBlock = (block) => block?.blockId === "scene"
+
+/**
+ * A scene's two regions, in canvas pixels: its content box, inside the safe zones, and the
+ * caption row under it, so a caption over a scene never lands on the diagram.
+ * @param {{ width: number, height: number }} canvas
+ * @param {{ top?: number, right?: number, bottom?: number, left?: number }} safe
+ * @param {{ w: number, h: number }} caption the caption box's size
+ */
+export function sceneFrame(canvas, safe, caption) {
+  const margin = Math.round(Math.min(canvas.width, canvas.height) * 0.05)
+  // A little inside the safe zone: a spring's overshoot on entry mustn't cross it (found on real footage)
+  const inset = Math.round(margin / 4)
+  const left = Math.max(safe.left ?? 0, margin) + inset
+  const right = Math.max(safe.right ?? 0, margin) + inset
+  const top = Math.max(safe.top ?? 0, margin) + inset
+  const bottom = Math.max(safe.bottom ?? 0, Math.round(margin / 2))
+  const w = Math.min(caption.w, canvas.width - (safe.left ?? 0) - (safe.right ?? 0))
+  const row = { x: (safe.left ?? 0) + Math.floor((canvas.width - (safe.left ?? 0) - (safe.right ?? 0) - w) / 2), y: canvas.height - bottom - caption.h, w, h: caption.h }
+  return { row, content: { x: left, y: top, w: canvas.width - left - right, h: row.y - Math.round(margin / 2) - top } }
+}
+
+const overlaps =(a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
 function candidates(item, { canvas, safe, prefer }) {
   if (item.fixed) return [{ box: item.fixed, cost: 0 }]

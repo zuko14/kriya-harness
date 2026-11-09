@@ -168,6 +168,8 @@ export function describe(op, index) {
       return `Emphasised "${words.get(op.word)?.text ?? op.word}" in caption ${op.caption}`
     case "add_title":
       return `Added the title "${op.text}" at ${place(op.at)}`
+    case "add_motion":
+      return op.block === "scene" ? `Added an animated ${op.variables?.kind ?? ""} scene, "${op.variables?.text ?? ""}", at ${place(op.at)}` : op.op
     case "grade":
       return `Graded ${op.clip}${op.saturation !== undefined ? `, saturation ${op.saturation}` : ""}${op.gain !== undefined ? `, contrast ${op.gain}` : ""}${op.gamma !== undefined ? `, gamma ${op.gamma}` : ""}${op.lift !== undefined ? `, lift ${op.lift}` : ""}`
     case "speed_ramp":
