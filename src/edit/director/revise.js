@@ -60,10 +60,26 @@ export const OPS_SCHEMA = {
         additionalProperties: false,
       },
     },
+    // Words the recogniser got wrong, when the person asks to fix the transcript
+    corrections: {
+      type: "array",
+      maxItems: 40,
+      items: { type: "object", properties: { word: ID, text: { type: "string", maxLength: 60 } }, required: ["word", "text"], additionalProperties: false },
+    },
+    // A request about the whole video ("make it stunning", "edit all of it"): the Director's make job does that
+    direct: {
+      anyOf: [
+        { type: "null" },
+        { type: "object", properties: { seconds: { type: "integer", minimum: 5, maximum: 600 }, captions: { type: "string", enum: ["clean", "karaoke", "boxed"] } }, additionalProperties: false },
+      ],
+    },
   },
   required: ["ops"],
   additionalProperties: false,
 }
+
+/** A correction's text: one word or a short name, no markup or line breaks. */
+export const cleanWord = (text) => (typeof text === "string" ? text.replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 60) : "")
 
 const seconds = (flicks) => `${(flicks / FLICKS).toFixed(2)} s`
 
@@ -114,6 +130,8 @@ export function describe(op, index) {
       return op.fit ? "Fitted the music to the cut on its downbeats" : "Shaped the music's fades"
     case "duck":
       return "Ducked the music under the speech"
+    case "add_deliverable":
+      return `Set up the export: ${op.size?.width ?? "?"}×${op.size?.height ?? "?"}${op.loudness ? `, mastered to ${op.loudness.lufs} LUFS` : ""}${op.burnCaptions ? ", captions burned in" : ""}`
     default:
       return op.op
   }
@@ -173,14 +191,34 @@ function clipsView(project, index) {
 export async function revise({ ask, project, index, text, selection, signal }) {
   const assets = project.assets.map((a) => a.id)
   const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), selectionText(selection, index)].join("\n\n")
-  const request = `The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}\nAnswer with the operations that do exactly this, and nothing else. If it can't be done with these operations, answer {"ops": []}.`
+  const request = [
+    `The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    "Answer with JSON only. Put in `ops` the operations that do exactly what they ask, and nothing else.",
+    "If they ask to fix or correct the transcript (names, misheard words), put each wrong word in `corrections` as {word: its id, text: the right word}, only where you are confident from the context.",
+    "If they ask for the whole video to be made, directed, edited or improved (not one part of it), set `direct` to an object (with `seconds` and a caption look if they say so) and leave `ops` empty: the Director makes the whole cut.",
+    'If none of these can do it, answer {"ops": []}.',
+  ].join("\n")
+  const words = new Map((index.words ?? []).map((w) => [w.id, w]))
+  // Operations must apply; a correction on an unknown word is only dropped, never worth a second call
   const check = ({ ops }) => {
     if (!ops.length) return []
     const tried = apply(project, ops, { index, author: "agent" })
     return tried.applied ? [] : tried.diagnostics.map((d) => `operation ${d.op + 1}: ${d.message}`)
   }
-  const answer = await ask({ task: "console", tier: "budget", schema: OPS_SCHEMA, view, request, maxOutput: 800, check, fallback: () => ({ ops: [] }), signal, priority: 0 })
+  const answer = await ask({ task: "console", tier: "budget", schema: OPS_SCHEMA, view, request, maxOutput: 2000, check, fallback: () => ({ ops: [] }), signal, priority: 0 })
   const ops = answer.value.ops
   const tried = ops.length ? apply(project, ops, { index, author: "agent" }) : null
-  return { ops: tried?.applied ? ops : [], changes: tried?.applied ? ops.map((op) => describe(op, index)) : [], project: tried?.applied ? tried.project : null, source: answer.source, reason: answer.reason, calls: answer.calls }
+  // A correction that changes nothing, or isn't a known word, isn't offered
+  const corrections = (answer.value.corrections ?? []).map((c) => ({ word: c.word, text: cleanWord(c.text) })).filter((c) => words.has(c.word) && c.text && c.text !== words.get(c.word).text)
+  const direct = answer.value.direct && typeof answer.value.direct === "object" ? answer.value.direct : null
+  return {
+    ops: tried?.applied ? ops : [],
+    changes: tried?.applied ? ops.map((op) => describe(op, index)) : [],
+    corrections: corrections.map((c) => ({ ...c, change: `Corrected "${words.get(c.word).text}" to "${c.text}"` })),
+    direct,
+    project: tried?.applied ? tried.project : null,
+    source: answer.source,
+    reason: answer.reason,
+    calls: answer.calls,
+  }
 }

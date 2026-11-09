@@ -105,7 +105,7 @@ const STORY_SCHEMA = {
   required: ["hook", "drop"],
   additionalProperties: false,
 }
-const EMPHASIS_SCHEMA = { type: "object", properties: { emphasis: { type: "array", maxItems: 3, items: { type: "string", maxLength: 64 } } }, required: ["emphasis"], additionalProperties: false }
+const EMPHASIS_SCHEMA = { type: "object", properties: { emphasis: { type: "array", maxItems: 8, items: { type: "string", maxLength: 64 } } }, required: ["emphasis"], additionalProperties: false }
 
 /**
  * Plans the reel as operations on `project` (which keeps its assets; its cut is replaced).
@@ -162,7 +162,8 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   let step = apply(project, ops, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel's cut was refused: ${step.diagnostics[0].message}`)
 
-  // Emphasis: a few words worth a punch-in
+  // Emphasis: a few words worth a punch-in; a reference's pace can ask for more (EDD-23)
+  const most = Number.isInteger(brief.punches) && brief.punches > 0 ? Math.min(brief.punches, 8) : recipe.punch.max
   const kept = chosen.flatMap((l) => runsOf(l).flat())
   const keptIds = new Set(kept.map((w) => w.id))
   const emphasis = await ask({
@@ -170,16 +171,16 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
     schema: EMPHASIS_SCHEMA,
     recipe: recipe.notes,
     view: paperEdit({ ...scoped, sentences: chosen }, { assets: [asset] }),
-    request: `Pick up to ${recipe.punch.max} single words to emphasise with a quick zoom: numbers, names, the point of a line. Word ids only.`,
+    request: `Pick up to ${most} single words to emphasise with a quick zoom: numbers, names, the point of a line. Word ids only.`,
     maxOutput: 200,
     check: ({ emphasis: picked }) => picked.filter((id) => !keptIds.has(id)).map((id) => `"${id}" isn't a kept word`),
-    fallback: () => ({ emphasis: kept.filter((w) => /\d/.test(w.text)).slice(0, recipe.punch.max).map((w) => w.id) }),
+    fallback: () => ({ emphasis: kept.filter((w) => /\d/.test(w.text)).slice(0, most).map((w) => w.id) }),
     signal,
   })
   calls += emphasis.calls
   slots.emphasis = emphasis.source
   if (emphasis.reason) notes.push(`Emphasis: ${emphasis.reason}`)
-  const punches = [...new Set(emphasis.value.emphasis)].slice(0, recipe.punch.max).map((id) => ({ op: "punch_in", at: { word: id, edge: "start" }, until: { word: id, edge: "end" }, scale: brief.zoom ?? recipe.punch.scale }))
+  const punches = [...new Set(emphasis.value.emphasis)].slice(0, most).map((id) => ({ op: "punch_in", at: { word: id, edge: "start" }, until: { word: id, edge: "end" }, scale: brief.zoom ?? recipe.punch.scale }))
 
   // Reframe to 9:16: follow the speaker where the index has one, else hold the centre
   const facts = project.assets.find((a) => a.id === asset).facts

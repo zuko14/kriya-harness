@@ -54,11 +54,37 @@ export function schemaErrors(schema, value, path = "$") {
   return problems
 }
 
-const parse = (text) => {
+/**
+ * The JSON in a reply: the whole text, or else the first complete object in it, so a
+ * thinking block, a fence or a sentence around it doesn't sink a good answer.
+ * A reply cut off by its output limit says so, since "too long" is what to fix.
+ */
+export function parseReply(text, finish) {
+  const raw = String(text ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim()
   try {
-    return { value: JSON.parse(String(text ?? "").replace(/^```(?:json)?\s*|\s*```$/g, "")) }
+    return { value: JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) }
   } catch {
-    return { problem: "isn't valid JSON" }
+    // The first balanced {...}, skipping braces inside strings
+    for (let start = raw.indexOf("{"); start !== -1; start = raw.indexOf("{", start + 1)) {
+      let depth = 0
+      let quoted = false
+      for (let i = start; i < raw.length; i++) {
+        const c = raw[i]
+        if (quoted) {
+          if (c === "\\") i++
+          else if (c === '"') quoted = false
+        } else if (c === '"') quoted = true
+        else if (c === "{") depth++
+        else if (c === "}" && --depth === 0) {
+          try {
+            return { value: JSON.parse(raw.slice(start, i + 1)) }
+          } catch {
+            break
+          }
+        }
+      }
+    }
+    return { problem: finish === "length" || !raw ? "was cut off before it finished (too long)" : "isn't valid JSON" }
   }
 }
 
@@ -67,6 +93,8 @@ const parse = (text) => {
  */
 // One slot's wait: a call's own limit (120 s, director/gateway.js) and a little queue
 export const SLOT_WAIT_MS = 150_000
+// Room for a reasoning model's thinking on top of the answer's own budget
+export const THINKING = 1500
 
 export function createAsk({ governor, record = () => {}, budget = { take: () => true }, slotWaitMs = SLOT_WAIT_MS }) {
   // The gateway has been refusing this job for as long as a slot will wait: its other slots
@@ -91,7 +119,9 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
       const limit = AbortSignal.timeout(slotWaitMs)
       try {
         calls++
-        reply = await governor.call({ model: tier, messages, response_format: { type: "json_schema", json_schema: { name: task, strict: false, schema } } }, { maxTokens: maxOutput, priority, signal: signal ? AbortSignal.any([signal, limit]) : limit })
+        // Low reasoning effort: a thinking model spends its output limit thinking otherwise,
+        // and answers with nothing (found in use: every console call ended at its 800 tokens)
+        reply = await governor.call({ model: tier, messages, response_format: { type: "json_schema", json_schema: { name: task, strict: false, schema } }, reasoning: { effort: "low" } }, { maxTokens: maxOutput + THINKING, priority, signal: signal ? AbortSignal.any([signal, limit]) : limit })
       } catch (error) {
         if (signal?.aborted) throw error
         if (limit.aborted) {
@@ -100,17 +130,17 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
           return { value: fallback(), source: "default", reason: "The model wasn't available for this job.", calls }
         }
         record({ task, tier, ms: Date.now() - started, result: `error:${error.code ?? error.status ?? "unknown"}` })
-        return { value: fallback(), source: "default", reason: `The model couldn't answer (${error.code ?? error.message}).`, calls }
+        return { value: fallback(), source: "default", reason: `The model couldn't answer: ${String(error.message || error.code || "unknown").replace(/\.$/, "")}.`, calls }
       }
       const usage = reply?.usage ?? {}
       const content = reply?.choices?.[0]?.message?.content
-      const parsed = parse(content)
+      const parsed = parseReply(content, reply?.choices?.[0]?.finish_reason)
       const problems = parsed.problem ? [parsed.problem] : [...schemaErrors(schema, parsed.value), ...(schemaErrors(schema, parsed.value).length ? [] : check(parsed.value))]
       record({ task, tier, input_tokens: usage.prompt_tokens ?? null, cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? null, output_tokens: usage.completion_tokens ?? null, ms: Date.now() - started, result: problems.length ? "invalid" : attempt ? "repaired" : "ok" })
       if (!problems.length) return { value: parsed.value, source: attempt ? "repaired" : "model", calls }
       if (attempt === 0) {
         // One repair, with the exact reasons
-        messages.push({ role: "assistant", content: String(content ?? "") }, { role: "user", content: `That answer was refused: ${problems.slice(0, 5).join("; ")}. Answer again with JSON that fits the schema, using only ids you were shown.` })
+        messages.push({ role: "assistant", content: String(content ?? "") }, { role: "user", content: `That answer was refused: ${problems.slice(0, 5).join("; ")}. Answer again with only the JSON that fits the schema, shorter if you can, using only ids you were shown. No explanation, no thinking aloud.` })
         continue
       }
       return { value: fallback(), source: "default", reason: `The model's answer didn't fit, twice: ${problems[0]}.`, calls }

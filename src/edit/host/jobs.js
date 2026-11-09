@@ -14,7 +14,15 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
   const running = new Map() // "<project>.<n>" → AbortController
 
   const idOf = (state, number) => `${state.id}.${number}`
-  const view = (state, row) => ({ id: idOf(state, row.id), project: state.id, kind: row.kind, status: row.status, progress: row.progress, error: row.error, output: row.dispatch })
+  const assetOf = (row) => {
+    try {
+      return JSON.parse(row.request ?? "{}").asset ?? null
+    } catch {
+      return null
+    }
+  }
+  // The asset of an index job, so the Studio's bin shows its progress on the right file
+  const view = (state, row) => ({ id: idOf(state, row.id), project: state.id, kind: row.kind, status: row.status, progress: row.progress, error: row.error, output: row.dispatch, ...(row.kind === "index" ? { asset: assetOf(row) } : {}) })
 
   async function run(state, number, request) {
     const id = idOf(state, number)

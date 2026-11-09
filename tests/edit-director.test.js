@@ -5,7 +5,7 @@ import { apply } from "../src/edit/core/ops.js"
 import { compile } from "../src/edit/core/plan.js"
 import { newProject } from "../src/edit/core/project.js"
 import { solve } from "../src/edit/core/solver.js"
-import { createAsk, DIRECTOR_CORE, schemaErrors } from "../src/edit/director/ask.js"
+import { createAsk, DIRECTOR_CORE, parseReply, schemaErrors, THINKING } from "../src/edit/director/ask.js"
 import { cleanSelection, CONSOLE_OPS, describe, revise } from "../src/edit/director/revise.js"
 import { UNTRUSTED_OPEN } from "../src/edit/index/views.js"
 import { createGovernor } from "../src/edit/loop/governor.js"
@@ -119,7 +119,7 @@ test("ET-DIR-04: with the model unavailable throughout, the reel is made on defa
   const { ask } = director({ story: down, emphasis: down })
   const made = await planReel({ project: rawProject(), index, asset: "a1", ask })
   assert.deepEqual(made.slots, { story: "default", emphasis: "default" })
-  assert.match(made.notes.join(" "), /couldn't answer \(signed_out\)/)
+  assert.match(made.notes.join(" "), /couldn't answer: signed out/)
   assert.equal(kept(made.project, index)[0].text, "Okay", "no hook chosen: the original order")
 })
 
@@ -141,7 +141,9 @@ test("ET-DIR-07: prompt blocks 0 and 1 are byte-stable across calls in a project
   assert.equal(systems.size, 1, "one system prefix for every call")
   assert.ok([...systems][0].startsWith(DIRECTOR_CORE))
   assert.doesNotMatch([...systems][0], /\d{4}-\d\d-\d\d|Pricing|take\.mov/, "nothing volatile in it: no date, no project or file name")
-  assert.ok(requests.every((r) => Number.isInteger(r.max_tokens) && r.max_tokens <= 800), "every call has its output budget")
+  // The answer's own budget plus room for a thinking model's reasoning, asked to keep it low
+  assert.ok(requests.every((r) => Number.isInteger(r.max_tokens) && r.max_tokens <= 2000 + THINKING), "every call has its output budget")
+  assert.ok(requests.every((r) => r.reasoning?.effort === "low"), "and asks a thinking model to think briefly")
 })
 
 test("ET-GOV-04: a first cut uses at most 8 model calls", async () => {
@@ -178,4 +180,25 @@ test("ET-RCP-01: the recipe is data, with no command, path, URL, model or price"
   const lines = candidateLines(indexOf(), "a1")
   assert.equal(lines.length, 9, "twelve lines less a restart, a cut-off attempt and a retake")
   assert.ok(lines.every((l) => runsOf(l).length >= 1))
+})
+
+test("a reply is read through a thinking block, a fence or a sentence around it; a cut-off one says so", () => {
+  const value = { ops: [{ op: "mark", name: "a {brace} \"quoted\"", at: 0 }] }
+  const json = JSON.stringify(value)
+  for (const text of [json, `\`\`\`json\n${json}\n\`\`\``, `<think>maybe {ops: []} works</think>${json}`, `Here is the edit:\n${json}\nHope that helps.`]) assert.deepEqual(parseReply(text).value, value, text.slice(0, 30))
+  assert.match(parseReply('{"ops": [{"op": "mark"', "length").problem, /cut off/)
+  assert.match(parseReply("", "length").problem, /cut off/)
+  assert.match(parseReply("", "stop").problem, /cut off/, "an empty answer is too")
+  assert.equal(parseReply("no json here", "stop").problem, "isn't valid JSON")
+})
+
+test("the console proposes transcript fixes on known words, and hands a whole-video request to the Director", async () => {
+  const index = indexOf()
+  const klea = index.words[3]
+  const { ask } = director({ console: { ops: [], corrections: [{ word: klea.id, text: "Kriya" }, { word: "a1:w99999", text: "nope" }, { word: index.words[4].id, text: index.words[4].text }], direct: { seconds: 30, captions: "karaoke" } } })
+  const made = await revise({ ask, project: rawProject(), index, text: "make it stunning, fix the transcript and direct it" })
+  assert.equal(made.source, "model")
+  assert.deepEqual(made.corrections, [{ word: klea.id, text: "Kriya", change: `Corrected "${klea.text}" to "Kriya"` }], "an unknown word and a no-change are dropped")
+  assert.deepEqual(made.direct, { seconds: 30, captions: "karaoke" })
+  assert.deepEqual(made.ops, [])
 })

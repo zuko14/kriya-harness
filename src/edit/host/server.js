@@ -13,6 +13,7 @@ import { LOOKS } from "../engine/captions.js"
 import { ENGINE_VERSION, guardPath } from "../engine/index.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
+import { recogniser } from "../index/layers/words.js"
 
 const HEADERS = {
   "cross-origin-opener-policy": "same-origin",
@@ -133,6 +134,39 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
   const NOTICES = { index: "This project's index was damaged and set aside. Index the footage again.", journal: "This project's job record was damaged and set aside. Finished renders will be made again." }
   const projectView = (state) => ({ project: state.log.current, head: state.log.head, assets: state.log.current.assets.map((asset) => withMedia(state, asset)), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
 
+  // The Media Runtime, installed from the Studio with its progress shown (the same signed
+  // manifest and checks as `kriya edit setup`): a first Index no longer looks like nothing happening
+  let setup = null
+  const runtimeView = () => {
+    const runtime = activeRuntime(home)
+    return { version: runtime?.version ?? null, speech: recogniser(runtime).missing ?? null, setup }
+  }
+  function startSetup() {
+    if (setup && !setup.finished) return runtimeView()
+    setup = { step: null, done: null, total: null, line: "Asking Kriya for the Media Runtime", error: null, finished: false }
+    const tell = () => {
+      for (const res of sse) res.write(`event: setup\ndata: ${JSON.stringify(setup)}\n\n`)
+    }
+    let told = 0
+    const run = async () => {
+      const [{ readDevice }, { fetchManifest }, { install }] = await Promise.all([import("../../store.js"), import("../runtime/fetch.js"), import("../runtime/setup.js")])
+      const device = readDevice()
+      if (!device) throw new Error("This computer isn't signed in to Kriya. Run kriya login, then try again.")
+      const say = (line) => ((setup.line = line), tell())
+      const progress = (at) => {
+        Object.assign(setup, at)
+        if (Date.now() - told > 250 || at.done === at.total) ((told = Date.now()), tell())
+      }
+      await install(await fetchManifest(device), { home, say, progress })
+    }
+    onActivity(1)
+    run().then(
+      () => Object.assign(setup, { finished: true, step: null, line: "The Media Runtime is ready." }),
+      (error) => Object.assign(setup, { finished: true, error: error.message }),
+    ).finally(() => (tell(), onActivity(-1)))
+    return runtimeView()
+  }
+
   function fenced(req) {
     const allowed = [`127.0.0.1:${port()}`, `localhost:${port()}`]
     if (!allowed.includes(req.headers.host)) return false
@@ -175,7 +209,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
     const file = join(dir, name)
     if (existsSync(file)) return refuse(res, 409, "A file with that name is already in this project.")
     await pipeline(req, createWriteStream(file, { flags: "wx" }))
-    json(res, 200, withMedia(state, await projects.addAsset(state, file)))
+    // ?as=reference: the person confirmed in the Studio they may use it as a style reference
+    json(res, 200, withMedia(state, await projects.addAsset(state, file, { reference: url.searchParams.get("as") === "reference" })))
   }
 
   function events(res) {
@@ -220,6 +255,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
 
     // The person's own screen. Never on the socket, so nothing but a Studio session can
     // say yes to a rule (ET-TST-01): no tool, no daemon, no job
+    if (parts[0] === "runtime" && parts.length === 1 && method === "GET") return say(200, runtimeView())
+    if (parts[0] === "runtime" && parts[1] === "setup" && parts.length === 2 && method === "POST") return say(202, startSetup())
     if (parts[0] === "taste" && parts.length === 1 && method === "GET") return say(200, projects.taste.list())
     if (parts[0] === "taste" && parts.length === 3 && method === "POST") {
       const key = decodeURIComponent(parts[1])
@@ -291,9 +328,16 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (brief.effort === "fast" || brief.effort === "best") clean.effort = brief.effort
           if (typeof brief.captions === "string" && Object.hasOwn(LOOKS, brief.captions)) clean.captions = brief.captions
           if (typeof brief.music === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.music)) clean.music = brief.music
+          if (typeof brief.reference === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.reference)) clean.reference = brief.reference
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))
+      }
+      // The person fixes a word the recogniser misheard (UX_SPEC §5)
+      if (parts[2] === "words" && parts.length === 4 && method === "POST") {
+        const { text } = await readJson(req)
+        if (typeof text !== "string" || text.length > 60 || /[\n\r<>]/.test(text)) return refuse(res, 400, "Give the word as it should read, in up to 60 characters.")
+        return say(200, { word: projects.correctWord(state, decodeURIComponent(parts[3]), text) })
       }
       if (parts[2] === "export" && parts[3] === "handoff" && parts.length === 4 && method === "POST") return say(200, projects.handoff(state))
       if (parts[2] === "index" && parts.length === 3 && method === "GET") {

@@ -17,7 +17,7 @@ import { openJournal } from "../graph/journal.js"
 import { solve } from "../core/solver.js"
 import { createAsk } from "../director/ask.js"
 import { LOOKS } from "../engine/captions.js"
-import { cleanSelection, describe, noteWord, revise } from "../director/revise.js"
+import { cleanSelection, cleanWord, describe, noteWord, revise } from "../director/revise.js"
 import { openIndexDb } from "../index/db.js"
 import { makeReel, rebase } from "../loop/make.js"
 import { runGates } from "../gates/index.js"
@@ -28,6 +28,7 @@ import { createIndexer, layersFor } from "../index/index.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { editHome } from "./paths.js"
 import { createTaste } from "./taste.js"
+import { extractDna } from "../engine/dna.js"
 
 function atomicWrite(file, text) {
   const part = `${file}.${process.pid}.tmp`
@@ -69,6 +70,7 @@ const kindOf = ({ width, hasAudio }) => (width ? "video" : hasAudio ? "audio" : 
 /**
  * @param {{ home: string, roots: string[], scheduler: object, tools: () => Promise<{ capabilities: object, version: string }> }} options
  */
+const FLICKS = 705_600_000
 // Director model calls a job may make (DIRECTOR_AND_AGENT §13, short form)
 const JOB_CALLS = 40
 
@@ -184,7 +186,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
     },
 
     /** Brings a file in by reference: probed, fingerprinted, never copied or written. */
-    async addAsset(state, path) {
+    async addAsset(state, path, { reference = false } = {}) {
       const real = guardPath(path, [...roots, state.folder])
       // A .cube is a LUT (ED13): read and checked here, before FFmpeg ever sees it, never probed as media
       const lut = extname(real).toLowerCase() === ".cube"
@@ -199,7 +201,9 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const id = `a${state.log.current.assets.length + 1}`
       const within = relative(state.folder, real)
       const stored = within.startsWith("..") || isAbsolute(within) ? real : within.split(sep).join("/")
-      const op = { op: "add_asset", id, kind: lut ? "lut" : kindOf(facts), fingerprint: await fingerprint(real), path: stored, linked: true, rights: "unknown", facts }
+      // A reference is measured for its style only (EDD-23); the person confirmed they may use it
+      if (reference && !facts.width) throw new EngineFailure("input", "refused", "A reference needs to be a video.")
+      const op = { op: "add_asset", id, kind: reference ? "reference" : lut ? "lut" : kindOf(facts), fingerprint: await fingerprint(real), path: stored, linked: true, rights: "unknown", ...(reference ? { rightsNote: "The person confirmed they may use it as a style reference." } : {}), facts }
       const result = change(state, { ops: [op], author: "code" })
       if (!result.ok) throw new EngineFailure("input", "refused", result.diagnostics[0].message)
       return state.log.current.assets.at(-1)
@@ -243,11 +247,14 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
     async ask(state, { text, selection, job = 0 }) {
       const chosen = cleanSelection(selection, state.log.current, state.index)
       const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen })
-      if (!result.ops.length) return { proposal: null, source: result.source, reason: result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way." }
+      // A request about the whole video goes to the Director's make job; the Studio offers it
+      const direct = result.direct ? { brief: { ...(result.direct.seconds ? { seconds: result.direct.seconds } : {}), ...(result.direct.captions ? { captions: result.direct.captions } : {}) } } : null
+      if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, source: result.source, reason: direct ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way.") }
       const id = randomBytes(6).toString("hex")
-      state.proposals.set(id, { ops: result.ops, head: state.log.head })
-      const { picture, duration } = solve(result.project, state.index)
-      return { proposal: { id, ops: result.ops, changes: result.changes, timeline: { picture, duration } }, source: result.source, ...(result.reason ? { reason: result.reason } : {}) }
+      state.proposals.set(id, { ops: result.ops, corrections: result.corrections, head: state.log.head })
+      const { picture, duration } = solve(result.project ?? state.log.current, state.index)
+      // Changes in one list, operations first, then corrections: "Only this" counts across both
+      return { proposal: { id, ops: result.ops, changes: [...result.changes, ...result.corrections.map((c) => c.change)], timeline: result.ops.length ? { picture, duration } : null }, direct, source: result.source, ...(result.reason ? { reason: result.reason } : {}) }
     },
 
     /** Accept all, accept some, or reject a proposal. Rebased onto HEAD; the person's own edits never move. */
@@ -257,6 +264,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       state.proposals.delete(id)
       if (!accept) return { applied: 0, dropped: [] }
       const chosen = Array.isArray(only) ? proposal.ops.filter((_, i) => only.includes(i)) : proposal.ops
+      const fixes = (proposal.corrections ?? []).filter((_, i) => !Array.isArray(only) || only.includes(proposal.ops.length + i))
+      for (const fix of fixes) this.correctWord(state, fix.word, fix.text)
       const { ops, dropped } = rebase(state.log.current, chosen, state.index)
       if (ops.length) {
         const result = change(state, { ops, author: "agent" })
@@ -264,7 +273,17 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
         // Accepting a proposal is the person's choice
         taste.note(state.id, ops, state.log.head)
       }
-      return { applied: ops.length, dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })) }
+      return { applied: ops.length + fixes.length, dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })) }
+    },
+
+    /** The person's fix of a misheard word; captions, the transcript and the Director read it from now on. */
+    correctWord(state, word, text) {
+      const clean = cleanWord(text)
+      const asset = typeof word === "string" ? word.split(":w")[0] : ""
+      if (!state.index.words.some((w) => w.id === word) || !state.indexDb.correct(asset, word, clean)) throw new EngineFailure("input", "unknown_word", "There's no such word in this project's transcript.")
+      state.index = state.indexDb.read()
+      state.engine.load(state.log.current, state.index)
+      return state.index.words.find((w) => w.id === word)
     },
 
     /** A make job: the reel recipe through the Edit Loop, checked by the gates. */
@@ -286,9 +305,32 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       // replay uses what the job really used. Captions only where they can render
       const recorded = replay?.answers.find((a) => a.task === "brief_extra")
       const extra = recorded ? JSON.parse(recorded.value) : { ...taste.defaults(), ...(picks && { picks }) }
+      // A style reference (EDD-23): measured to numbers only, never placed on a track. Its
+      // pace sets how often the picture changes (punch-ins), and its captions turn ours on
+      const styled = []
+      let captionsFromReference = false
+      const reference = request.brief?.reference && state.log.current.assets.find((a) => a.id === request.brief.reference && a.kind === "reference")
+      if (reference && !replay) {
+        try {
+          const dna = await extractDna(sourcesOf(state)(reference.id), { signal })
+          const seconds = (request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS
+          if (dna.pace.median) {
+            extra.punches = Math.min(8, Math.max(1, Math.round(seconds / dna.pace.median / 2)))
+            styled.push(`Took the pace of your reference: its picture changes every ${dna.pace.median.toFixed(1)} s, so ${extra.punches} punch-ins`)
+          }
+          if (dna.captions.present && !request.brief.captions && !extra.captions && state.engine.motion()) {
+            extra.captions = "clean"
+            captionsFromReference = true
+            styled.push("Your reference has captions, so this cut has them too")
+          }
+        } catch (error) {
+          if (signal?.aborted) throw error
+          styled.push(`Your reference couldn't be measured (${error.message}), so its style wasn't used.`)
+        }
+      }
       if (extra.captions && (!Object.hasOwn(LOOKS, extra.captions) || !state.engine.motion())) delete extra.captions
       if (!replay && Object.keys(extra).length) state.journal.answer({ job, task: "brief_extra", source: "person", value: extra })
-      const usedRules = [...(extra.captions && !request.brief?.captions ? [`Used your rule: ${extra.captions} captions`] : []), ...(extra.zoom && !request.brief?.zoom ? [`Used your rule: ${extra.zoom.toFixed(2)}× zoom`] : [])]
+      const usedRules = [...styled, ...(extra.captions && !request.brief?.captions && !captionsFromReference ? [`Used your rule: ${extra.captions} captions`] : []), ...(extra.zoom && !request.brief?.zoom ? [`Used your rule: ${extra.zoom.toFixed(2)}× zoom`] : [])]
       const stages = ["story", "check", "repair"]
       const run = runTool
       const work = join(dirOf(state.id), "cache", "gates")
