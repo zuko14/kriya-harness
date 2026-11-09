@@ -74,9 +74,11 @@ function cutPoints(s, clip, asset) {
     s.issue("cut_moved_off_word", { clip: clip.id, word: word.id, message: "a cut would have landed inside a word, so it moved to the word's edge" })
     return t
   }
-  const inStart = wordAt(words, start)
+  // A seam is a join inside one continuous take (a speed ramp's step): it stays exactly where it is
+  if (clip.seamIn && clip.seamOut) return { pictureIn: start, pictureOut: end, soundIn: start, soundOut: end }
+  const inStart = clip.seamIn ? null : wordAt(words, start)
   if (inStart) start = moved(inStart, inStart.start)
-  const inEnd = wordAt(words, end)
+  const inEnd = clip.seamOut ? null : wordAt(words, end)
   if (inEnd) end = moved(inEnd, inEnd.end)
 
   const floor = wordBefore(words, start)?.end ?? 0
@@ -114,7 +116,7 @@ function cutPoints(s, clip, asset) {
   }
   soundIn = Math.max(0, soundIn - lead)
   soundOut = Math.min(duration, soundOut + lag)
-  return { pictureIn, pictureOut, soundIn, soundOut }
+  return clip.seamIn ? (clip.seamOut ? { pictureIn: start, pictureOut: end, soundIn: start, soundOut: end } : { pictureIn: start, pictureOut, soundIn: start, soundOut }) : clip.seamOut ? { pictureIn, pictureOut: end, soundIn, soundOut: end } : { pictureIn, pictureOut, soundIn, soundOut }
 }
 
 const framesFor = (span, fps) => (span <= 0 ? 0 : flicksToFrames(span - 1, fps) + 1)

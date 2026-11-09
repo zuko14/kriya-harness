@@ -5,6 +5,7 @@
 // the lines to drop; the emphasis words), each with a default that needs no model.
 
 import { apply } from "../core/ops.js"
+import { solve } from "../core/solver.js"
 import { LOOKS, pages } from "../engine/captions.js"
 import { paperEdit } from "../index/views.js"
 
@@ -241,6 +242,39 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   const cutSounds = brief.sfx?.cut ? storyClips.slice(1).map((c) => ({ op: "add_sfx", asset: brief.sfx.cut, peak_at: { clip: c.id, edge: "start" } })) : []
   const introSound = brief.sfx?.intro && cold && storyClips[0] ? [{ op: "add_sfx", asset: brief.sfx.intro, peak_at: { clip: storyClips[0].id, edge: "start" } }] : []
   const sounds = [...cutSounds, ...introSound]
+
+  // Angles: one camera cut like two, wide then tight on alternate story clips (a punch the
+  // length of the clip). Emphasis punch-ins come after, so they win on their own clips
+  const angles = brief.angles ? storyClips.filter((_, i) => i % 2 === 1).map((c) => ({ op: "punch_in", at: { clip: c.id, edge: "start" }, until: { clip: c.id, edge: "end" }, scale: 1.18 })) : []
+  // B-roll from the person's own other clips, over every other story clip after the first,
+  // 2.5 s or the clip's length, each from a new part of its source
+  const brollSources = brief.broll === "own" ? project.assets.filter((a) => a.kind === "video" && a.id !== asset && (a.facts.duration ?? 0) > FLICKS) : []
+  const pieces = solve(step.project, index).picture
+  const lengthOfClip = (id) => pieces.filter((p) => p.clip === id).reduce((sum, p) => sum + (p.end - p.at), 0)
+  const broll = brollSources.length
+    ? storyClips
+        .slice(1)
+        .filter((_, i) => i % 2 === 0)
+        .map((c, i) => {
+          const source = brollSources[i % brollSources.length]
+          const duration = Math.min(Math.round(2.5 * FLICKS), lengthOfClip(c.id))
+          const room = Math.max(0, source.facts.duration - duration)
+          const from = room ? Math.round((i * 3 * FLICKS) % room) : 0
+          return duration > FLICKS / 2 ? { op: "place_broll", asset: source.id, at: { clip: c.id, edge: "start" }, in: from, duration } : null
+        })
+        .filter(Boolean)
+    : []
+  if (brief.broll === "own" && !brollSources.length) notes.push("There's no other video in the bin, so the cut has no B-roll. Add clips to the bin and make it again.")
+  // Title cards: each emphasis word pops on screen, unless captions already carry the words
+  const titleWords = brief.titles && !LOOKS[brief.captions] ? [...new Set(emphasis.value.emphasis)].slice(0, most).map((wid) => index.words.find((w) => w.id === wid)).filter(Boolean) : []
+  if (brief.titles && LOOKS[brief.captions]) notes.push("Captions already put the words on screen, so there are no separate title cards.")
+  const titles = titleWords.map((w) => ({ op: "add_title", text: w.text.replace(/[^\p{L}\p{N}%$₹' -]/gu, "").toUpperCase().slice(0, 40) || w.text, at: { word: w.id, edge: "start" }, duration: Math.round(1.2 * FLICKS) }))
+  // A speed ramp out of the cold open: its last 1.2 s rushes up to 2× into the story
+  const coldClip = clips.find((c) => c.echo)
+  const coldEnd = cold && index.words.find((w) => w.id === cold.to)?.end
+  const coldStart = cold && index.words.find((w) => w.id === cold.from)?.start
+  const rampFrom = coldEnd ? Math.max(coldEnd - Math.round(1.2 * FLICKS), coldStart + Math.round((coldEnd - coldStart) / 3)) : 0
+  const ramps = brief.ramps && coldClip && coldEnd ? [{ op: "speed_ramp", clip: coldClip.id, from: rampFrom, to: coldEnd, peak: { n: 2, d: 1 } }] : []
   // Background noise out of the voice: FFmpeg's own denoise, EQ, de-ess and compression (clean_voice)
   const cleaning = brief.cleanVoice ? clips.map((c) => ({ op: "clean_voice", clip: c.id, strength: 0.6 })) : []
 
@@ -250,7 +284,7 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   const song = brief.music ? project.assets.find((a) => a.id === brief.music && a.kind === "audio") : null
   if (brief.music && !song) notes.push(`There is no sound "${brief.music}" in this project, so the reel has no music.`)
   const music = song ? [{ op: "set_music", asset: song.id }, { op: "music_shape", fit: true, fadeIn: Math.round(FLICKS * 0.3) }, { op: "duck" }] : []
-  const all = [...ops, ...punches, ...framing, ...grading, ...cleaning, ...captions, ...music, ...sounds]
+  const all = [...ops, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...captions, ...music, ...sounds, ...ramps]
   step = apply(project, all, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
   return { ops: all, project: step.project, notes, calls, slots }

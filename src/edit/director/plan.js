@@ -32,6 +32,10 @@ export const PLAN_SCHEMA = {
         cutSound: { type: "string", enum: ["none", "whoosh", "pop"] },
         introSound: { type: "string", enum: ["none", "riser", "hit"] },
         punches: { type: "integer", minimum: 0, maximum: 8 },
+        angles: { type: "boolean" },
+        broll: { type: "string", enum: ["none", "own"] },
+        titles: { type: "boolean" },
+        ramps: { type: "boolean" },
       },
       additionalProperties: false,
     },
@@ -54,6 +58,10 @@ export function briefOf(settings = {}) {
     ...(settings.cutSound && Object.hasOwn(SFX, settings.cutSound) ? { cutSound: settings.cutSound } : {}),
     ...(settings.introSound && Object.hasOwn(SFX, settings.introSound) ? { introSound: settings.introSound } : {}),
     ...(Number.isInteger(settings.punches) ? { punches: settings.punches } : {}),
+    ...(settings.angles ? { angles: true } : {}),
+    ...(settings.broll === "own" ? { broll: "own" } : {}),
+    ...(settings.titles ? { titles: true } : {}),
+    ...(settings.ramps ? { ramps: true } : {}),
   }
 }
 
@@ -84,7 +92,7 @@ export async function planCut({ ask, project, index, text, history = [], previou
   const request = [
     `${earlier}The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
     previous ? `Your previous plan, which they want changed: ${JSON.stringify(previous).slice(0, 3000)}. Revise it by what they say now; keep what they didn't ask to change.` : "",
-    "You are the Director: plan the whole cut the way a top editor pitches it. Decide the opening (a hook sentence first, or a cold open: one strong later moment of 2 to 6 seconds played first, in black and white, before the story starts), the pacing (punch-ins), captions, the colour look, music, sound design (a sound on each cut, a riser into the story after a cold open), whether to clean background noise from the voice, the format and the length. Follow the references where they say something.",
+    "You are the Director: plan the whole cut the way a top editor pitches it. Decide the opening (a hook sentence first, or a cold open: one strong later moment of 2 to 6 seconds played first, in black and white, before the story starts), the pacing (punch-ins), captions, the colour look, music, sound design (a sound on each cut, a riser into the story after a cold open), whether to clean background noise from the voice, the format and the length. You can also cut one camera like two (angles: wide then tight on alternate clips), lay the person's other clips over the story as B-roll (broll 'own', only if the project has other video), pop key words on screen as title cards (titles, when there are no captions), and ramp the speed out of a cold open into the story (ramps). Follow the references where they say something. Don't promise what these settings can't do: no stock footage or generated video.",
     "Answer with JSON only: `say` is your pitch in 2 to 4 plain sentences, `steps` the concrete things you'll do, and `settings` exactly what will be made. Use sentence ids for `hook` and word ids for `coldOpen`, only from the paper edit. Music 'reference' means follow the music reference.",
   ].filter(Boolean).join("\n")
   const check = ({ settings }) => planProblems(settings, index)

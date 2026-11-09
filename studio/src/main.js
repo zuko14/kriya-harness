@@ -624,6 +624,10 @@ async function workspace(id) {
       settings.cutSound && settings.cutSound !== "none" ? `a ${settings.cutSound} on each cut` : null,
       settings.introSound && settings.introSound !== "none" ? `a ${settings.introSound} into the story` : null,
       Number.isInteger(settings.punches) ? `${settings.punches} punch-ins` : null,
+      settings.angles ? "wide and tight angles" : null,
+      settings.broll === "own" ? "B-roll from your clips" : null,
+      settings.titles ? "title cards" : null,
+      settings.ramps ? "a speed ramp into the story" : null,
     ]
     return parts.filter(Boolean).join(" · ")
   }
@@ -710,16 +714,24 @@ async function workspace(id) {
   const makeFormat = h("select", { id: "make-format", class: "field select" }, [["9:16", "Format: 9:16 (Reels, Shorts)"], ["16:9", "Format: 16:9 (YouTube)"], ["1:1", "Format: 1:1 (square post)"], ["4:5", "Format: 4:5 (feed post)"]].map(([value, label]) => h("option", { value }, label)))
   const makeGrade = h("select", { id: "make-grade", class: "field select" }, [["", "Look: natural"], ["vivid", "Look: vivid"], ["cinematic", "Look: cinematic (cool, vignette)"], ["warm", "Look: warm"], ["bright", "Look: bright"], ["mono", "Look: black and white"]].map(([value, label]) => h("option", { value }, label)))
   const makeVoice = h("select", { id: "make-voice", class: "field select" }, [["", "Voice: as recorded"], ["clean", "Voice: remove background noise"]].map(([value, label]) => h("option", { value }, label)))
+  // Extras: one camera cut like two, the person's other clips as B-roll, key words as title cards
+  const extra = (idName, label) => {
+    const box = h("input", { type: "checkbox", id: idName })
+    return { box, el: h("label", { class: "inline", for: idName }, box, ` ${label}`) }
+  }
+  const makeAngles = extra("make-angles", "Angles (wide and tight)")
+  const makeBroll = extra("make-broll", "B-roll from my clips")
+  const makeTitles = extra("make-titles", "Title cards")
   let musicChoice = ""
   makeMusic.addEventListener("change", () => (musicChoice = makeMusic.value))
   // Templates: a starting point for the selects below them, each still yours to change
   const TEMPLATES = {
     "": null,
-    reel: { format: "9:16", captions: "karaoke", grade: "vivid", length: "45", music: "generated:upbeat", voice: "clean" },
+    reel: { format: "9:16", captions: "karaoke", grade: "vivid", length: "45", music: "generated:upbeat", voice: "clean", angles: true },
     clean: { format: "9:16", captions: "clean", grade: "", length: "30", music: "", voice: "clean" },
     youtube: { format: "16:9", captions: "clean", grade: "warm", length: "60", music: "generated:calm", voice: "clean" },
     square: { format: "1:1", captions: "boxed", grade: "vivid", length: "30", music: "generated:upbeat", voice: "clean" },
-    cinematic: { format: "16:9", captions: "", grade: "cinematic", length: "60", music: "generated:warm", voice: "clean" },
+    cinematic: { format: "16:9", captions: "", grade: "cinematic", length: "60", music: "generated:warm", voice: "clean", angles: true, titles: true },
   }
   const makeTemplate = h(
     "select",
@@ -734,6 +746,8 @@ async function workspace(id) {
         makeGrade.value = t.grade
         makeLength.value = t.length
         makeVoice.value = t.voice
+        makeAngles.box.checked = !!t.angles
+        makeTitles.box.checked = !!t.titles
         makeMusic.value = musicChoice = t.music
       },
     },
@@ -751,6 +765,9 @@ async function workspace(id) {
     format: makeFormat.value,
     ...(makeGrade.value ? { grade: makeGrade.value } : {}),
     ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}),
+    ...(makeAngles.box.checked ? { angles: true } : {}),
+    ...(makeBroll.box.checked ? { broll: "own" } : {}),
+    ...(makeTitles.box.checked ? { titles: true } : {}),
     ...extra,
   })
   /** exact: the brief as given (an approved plan) plus the references in use; else the panel's choices under it */
@@ -791,6 +808,7 @@ async function workspace(id) {
     makeMusic,
     h("label", { for: "make-voice", class: "sr-only" }, "Voice"),
     makeVoice,
+    h("div", { class: "extras", role: "group", "aria-label": "Extras" }, makeAngles.el, makeBroll.el, makeTitles.el),
     h("div", { class: "row tight" }, refSummary, refPicker, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference")),
     makeButton,
     makeStatus,

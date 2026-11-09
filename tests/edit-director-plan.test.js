@@ -117,3 +117,23 @@ test("sound effects are written by code and say where their peak is", () => {
   for (const kind of Object.keys(SFX)) assert.equal(writeSfx(join(dir, `${kind}.wav`), kind).peak, Math.round(SFX[kind].peak * FLICKS), kind)
   assert.throws(() => writeSfx(join(dir, "x.wav"), "explosion"), /no "explosion"/)
 })
+
+test("a speed ramp eases up to its peak and back in five steps that join exactly, sound and picture", () => {
+  const { index, project } = talk()
+  const clip = project.sequences[0].clips[0].id
+  const before = solve(project, index).duration
+  const up = apply(project, [{ op: "speed_ramp", clip, from: at(4), to: at(8), peak: { n: 2, d: 1 } }], { author: "agent", index })
+  assert.deepEqual(up.diagnostics, [])
+  const pieces = solve(up.project, index).picture
+  assert.deepEqual(pieces.map((p) => p.speed.n / p.speed.d), [1, 1.4, 1.8, 2, 1.8, 1.4, 1])
+  for (let i = 1; i < pieces.length; i++) assert.equal(pieces[i].in, pieces[i - 1].out, "each step starts where the last ended: no repeat, no gap")
+  assert.ok(solve(up.project, index).duration < before - at(1.4), "four seconds play in about two and a half")
+  const slow = apply(project, [{ op: "speed_ramp", clip, from: at(4), to: at(6), peak: { n: 1, d: 2 } }], { author: "agent", index })
+  assert.ok(solve(slow.project, index).duration > before + at(1), "two seconds of eased slow motion play in about three")
+  assert.equal(apply(project, [{ op: "speed_ramp", clip, from: at(4), to: at(6), peak: { n: 8, d: 1 } }], { author: "agent", index }).diagnostics[0].code, "bad_value")
+})
+
+test("the plan's new abilities become the brief: angles, B-roll from the person's clips, title cards, ramps", () => {
+  assert.deepEqual(briefOf({ angles: true, broll: "own", titles: true, ramps: true }), { angles: true, broll: "own", titles: true, ramps: true })
+  assert.deepEqual(briefOf({ angles: false, broll: "none", titles: false, ramps: false }), {})
+})
