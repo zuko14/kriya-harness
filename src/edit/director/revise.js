@@ -9,9 +9,10 @@ import { paperEdit, shotDigest } from "../index/views.js"
 
 const FLICKS = 705_600_000
 
-// What the console may ask for: edits that render today. Captions, motion and sound
-// design arrive with their phases (ED8, ED9) and are refused until then
-export const CONSOLE_OPS = ["keep_range", "remove_range", "use_take", "reorder", "trim", "split", "ripple_delete", "punch_in", "reframe", "speed", "set_format", "mark"]
+// What the console may ask for: edits that render today, captions and titles included
+// (drawn in the runtime's Chrome when it has no HyperFrames)
+export const CONSOLE_OPS = ["keep_range", "remove_range", "use_take", "reorder", "trim", "split", "ripple_delete", "punch_in", "reframe", "speed", "set_format", "mark", "caption_style", "caption_edit", "caption_emphasis", "add_title", "grade"]
+export const CAPTION_LOOKS = ["clean", "karaoke", "boxed"]
 
 const ID = { type: "string", maxLength: 64 }
 const EDGE = { type: "string", enum: ["start", "end"] }
@@ -55,6 +56,15 @@ export const OPS_SCHEMA = {
           width: { type: "integer", minimum: 2 },
           height: { type: "integer", minimum: 2 },
           name: { type: "string", maxLength: 80 },
+          look: { type: "string", enum: CAPTION_LOOKS },
+          words: { type: "array", maxItems: 40, items: ID },
+          caption: ID,
+          word: ID,
+          text: { type: "string", maxLength: 200 },
+          lift: { type: "number", minimum: -0.5, maximum: 0.5 },
+          gamma: { type: "number", minimum: 0.5, maximum: 2 },
+          gain: { type: "number", minimum: 0.5, maximum: 2 },
+          saturation: { type: "number", minimum: 0, maximum: 2 },
         },
         required: ["op"],
         additionalProperties: false,
@@ -66,6 +76,8 @@ export const OPS_SCHEMA = {
       maxItems: 40,
       items: { type: "object", properties: { word: ID, text: { type: "string", maxLength: 60 } }, required: ["word", "text"], additionalProperties: false },
     },
+    // A short answer in words: what Kriya did, or the answer to a question
+    say: { type: "string", maxLength: 600 },
     // A request about the whole video ("make it stunning", "edit all of it"): the Director's make job does that
     direct: {
       anyOf: [
@@ -144,6 +156,14 @@ export function describe(op, index) {
       return op.fit ? "Fitted the music to the cut on its downbeats" : "Shaped the music's fades"
     case "duck":
       return "Ducked the music under the speech"
+    case "caption_edit":
+      return `Changed caption ${op.caption} to "${op.text}"`
+    case "caption_emphasis":
+      return `Emphasised "${words.get(op.word)?.text ?? op.word}" in caption ${op.caption}`
+    case "add_title":
+      return `Added the title "${op.text}" at ${place(op.at)}`
+    case "grade":
+      return `Graded ${op.clip}${op.saturation !== undefined ? `, saturation ${op.saturation}` : ""}${op.gain !== undefined ? `, contrast ${op.gain}` : ""}${op.gamma !== undefined ? `, gamma ${op.gamma}` : ""}${op.lift !== undefined ? `, lift ${op.lift}` : ""}`
     case "add_deliverable":
       return `Set up the export: ${op.size?.width ?? "?"}×${op.size?.height ?? "?"}${op.loudness ? `, mastered to ${op.loudness.lufs} LUFS` : ""}${op.burnCaptions ? ", captions burned in" : ""}`
     default:
@@ -159,7 +179,7 @@ function selectionText(selection, index) {
     return `The person selected the words ${first} to ${last} in the paper edit, and means them by "this", "here" or "that part".`
   }
   if (selection.clip) return `The person selected clip ${selection.clip}, and means it by "this", "here" or "that clip".`
-  if (Number.isInteger(selection.from) && Number.isInteger(selection.to)) return `The person selected the timeline from ${selection.from} to ${selection.to} flicks.`
+  if (Number.isInteger(selection.from) && Number.isInteger(selection.to)) return `The person marked ${clock(selection.from)} to ${clock(selection.to)} on the cut's timeline, and means it by "this", "here" or "that part" (what it points at is below).`
   if (Number.isInteger(selection.at)) return `The playhead is at ${selection.at} flicks on the timeline.`
   return "Nothing is selected."
 }
@@ -191,10 +211,86 @@ export function noteWord(project, index, at) {
   return (words.find((w) => t >= w.start && t < w.end) ?? words.find((w) => w.start >= t) ?? words.at(-1))?.id ?? null
 }
 
+/** A time on the cut as the person reads it in the Studio: 1:02.5 */
+export const clock = (flicks) => {
+  const total = Math.max(0, flicks) / FLICKS
+  const minutes = Math.floor(total / 60)
+  return `${minutes}:${(total - minutes * 60).toFixed(1).padStart(4, "0")}`
+}
+
 function clipsView(project, index) {
-  const { picture } = solve(project, index)
-  const lines = picture.map((p) => `[${p.clip} ${p.asset} source ${p.in}-${p.out} at ${p.at}-${p.end}]`)
-  return `Clips on the timeline, in order:\n${lines.join("\n") || "(none yet)"}`
+  const { picture, captions, duration } = solve(project, index)
+  const lines = picture.map((p) => `[${p.clip} ${clock(p.at)}-${clock(p.end)} from ${p.asset} ${seconds(p.in)}-${seconds(p.out)}; flicks source ${p.in}-${p.out} at ${p.at}-${p.end}]`)
+  const said = captions.map((c) => `[caption ${c.clip} ${clock(c.at)}-${clock(c.end)} ${c.look ?? ""} ${JSON.stringify(String(c.text).replace(/[<>]/g, ""))}]`)
+  return [`The cut, on its own timeline: it starts at 0:00 and is ${clock(duration)} long. Clips in order:`, lines.join("\n") || "(none yet)", ...(said.length ? ["Captions on screen:", said.join("\n")] : [])].join("\n")
+}
+
+const JOIN = /^\s*(?:-|–|—|to|until|till|and|through)\s*$/i
+
+/**
+ * Times in the person's words, on the cut's timeline: 0:05, 1:02.5, 5s, 5 sec, 5 seconds,
+ * and ranges joined by to, -, until or and ("from 5 to 9 seconds", "between 0:05 and 0:09").
+ * @returns {{ at: number, to?: number }[]} in flicks
+ */
+export function timesIn(text) {
+  const tokens = [...String(text).matchAll(/(\d{1,2}):(\d{2}(?:\.\d+)?)|(\d+(?:\.\d+)?)(\s*(?:s|secs?|seconds?)\b)?/gi)].map((m) => ({
+    t: m[1] !== undefined ? Number(m[1]) * 60 + Number(m[2]) : Number(m[3]),
+    unit: m[1] !== undefined || !!m[4],
+    start: m.index,
+    end: m.index + m[0].length,
+  }))
+  const between = (a, b) => String(text).slice(a.end, b.start)
+  // A bare number is a time only as the first half of a range whose second half is one
+  const times = tokens.filter((tok, i) => tok.unit || (tokens[i + 1]?.unit && JOIN.test(between(tok, tokens[i + 1]))))
+  const out = []
+  for (let i = 0; i < times.length; i++) {
+    const next = times[i + 1]
+    if (next && JOIN.test(between(times[i], next)) && next.t > times[i].t) {
+      out.push({ at: Math.round(times[i].t * FLICKS), to: Math.round(next.t * FLICKS) })
+      i++
+    } else out.push({ at: Math.round(times[i].t * FLICKS) })
+  }
+  return out.slice(0, 8)
+}
+
+/** Where a moment of the cut comes from: its clip, and the source time inside it. */
+function sourceAt(picture, t) {
+  const piece = picture.find((p) => t >= p.at && t < p.end)
+  if (!piece) return null
+  return { piece, t: piece.in + Math.round(((t - piece.at) * (piece.out - piece.in)) / (piece.end - piece.at || 1)) }
+}
+
+/**
+ * What each mentioned time points at, worked out by code so the model never does
+ * arithmetic on flicks: the clip, the words (with ids) and the captions there.
+ */
+export function timesView(text, project, index) {
+  const asked = timesIn(text)
+  if (!asked.length) return ""
+  const { picture, captions, duration } = solve(project, index)
+  const words = index.words ?? []
+  const wordAt = (piece, t) => words.find((w) => w.asset === piece.asset && t >= w.start && t < w.end) ?? words.find((w) => w.asset === piece.asset && w.start >= t && w.start < piece.out)
+  const quote = (list) => JSON.stringify(list.map((w) => w.text).join(" ").replace(/[<>]/g, "").slice(0, 300))
+  const lines = asked.map(({ at, to }) => {
+    if (at >= duration) return `${clock(at)}: past the end of the cut (${clock(duration)} long).`
+    if (to === undefined) {
+      const found = sourceAt(picture, at)
+      const word = found && wordAt(found.piece, found.t)
+      const on = captions.filter((c) => at >= c.at && at < c.end).map((c) => `caption ${c.clip}`)
+      return `${clock(at)}: clip ${found?.piece.clip ?? "?"}${word ? `, word ${word.id} ${JSON.stringify(word.text)}` : ", no word spoken there"}${on.length ? `, ${on.join(", ")}` : ""}.`
+    }
+    const end = Math.min(to, duration)
+    const pieces = picture.filter((p) => p.at < end && p.end > at)
+    const inside = pieces.flatMap((p) => {
+      const from = sourceAt(picture, Math.max(at, p.at))?.t ?? p.in
+      const until = Math.max(from, (sourceAt(picture, Math.min(end, p.end) - 1)?.t ?? p.out) + 1)
+      return words.filter((w) => w.asset === p.asset && w.end > from && w.start < until)
+    })
+    const on = captions.filter((c) => c.at < end && c.end > at).map((c) => `caption ${c.clip}`)
+    const spoken = inside.length ? `words ${inside[0].id} to ${inside.at(-1).id}: ${quote(inside)}` : "no words spoken"
+    return `${clock(at)}-${clock(end)}: clip${pieces.length === 1 ? "" : "s"} ${pieces.map((p) => p.clip).join(", ") || "?"}, ${spoken}${on.length ? `; ${on.join(", ")}` : ""}.`
+  })
+  return `Times the person mentioned, worked out by code on the cut's timeline:\n${lines.join("\n")}`
 }
 
 /**
@@ -202,12 +298,20 @@ function clipsView(project, index) {
  * @param {{ ask: ReturnType<import("./ask.js").createAsk>, project: object, index: object, text: string, selection?: object, signal?: AbortSignal }} input
  * @returns {Promise<{ ops: object[], changes: string[], project: object | null, source: string, reason?: string, calls: number }>}
  */
-export async function revise({ ask, project, index, text, selection, signal }) {
+export async function revise({ ask, project, index, text, selection, history = [], signal }) {
   const assets = project.assets.map((a) => a.id)
-  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), selectionText(selection, index)].join("\n\n")
+  // A marked range reads like a typed one: code says what it points at
+  const marked = Number.isInteger(selection?.from) && Number.isInteger(selection?.to) ? ` from ${clock(selection.from)} to ${clock(selection.to)}` : ""
+  const times = timesView(`${text}${marked}`, project, index)
+  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), selectionText(selection, index), times].filter(Boolean).join("\n\n")
+  // The last turns of this chat, so "shorter" or "no, the other one" mean something. The
+  // person's lines are theirs; Kriya's are what it said before, not instructions
+  const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
-    `The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    `${earlier}The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
     "Answer with JSON only. Put in `ops` the operations that do exactly what they ask, and nothing else.",
+    "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor.",
+    "Put one plain sentence in `say`: what you changed, or the answer if they asked a question.",
     "If they ask to fix or correct the transcript (names, misheard words), put each wrong word in `corrections` as {word: its id, text: the right word}, only where you are confident from the context.",
     "If they ask for the whole video to be made, directed, edited or improved (not one part of it), set `direct` to an object (with `seconds` and a caption look if they say so) and leave `ops` empty: the Director makes the whole cut.",
     'If none of these can do it, answer {"ops": []}.',
@@ -230,6 +334,7 @@ export async function revise({ ask, project, index, text, selection, signal }) {
     changes: tried?.applied ? ops.map((op) => describe(op, index)) : [],
     corrections: corrections.map((c) => ({ ...c, change: `Corrected "${words.get(c.word).text}" to "${c.text}"` })),
     direct,
+    say: typeof answer.value.say === "string" ? answer.value.say.replace(/[\u0000-\u001f<>]/g, " ").trim().slice(0, 600) : "",
     project: tried?.applied ? tried.project : null,
     source: answer.source,
     reason: answer.reason,

@@ -188,4 +188,29 @@ a { color: var(--teal); }
   .modes .btn { flex: 1; }
   .monitor { max-height: 50vh; }
 }
+/* Home: a project's row with its delete; the folder picker */
+.project-row { display: flex; gap: 8px; align-items: center; }
+.project-row .open { flex: 1; justify-content: flex-start; }
+.btn.danger { color: var(--error); }
+.picker { width: min(560px, 92vw); max-height: 80vh; border: 0; border-radius: 14px; padding: 18px; background: var(--sheet); color: var(--ink); box-shadow: 0 12px 40px rgb(0 0 0 / 0.35); display: grid; gap: 10px; }
+.picker::backdrop { background: rgb(0 0 0 / 0.45); }
+.picker .where { word-break: break-all; color: var(--ink-2); margin: 0; }
+.folders { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; max-height: 46vh; overflow: auto; }
+.btn.folder { width: 100%; justify-content: flex-start; }
+.row.end { justify-content: flex-end; }
+
+/* Chat with Kriya */
+.chat { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 8px; max-height: 42vh; overflow: auto; }
+.chat:empty { display: none; }
+.msg { padding: 8px 10px; border-radius: 10px; background: var(--hover); }
+.msg.you { background: color-mix(in srgb, var(--teal) 14%, transparent); }
+.msg .who { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.msg p { margin: 2px 0 0; white-space: pre-wrap; }
+.msg .proposal { margin-top: 8px; }
+.chat-input { min-height: 64px; padding: 10px 12px; resize: vertical; line-height: 1.4; }
+.prompt { align-items: flex-end; }
+.time-link { font: inherit; font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 0.92em; color: var(--teal); background: none; border: 0; padding: 0 2px; min-height: 24px; text-decoration: underline; cursor: pointer; }
+.marks { display: inline-flex; gap: 6px; }
+.area-monitor .marks .btn { background: #2a2a2a; color: #eee; }
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

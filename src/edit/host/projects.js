@@ -2,7 +2,7 @@
 // person's folder; its history and cache stay in ~/.kriya/edit/<id>/, never synced.
 
 import { randomBytes } from "node:crypto"
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs"
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs"
 import { dirname, extname, isAbsolute, join, relative, sep } from "node:path"
 
 import { checkout, commit, createLog, parseEntry, undo, versions } from "../core/history.js"
@@ -170,6 +170,26 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       persist(state)
     },
 
+    /**
+     * Removes a project from the Studio: its history, cache, index and journal in
+     * ~/.kriya/edit/<id>/ go. The person's folder (the project file, footage, exports)
+     * is theirs and is never touched. A project with work running is refused.
+     */
+    remove(id, { running = () => false } = {}) {
+      const known = entry(id)
+      if (!known) throw new EngineFailure("input", "no_project", "There is no such project.")
+      if (running(id)) throw new EngineFailure("input", "busy", "This project has work running. Let it finish or stop it first.")
+      const state = open.get(id)
+      if (state) {
+        state.journal.close()
+        state.indexDb.close()
+        open.delete(id)
+      }
+      atomicWrite(registry, JSON.stringify(list().filter((item) => item.id !== id)))
+      rmSync(dirOf(id), { recursive: true, force: true })
+      return { removed: id, kept: dirname(known.file) }
+    },
+
     /** @param {{ name: string, folder: string, offered?: boolean }} input offered: the person offered this folder on this computer (CC-D2) */
     async create({ name, folder, offered = false }) {
       const real = guardPath(folder, offered ? [folder] : roots)
@@ -244,17 +264,17 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
     },
 
     /** The console: words → a proposal, applied to a copy, nothing landing yet (UX_SPEC §4, §5). */
-    async ask(state, { text, selection, job = 0 }) {
+    async ask(state, { text, selection, history = [], job = 0 }) {
       const chosen = cleanSelection(selection, state.log.current, state.index)
-      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen })
+      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history })
       // A request about the whole video goes to the Director's make job; the Studio offers it
       const direct = result.direct ? { brief: { ...(result.direct.seconds ? { seconds: result.direct.seconds } : {}), ...(result.direct.captions ? { captions: result.direct.captions } : {}) } } : null
-      if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, source: result.source, reason: direct ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way.") }
+      if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, say: result.say, source: result.source, reason: direct || result.say ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way.") }
       const id = randomBytes(6).toString("hex")
       state.proposals.set(id, { ops: result.ops, corrections: result.corrections, head: state.log.head })
       const { picture, duration } = solve(result.project ?? state.log.current, state.index)
       // Changes in one list, operations first, then corrections: "Only this" counts across both
-      return { proposal: { id, ops: result.ops, changes: [...result.changes, ...result.corrections.map((c) => c.change)], timeline: result.ops.length ? { picture, duration } : null }, direct, source: result.source, ...(result.reason ? { reason: result.reason } : {}) }
+      return { proposal: { id, ops: result.ops, changes: [...result.changes, ...result.corrections.map((c) => c.change)], timeline: result.ops.length ? { picture, duration } : null }, direct, say: result.say, source: result.source, ...(result.reason ? { reason: result.reason } : {}) }
     },
 
     /** Accept all, accept some, or reject a proposal. Rebased onto HEAD; the person's own edits never move. */
@@ -318,7 +338,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
             extra.punches = Math.min(8, Math.max(1, Math.round(seconds / dna.pace.median / 2)))
             styled.push(`Took the pace of your reference: its picture changes every ${dna.pace.median.toFixed(1)} s, so ${extra.punches} punch-ins`)
           }
-          if (dna.captions.present && !request.brief.captions && !extra.captions && state.engine.motion()) {
+          if (dna.captions.present && !request.brief.captions && !extra.captions && !state.engine.motion().missing) {
             extra.captions = "clean"
             captionsFromReference = true
             styled.push("Your reference has captions, so this cut has them too")
@@ -328,7 +348,14 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
           styled.push(`Your reference couldn't be measured (${error.message}), so its style wasn't used.`)
         }
       }
-      if (extra.captions && (!Object.hasOwn(LOOKS, extra.captions) || !state.engine.motion())) delete extra.captions
+      // Captions only where they can render: a missing runtime or Chrome drops them with a note,
+      // rather than failing the whole cut at render (found in use: every render failed)
+      const motionMissing = state.engine.motion().missing
+      if (extra.captions && (!Object.hasOwn(LOOKS, extra.captions) || motionMissing)) delete extra.captions
+      if (motionMissing && request.brief?.captions) {
+        request = { ...request, brief: { ...request.brief, captions: undefined } }
+        styled.push(`No captions this time: ${motionMissing}`)
+      }
       if (!replay && Object.keys(extra).length) state.journal.answer({ job, task: "brief_extra", source: "person", value: extra })
       const usedRules = [...styled, ...(extra.captions && !request.brief?.captions && !captionsFromReference ? [`Used your rule: ${extra.captions} captions`] : []), ...(extra.zoom && !request.brief?.zoom ? [`Used your rule: ${extra.zoom.toFixed(2)}× zoom`] : [])]
       const stages = ["story", "check", "repair"]
@@ -371,7 +398,9 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const { ops, dropped } = state.log.head === result.head ? { ops: result.best.ops, dropped: [] } : rebase(state.log.current, result.best.ops, state.index)
       const landed = change(state, { ops, author: "agent" })
       if (!landed.ok) throw new EngineFailure("plan", "refused", landed.diagnostics[0].message)
-      const changes = [...usedRules, ...ops.filter((op) => !["ripple_delete", "reframe"].includes(op.op)).map((op) => describe(op, state.index))]
+      // A caption per spoken line is one change to a person: said once, with the count
+      const captioned = ops.filter((op) => op.op === "caption_style" && op.words?.length)
+      const changes = [...usedRules, ...ops.filter((op) => !["ripple_delete", "reframe", "caption_style"].includes(op.op) || (op.op === "caption_style" && !op.words?.length)).map((op) => describe(op, state.index)), ...(captioned.length ? [`Captioned ${captioned.length} line${captioned.length === 1 ? "" : "s"} (${captioned[0].look})`] : [])]
       const { version } = await tools()
       const delivery = result.best.file
         ? await writeDelivery({ file: result.best.file, title: state.log.current.name, project: result.best.project, parent, plan: result.best.plan, sourcePath, tools: { engine: ENGINE_VERSION, ffmpeg: version, runtime: runtime?.version ?? null }, gates: gates?.gates ?? [], verdict: gates?.verdict ?? "not_checked", calls: state.journal.calls(job), changes, notes, repairs, beforeFrom: sourcePath(asset), run, work })

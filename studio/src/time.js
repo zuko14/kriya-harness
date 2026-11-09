@@ -54,6 +54,12 @@ export function keyAction(key, { shift = false, mod = false } = {}) {
     case "Backspace":
     case "Delete":
       return { type: "delete" }
+    case "i":
+    case "I":
+      return { type: "mark", edge: "in" }
+    case "o":
+    case "O":
+      return { type: "mark", edge: "out" }
     default:
       return null
   }
