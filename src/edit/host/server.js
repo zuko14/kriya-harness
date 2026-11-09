@@ -4,7 +4,7 @@
 
 import { createHash, createHmac, randomBytes } from "node:crypto"
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs"
-import { basename, extname, isAbsolute, join } from "node:path"
+import { basename, dirname, extname, isAbsolute, join } from "node:path"
 import { pipeline } from "node:stream/promises"
 
 import { compile } from "../core/plan.js"
@@ -14,6 +14,7 @@ import { ENGINE_VERSION, guardPath } from "../engine/index.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
+import { FORMATS, GRADES } from "../recipes/reel.js"
 
 const HEADERS = {
   "cross-origin-opener-policy": "same-origin",
@@ -110,7 +111,7 @@ function sendFile(req, res, file) {
   createReadStream(file, { start, end }).pipe(res)
 }
 
-const statusOf = (error) => ({ outside_project: 403, missing_file: 404, exists: 409, too_large: 413, empty: 409 })[error.reason] ?? 400
+const statusOf = (error) => ({ outside_project: 403, missing_file: 404, exists: 409, too_large: 413, empty: 409, busy: 409, no_project: 404 })[error.reason] ?? 400
 
 /**
  * @param {{ home: string, roots: string[], projects: object, jobs: object, tools: () => Promise<object>, tokenTtlMs: number, port: () => number, onActivity: (inFlight?: number) => void, onStop: () => void, sse: Set<object>, log: (line: string) => void, pid: number }} options
@@ -250,7 +251,25 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
       const entries = readdirSync(root, { withFileTypes: true })
         .filter((item) => !item.name.startsWith("."))
         .map((item) => ({ name: item.name, kind: item.isDirectory() ? "folder" : item.isFile() ? "file" : "other" }))
-      return say(200, { root, entries })
+        .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "folder" ? -1 : 1))
+      // The Studio's folder picker: up, while still inside the allowed folders
+      let parent = null
+      try {
+        if (dirname(root) !== root) parent = guardPath(dirname(root), roots)
+      } catch {
+        // Above the allowed folders: no way up
+      }
+      return say(200, { root, parent, roots, entries })
+    }
+    // A new folder for a project, inside the allowed folders only
+    if (method === "POST" && pathname === "/browse/folder") {
+      const { parent, name } = await readJson(req)
+      const clean = typeof name === "string" ? name.trim().replace(/[^\p{L}\p{N} _.-]+/gu, "-").replace(/^\.+/, "") : ""
+      if (!clean || clean.length > 80 || typeof parent !== "string") return refuse(res, 400, "Give the new folder a name.")
+      const at = join(guardPath(parent, roots), clean)
+      if (existsSync(at)) return refuse(res, 409, "A folder with that name is already there.")
+      mkdirSync(at)
+      return say(200, { folder: guardPath(at, roots) })
     }
 
     // The person's own screen. Never on the socket, so nothing but a Studio session can
@@ -287,6 +306,7 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
       const state = await needProject(res, parts[1])
       if (!state) return
       if (parts.length === 2 && method === "GET") return say(200, projectView(state))
+      if (parts.length === 2 && method === "DELETE") return say(200, projects.remove(state.id, { running: (id) => jobs.runningIn(id) }))
       if (parts.length === 2 && method === "PATCH") {
         const { ops, undo } = await readJson(req)
         if (undo === true) {
@@ -309,9 +329,11 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         return say(200, { ...compile(state.log.current, state.index, { engineVersion: ENGINE_VERSION, runtimeVersion: version }), timeline: { picture, audio, overlays, captions, duration } })
       }
       if (parts[2] === "ask" && parts.length === 3 && method === "POST") {
-        const { text, selection } = await readJson(req)
+        const { text, selection, history } = await readJson(req)
         if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want changed, in up to 2,000 characters.")
-        return say(200, await projects.ask(state, { text, selection }))
+        // The chat's last turns, short and text only: nothing else of the browser's reaches the model
+        const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
+        return say(200, await projects.ask(state, { text, selection, history: turns }))
       }
       if (parts[2] === "proposals" && parts.length === 4 && method === "POST") {
         const { accept, only } = await readJson(req)
@@ -329,6 +351,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (typeof brief.captions === "string" && Object.hasOwn(LOOKS, brief.captions)) clean.captions = brief.captions
           if (typeof brief.music === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.music)) clean.music = brief.music
           if (typeof brief.reference === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.reference)) clean.reference = brief.reference
+          if (Object.hasOwn(FORMATS, brief.format)) clean.format = brief.format
+          if (Object.hasOwn(GRADES, brief.grade)) clean.grade = brief.grade
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))

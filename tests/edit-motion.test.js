@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { test } from "node:test"
 
 import { mapBox, outputFaces } from "../src/edit/core/faces.js"
@@ -189,9 +192,17 @@ test("ES-05: the profile denies outbound network but loopback, people's folders,
   assert.deepEqual([wrapped.command, wrapped.args[0], wrapped.args.slice(-2)], ["/usr/bin/sandbox-exec", "-p", ["/bin/echo", "hi"]])
 })
 
-test("the motion layer says what it lacks: no runtime, no HyperFrames, no Chrome", () => {
+test("the motion layer says what it lacks, and without HyperFrames it draws in the runtime's Chrome", () => {
   assert.match(motionRuntime(null).missing, /kriya edit setup/)
-  assert.match(motionRuntime({ dir: "/nonexistent", manifest: {} }).missing, /no HyperFrames/)
+  assert.match(motionRuntime({ dir: "/nonexistent", manifest: {} }).missing, /no Chrome/)
+  const dir = mkdtempSync(join(tmpdir(), "kmotion-"))
+  mkdirSync(join(dir, "chrome-headless-shell"))
+  writeFileSync(join(dir, "chrome-headless-shell", "chrome"), "")
+  const manifest = { platforms: { [`${process.platform}-${process.arch}`]: { artifacts: [{ id: "chrome-headless-shell", entry: "chrome" }] } } }
+  const chromeOnly = motionRuntime({ dir, manifest })
+  assert.equal(chromeOnly.missing, undefined, "Chrome alone is enough for captions")
+  assert.equal(chromeOnly.cli, null, "drawn frame by frame, without HyperFrames")
+  assert.equal(chromeOnly.chrome, join(dir, "chrome-headless-shell", "chrome"))
 })
 
 /* ─────────────────────────────── layers, matte, faces ─────────────────────────────── */

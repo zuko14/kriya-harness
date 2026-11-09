@@ -38,6 +38,74 @@ function signedOut(message) {
   clear(app).append(h("main", { class: "center" }, h("h1", {}, "Open the Studio from Kriya"), h("p", {}, message ?? "Click Editing Studio in Kriya Harness, or run kriya edit and open its link.")))
 }
 
+/* ──────────────────────────── folder picker ─────────────────────────── */
+
+/**
+ * Picks a folder on this computer through the Edit Host (a web page can't learn a real
+ * path from the OS dialog): the folders the Host may use, with Up and New folder.
+ * @returns {Promise<string | null>} the chosen folder, or null
+ */
+function pickFolder(start) {
+  return new Promise((done) => {
+    const list = h("ul", { class: "folders", "aria-label": "Folders" })
+    const where = h("p", { class: "label-mono where" })
+    const note = h("p", { class: "note", role: "status" })
+    const newName = h("input", { class: "field", placeholder: "New folder name", "aria-label": "New folder name", maxlength: "80" })
+    let current = null
+    const close = (value) => {
+      dialog.close()
+      dialog.remove()
+      done(value)
+    }
+    async function show(root) {
+      try {
+        const view = await api("GET", `/browse${root ? `?root=${encodeURIComponent(root)}` : ""}`)
+        current = view.root
+        where.textContent = view.root
+        clear(list)
+        if (view.parent) list.append(h("li", {}, h("button", { type: "button", class: "btn folder", onclick: () => show(view.parent) }, "↑ Up")))
+        const folders = view.entries.filter((e) => e.kind === "folder")
+        for (const entry of folders) list.append(h("li", {}, h("button", { type: "button", class: "btn folder", onclick: () => show(`${view.root}/${entry.name}`) }, `📁 ${entry.name}`)))
+        if (!folders.length) list.append(h("li", { class: "note" }, "No folders here."))
+        note.textContent = ""
+      } catch (error) {
+        note.textContent = error.message
+      }
+    }
+    const dialog = h(
+      "dialog",
+      { class: "picker", "aria-label": "Choose a folder" },
+      h("h2", {}, "Choose a folder"),
+      where,
+      list,
+      h(
+        "form",
+        {
+          class: "row tight",
+          onsubmit: async (event) => {
+            event.preventDefault()
+            try {
+              const { folder } = await api("POST", "/browse/folder", { parent: current, name: newName.value })
+              newName.value = ""
+              await show(folder)
+            } catch (error) {
+              note.textContent = error.message
+            }
+          },
+        },
+        newName,
+        h("button", { type: "submit", class: "btn" }, "New folder"),
+      ),
+      note,
+      h("div", { class: "row end" }, h("button", { type: "button", class: "btn", onclick: () => close(null) }, "Cancel"), h("button", { type: "button", class: "btn primary", onclick: () => close(current) }, "Use this folder")),
+    )
+    dialog.addEventListener("cancel", (event) => (event.preventDefault(), close(null)))
+    document.body.append(dialog)
+    dialog.showModal()
+    show(start)
+  })
+}
+
 /* ───────────────────────────── home ───────────────────────────── */
 
 async function home() {
@@ -48,7 +116,8 @@ async function home() {
     return error.status === 401 ? signedOut() : signedOut(error.message)
   }
   const name = h("input", { id: "new-name", class: "field", required: true, placeholder: "Pricing reel", autocomplete: "off" })
-  const folder = h("input", { id: "new-folder", class: "field", required: true, placeholder: "/Users/you/Movies/pricing" })
+  const folder = h("input", { id: "new-folder", class: "field", required: true, readonly: true, placeholder: "Choose a folder…" })
+  const chooseFolder = h("button", { type: "button", class: "btn", onclick: () => pickFolder(folder.value || null).then((picked) => picked && ((folder.value = picked), (status.textContent = ""))) }, "Choose…")
   const status = h("p", { class: "note", role: "status" })
   const create = h(
     "form",
@@ -56,6 +125,7 @@ async function home() {
       class: "panel new",
       onsubmit: async (event) => {
         event.preventDefault()
+        if (!folder.value) return (status.textContent = "Choose a folder for the project first.")
         try {
           const { id } = await api("POST", "/projects", { name: name.value.trim(), folder: folder.value.trim() })
           location.hash = `#/p/${id}`
@@ -67,8 +137,8 @@ async function home() {
     h("h2", {}, "New project"),
     h("label", { for: "new-name" }, "Name"),
     name,
-    h("label", { for: "new-folder" }, "Folder for the project file (its footage stays where it is)"),
-    folder,
+    h("label", { for: "new-folder" }, "Folder for the project (its footage stays where it is)"),
+    h("div", { class: "row tight" }, folder, chooseFolder),
     h("button", { class: "btn primary", type: "submit" }, "Create"),
     status,
   )
@@ -92,7 +162,42 @@ async function home() {
       "main",
       { class: "home" },
       h("h1", {}, "What are we making?"),
-      h("section", { class: "panel" }, h("h2", {}, "Projects"), projects.length ? h("ul", { class: "projects" }, projects.map((p) => h("li", {}, h("a", { class: "btn", href: `#/p/${p.id}` }, p.name)))) : h("p", { class: "note" }, "No projects yet.")),
+      h(
+        "section",
+        { class: "panel" },
+        h("h2", {}, "Projects"),
+        projects.length
+          ? h(
+              "ul",
+              { class: "projects" },
+              projects.map((p) =>
+                h(
+                  "li",
+                  { class: "project-row" },
+                  h("a", { class: "btn open", href: `#/p/${p.id}` }, p.name),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      class: "btn ghost danger",
+                      "aria-label": `Delete the project ${p.name}`,
+                      onclick: async () => {
+                        if (!confirm(`Delete "${p.name}" from the Studio?\n\nIts edit history, cache and index on this computer are removed. Your folder, footage, exports and the project file stay where they are.`)) return
+                        try {
+                          await api("DELETE", `/projects/${p.id}`)
+                          home()
+                        } catch (error) {
+                          alert(error.message)
+                        }
+                      },
+                    },
+                    "Delete",
+                  ),
+                ),
+              ),
+            )
+          : h("p", { class: "note" }, "No projects yet."),
+      ),
       create,
       tasteBox,
     ),
@@ -412,15 +517,26 @@ async function workspace(id) {
     else if (job?.finished) setupLine.textContent = "Ready. Index a file to read its words."
   }
 
-  /* The Director console (ED7): words, with the selection as "this", become a proposal */
-  const prompt = h("input", { id: "prompt", class: "field", placeholder: "Ask for a change", autocomplete: "off" })
+  /* Chat with Kriya (ED7's console): words, times like 0:05, a marked range or a selection
+     as "this" become proposals; questions get answers. Kriya's words are only ever text */
+  const prompt = h("textarea", { id: "prompt", class: "field chat-input", rows: "2", placeholder: "Tell Kriya: \"remove 0:05 to 0:09\", \"change the caption at 0:12 to …\", \"make the start punchier\"", autocomplete: "off" })
   const chip = h("span", { class: "chip selection", hidden: true })
-  const proposalEl = h("div", { class: "proposal", "aria-live": "polite" })
+  const chatEl = h("ol", { class: "chat", "aria-label": "Chat with Kriya", "aria-live": "polite" })
   const did = h("ul", { class: "did", "aria-label": "What I did" })
+  const history = [] // the chat's turns, sent back (short) so a follow-up has its context
+  let markIn = null
+  let markOut = null
+  const clock = (flicks) => {
+    const total = Math.max(0, flicks) / 705_600_000
+    const minutes = Math.floor(total / 60)
+    return `${minutes}:${(total - minutes * 60).toFixed(1).padStart(4, "0")}`
+  }
   const selectionNow = () => {
+    if (markIn !== null && markOut !== null && markOut > markIn) return { selection: { from: markIn, to: markOut }, label: `Marked ${clock(markIn)}–${clock(markOut)}` }
     const words = transcript.selection()
     if (words) return { selection: { words }, label: `Selected: ${index.words.find((w) => w.id === words[0])?.text ?? ""}${words[0] === words[1] ? "" : " …"}` }
     if (timeline.selected) return { selection: { clip: timeline.selected }, label: `Selected: clip ${timeline.selected}` }
+    if (markIn !== null) return { selection: { at: markIn }, label: `Marked in at ${clock(markIn)} (press O for the end)` }
     return { selection: { at: monitor.time }, label: null }
   }
   const showChip = () => {
@@ -429,75 +545,136 @@ async function workspace(id) {
     chip.textContent = label ?? ""
   }
   transcriptEl.addEventListener("click", () => setTimeout(showChip))
-  function showProposal(proposal) {
-    clear(proposalEl)
-    timeline.setGhost(proposal ? proposal.timeline : null)
-    strip.setGhost(proposal ? proposal.timeline : null)
-    if (!proposal) return
+
+  /** Text with its times (0:05, 1:02.5) as buttons that seek the cut there. */
+  function withTimes(text) {
+    const out = []
+    let last = 0
+    for (const m of String(text).matchAll(/\b(\d{1,2}):(\d{2}(?:\.\d+)?)\b/g)) {
+      out.push(text.slice(last, m.index))
+      const at = Math.round((Number(m[1]) * 60 + Number(m[2])) * 705_600_000)
+      out.push(h("button", { type: "button", class: "time-link", title: "Play from here", onclick: () => (showProgram(), monitor.seek(Math.min(at, Math.max(0, durationOf(pieces) - 1)))) }, m[0]))
+      last = m.index + m[0].length
+    }
+    out.push(text.slice(last))
+    return out
+  }
+  function message(who, text, ...more) {
+    const li = h("li", { class: `msg ${who}` }, h("span", { class: "who" }, who === "you" ? "You" : "Kriya"), h("p", {}, ...withTimes(text)), ...more)
+    chatEl.append(li)
+    li.scrollIntoView({ block: "nearest" })
+    return li
+  }
+  function proposalBlock(proposal) {
+    timeline.setGhost(proposal.timeline)
+    strip.setGhost(proposal.timeline)
+    const box = h("div", { class: "proposal" })
     const decide = async (accept, only) => {
       try {
         const result = await api("POST", `/projects/${id}/proposals/${proposal.id}`, { accept, ...(only ? { only } : {}) })
         say.textContent = result.dropped.length ? `Not applied, because you changed that part: ${result.dropped.map((d) => d.change).join("; ")}.` : accept ? "Done. Undo with Cmd+Z." : "Left as it was."
         if (accept) for (const change of only ? only.map((i) => proposal.changes[i]) : proposal.changes) did.prepend(h("li", {}, change))
+        clear(box).append(h("p", { class: "note" }, accept ? (result.dropped.length ? "Partly applied." : "Applied.") : "Not applied."))
       } catch (error) {
         say.textContent = error.message
       }
-      showProposal(null)
+      timeline.setGhost(null)
+      strip.setGhost(null)
       await reload()
     }
-    proposalEl.append(
+    box.append(
       h("p", { class: "lead" }, "Proposed, not applied yet"),
-      h("ul", {}, proposal.changes.map((change, i) => h("li", {}, h("span", {}, change), proposal.changes.length > 1 ? h("button", { type: "button", class: "btn", onclick: () => decide(true, [i]) }, "Only this") : null))),
+      h("ul", {}, proposal.changes.map((change, i) => h("li", {}, h("span", {}, ...withTimes(change)), proposal.changes.length > 1 ? h("button", { type: "button", class: "btn", onclick: () => decide(true, [i]) }, "Only this") : null))),
       h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => decide(true) }, proposal.changes.length > 1 ? "Accept all" : "Accept"), h("button", { type: "button", class: "btn", onclick: () => decide(false) }, "Reject")),
     )
+    return box
   }
   /** A request about the whole video: the Director's make job does it, with the panel's choices. */
-  function showDirect(direct) {
+  function directBlock(direct) {
     const brief = direct.brief ?? {}
     const box = h(
       "div",
       { class: "proposal direct" },
-      h("p", { class: "lead" }, "That's about the whole video"),
-      h("p", { class: "note" }, `The Director can make it: the best takes, the story, ${brief.captions || makeCaptions.value ? "captions, " : ""}punch-ins and a checked master${brief.seconds ? `, about ${brief.seconds} s` : ""}.`),
-      h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => (box.remove(), make(brief)) }, "Direct it"), h("button", { type: "button", class: "btn", onclick: () => box.remove() }, "Not now")),
+      h("p", { class: "note" }, `The Director can make the whole cut: the best takes, the story, ${brief.captions || makeCaptions.value ? "captions, " : ""}punch-ins and a checked master${brief.seconds ? `, about ${brief.seconds} s` : ""}.`),
+      h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => (clear(box).append(h("p", { class: "note" }, "Directing…")), make(brief)) }, "Direct it"), h("button", { type: "button", class: "btn", onclick: () => box.remove() }, "Not now")),
     )
-    proposalEl.append(box)
+    return box
   }
+  async function send() {
+    const text = prompt.value.trim()
+    if (!text) return
+    const { selection, label } = selectionNow()
+    message("you", label ? `${text}  (${label.replace(/^Selected: /, "on ")})` : text)
+    prompt.value = ""
+    const thinking = message("kriya", "Thinking about that…")
+    try {
+      const reply = await api("POST", `/projects/${id}/ask`, { text, selection, history: history.slice(-6) })
+      thinking.remove()
+      const words = reply.say || (reply.proposal ? "Here's what I'd change." : reply.direct ? "That's about the whole video." : (reply.reason ?? "I couldn't turn that into an edit. Try saying it another way."))
+      message("kriya", words, reply.proposal ? proposalBlock(reply.proposal) : null, reply.direct ? directBlock(reply.direct) : null)
+      history.push({ who: "you", text: text.slice(0, 400) }, { who: "kriya", text: words.slice(0, 400) })
+    } catch (error) {
+      thinking.remove()
+      message("kriya", error.status === 0 || error.status >= 500 ? "I can't reach Kriya right now, so I can't make changes by asking. You can still edit by hand." : error.message)
+    }
+  }
+  prompt.addEventListener("keydown", (event) => {
+    // Enter sends; Shift+Enter is a new line
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) (event.preventDefault(), send())
+  })
   const promptForm = h(
     "form",
-    {
-      class: "prompt",
-      onsubmit: async (event) => {
-        event.preventDefault()
-        const text = prompt.value.trim()
-        if (!text) return
-        say.textContent = "Thinking about that…"
-        try {
-          const { proposal, direct, reason } = await api("POST", `/projects/${id}/ask`, { text, selection: selectionNow().selection })
-          say.textContent = proposal || direct ? "" : (reason ?? "Kriya couldn't turn that into an edit.")
-          if (proposal || direct) prompt.value = ""
-          showProposal(proposal)
-          if (direct) showDirect(direct)
-        } catch (error) {
-          say.textContent = error.status === 0 || error.status >= 500 ? "I can't reach Kriya, so I can't make changes by asking. You can still edit by hand." : error.message
-        }
-      },
-    },
-    h("label", { for: "prompt", class: "sr-only" }, "Ask for a change"),
+    { class: "prompt", onsubmit: (event) => (event.preventDefault(), send()) },
+    h("label", { for: "prompt", class: "sr-only" }, "Message Kriya"),
     prompt,
-    h("button", { class: "btn primary", type: "submit" }, "Ask"),
+    h("button", { class: "btn primary", type: "submit" }, "Send"),
+  )
+  const markButtons = h(
+    "div",
+    { class: "marks", role: "group", "aria-label": "Mark a range of the cut" },
+    h("button", { type: "button", class: "btn", "aria-keyshortcuts": "I", title: "Mark in (I)", onclick: () => act({ type: "mark", edge: "in" }) }, "Mark in"),
+    h("button", { type: "button", class: "btn", "aria-keyshortcuts": "O", title: "Mark out (O)", onclick: () => act({ type: "mark", edge: "out" }) }, "Mark out"),
   )
   const verdictWords = { delivered: "Checked", delivered_with_notes: "Checked, with notes", blocked: "Needs you", not_checked: "Not checked" }
   // What the Director makes: the length, captions, music and a style reference, all optional
   const makeLength = h("select", { id: "make-length", class: "field select" }, [["", "Length: auto (30–60 s)"], ["30", "30 seconds"], ["45", "45 seconds"], ["60", "60 seconds"], ["90", "90 seconds"]].map(([value, label]) => h("option", { value }, label)))
   const makeCaptions = h("select", { id: "make-captions", class: "field select" }, [["", "No captions"], ["clean", "Captions: clean"], ["karaoke", "Captions: karaoke"], ["boxed", "Captions: boxed"]].map(([value, label]) => h("option", { value }, label)))
   const makeMusic = h("select", { id: "make-music", class: "field select" })
+  const makeFormat = h("select", { id: "make-format", class: "field select" }, [["9:16", "Format: 9:16 (Reels, Shorts)"], ["16:9", "Format: 16:9 (YouTube)"], ["1:1", "Format: 1:1 (square post)"], ["4:5", "Format: 4:5 (feed post)"]].map(([value, label]) => h("option", { value }, label)))
+  const makeGrade = h("select", { id: "make-grade", class: "field select" }, [["", "Look: natural"], ["vivid", "Look: vivid"], ["cinematic", "Look: cinematic"], ["bright", "Look: bright"], ["mono", "Look: black and white"]].map(([value, label]) => h("option", { value }, label)))
+  // Templates: a starting point for the selects below them, each still yours to change
+  const TEMPLATES = {
+    "": null,
+    reel: { format: "9:16", captions: "karaoke", grade: "vivid", length: "45" },
+    clean: { format: "9:16", captions: "clean", grade: "", length: "30" },
+    youtube: { format: "16:9", captions: "clean", grade: "", length: "60" },
+    square: { format: "1:1", captions: "boxed", grade: "vivid", length: "30" },
+    cinematic: { format: "16:9", captions: "", grade: "cinematic", length: "60" },
+  }
+  const makeTemplate = h(
+    "select",
+    {
+      id: "make-template",
+      class: "field select",
+      onchange: () => {
+        const t = TEMPLATES[makeTemplate.value]
+        if (!t) return
+        makeFormat.value = t.format
+        makeCaptions.value = t.captions
+        makeGrade.value = t.grade
+        makeLength.value = t.length
+      },
+    },
+    [["", "Template: choose…"], ["reel", "Talking-head reel: karaoke captions, vivid"], ["clean", "Clean reel: simple captions"], ["youtube", "YouTube talk: 16:9, clean captions"], ["square", "Square post: boxed captions, vivid"], ["cinematic", "Cinematic: 16:9, no captions"]].map(([value, label]) => h("option", { value }, label)),
+  )
   const makeReference = h("select", { id: "make-reference", class: "field select" })
   const briefNow = (extra = {}) => ({
     ...(makeLength.value ? { seconds: Number(makeLength.value) } : {}),
     ...(makeCaptions.value ? { captions: makeCaptions.value } : {}),
     ...(makeMusic.value ? { music: makeMusic.value } : {}),
     ...(makeReference.value ? { reference: makeReference.value } : {}),
+    format: makeFormat.value,
+    ...(makeGrade.value ? { grade: makeGrade.value } : {}),
     ...extra,
   })
   async function make(extra) {
@@ -511,7 +688,7 @@ async function workspace(id) {
       say.textContent = error.message
     }
   }
-  const makeButton = h("button", { type: "button", class: "btn primary wide", onclick: () => make() }, "Make a reel")
+  const makeButton = h("button", { type: "button", class: "btn primary wide", onclick: () => make() }, "Make it")
   const makeStatus = h("div", { class: "make-status", "aria-live": "polite" })
   function showMake() {
     const job = makeJob ? jobsNow.get(makeJob) : null
@@ -522,10 +699,16 @@ async function workspace(id) {
   const makePanel = h(
     "div",
     { class: "make" },
+    h("label", { for: "make-template", class: "sr-only" }, "Template"),
+    makeTemplate,
+    h("label", { for: "make-format", class: "sr-only" }, "Format"),
+    makeFormat,
     h("label", { for: "make-length", class: "sr-only" }, "Length"),
     makeLength,
     h("label", { for: "make-captions", class: "sr-only" }, "Captions"),
     makeCaptions,
+    h("label", { for: "make-grade", class: "sr-only" }, "Colour look"),
+    makeGrade,
     h("label", { for: "make-music", class: "sr-only" }, "Music"),
     makeMusic,
     h("label", { for: "make-reference", class: "sr-only" }, "Style reference"),
@@ -558,6 +741,15 @@ async function workspace(id) {
     if (!action) return
     if (action.type === "mode") return setMode(action.mode)
     if (action.type === "prompt") return prompt.focus()
+    // Marks are on the cut's own timeline: in, then out; a new in starts over
+    if (action.type === "mark") {
+      showProgram()
+      if (action.edge === "in" || markIn === null) ((markIn = monitor.time), (markOut = null))
+      else if (monitor.time > markIn) markOut = monitor.time
+      else ((markOut = markIn), (markIn = monitor.time))
+      say.textContent = markOut === null ? `Marked in at ${clock(markIn)}. Play to the end of the stretch and press O.` : `Marked ${clock(markIn)} to ${clock(markOut)}. Tell Kriya what to do with it.`
+      return showChip()
+    }
     if (action.type === "undo") return api("PATCH", `/projects/${id}`, { undo: true }).then(reload)
     if (action.type === "redo") return (say.textContent = "Redo isn't here yet.")
     if (action.type === "split") {
@@ -597,9 +789,9 @@ async function workspace(id) {
         "section",
         { class: "area-monitor panel", "aria-label": "Monitor" },
         h("div", { class: "monitor-frame" }, canvas),
-        h("div", { class: "transport" }, play, time, which, shape, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
+        h("div", { class: "transport" }, play, time, which, shape, markButtons, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
       ),
-      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Ask for a change"), chip, promptForm, proposalEl, h("h2", {}, "What I did"), did),
+      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Chat with Kriya"), chatEl, chip, promptForm, h("p", { class: "note small" }, "Say times like 0:05 or mark a stretch with I and O. Enter sends."), h("h2", {}, "What I did"), did),
       h("section", { class: "area-transcript panel", "aria-label": "Transcript" }, h("h2", {}, "Transcript"), h("p", { class: "note small hint" }, "Click a word to jump there. Double-click (or F2) to fix a misheard word."), transcriptEl),
       h("div", { class: "area-strip" }, stripEl),
       h("section", { class: "area-timeline panel", "aria-label": "Timeline" }, timelineEl),
@@ -617,6 +809,7 @@ async function workspace(id) {
       if (typing) return document.activeElement?.blur()
       transcript.clear()
       timeline.select(null)
+      markIn = markOut = null
       return showChip()
     }
     const action = keyAction(event.key, { shift: event.shiftKey, mod: event.metaKey || event.ctrlKey })

@@ -24,9 +24,32 @@ export const REEL_TALKING_HEAD = {
 
 const STRUCK = new Set(["filler", "stutter", "restart"])
 
+/** Templates' frames: the reel's 9:16 by default; the same cut also makes a landscape, square or 4:5 film. */
+export const FORMATS = {
+  "9:16": { width: 1080, height: 1920, preset: "reel-9x16" },
+  "16:9": { width: 1920, height: 1080, preset: "landscape-16x9" },
+  "1:1": { width: 1080, height: 1080, preset: "square-1x1" },
+  "4:5": { width: 1080, height: 1350, preset: "portrait-4x5" },
+}
+
+/** Colour looks, as the grade FFmpeg's eq can render (gamma, saturation, brightness, contrast). Data, applied by code. */
+export const GRADES = {
+  vivid: { saturation: 1.25, gain: 1.08 },
+  cinematic: { saturation: 0.88, gain: 1.12, gamma: 0.95 },
+  bright: { lift: 0.04, gamma: 1.1 },
+  mono: { saturation: 0 },
+}
+
+/** The recipe in the brief's frame: canvas and export follow `brief.format`. */
+export function recipeFor(brief = {}) {
+  const format = FORMATS[brief.format] ?? FORMATS["9:16"]
+  const base = REEL_TALKING_HEAD
+  return { ...base, canvas: { width: format.width, height: format.height }, deliverable: { ...base.deliverable, preset: format.preset, size: { width: format.width, height: format.height } } }
+}
+
 /** The recipe's deliverable; with captions asked for, they burn in and the text gates run (ED8). */
 export function deliverableFor(brief = {}) {
-  const base = REEL_TALKING_HEAD.deliverable
+  const base = recipeFor(brief).deliverable
   return LOOKS[brief.captions] ? { ...base, burnCaptions: true, gates: [...base.gates, "QG-08", "QG-09", "QG-10"].sort() } : base
 }
 
@@ -113,7 +136,7 @@ const EMPHASIS_SCHEMA = { type: "object", properties: { emphasis: { type: "array
  * @returns {Promise<{ ops: object[], project: object, notes: string[], calls: number, slots: Record<string, string> }>}
  */
 export async function planReel({ project, index, asset, ask, brief = {}, variant = {}, signal }) {
-  const recipe = REEL_TALKING_HEAD
+  const recipe = recipeFor(brief)
   const notes = []
   const slots = {}
   let calls = 0
@@ -182,13 +205,17 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   if (emphasis.reason) notes.push(`Emphasis: ${emphasis.reason}`)
   const punches = [...new Set(emphasis.value.emphasis)].slice(0, most).map((id) => ({ op: "punch_in", at: { word: id, edge: "start" }, until: { word: id, edge: "end" }, scale: brief.zoom ?? recipe.punch.scale }))
 
-  // Reframe to 9:16: follow the speaker where the index has one, else hold the centre
+  // Reframe to the template's frame: follow the speaker where the index has one, else hold
+  // the centre. A frame as wide as the take or wider keeps the whole picture
   const facts = project.assets.find((a) => a.id === asset).facts
   const cropWidth = Math.round((facts.height * recipe.canvas.width) / recipe.canvas.height)
+  const crops = cropWidth < facts.width
   const subject = (index.subjects?.[asset]?.length ?? 0) > 0
-  if (!subject) notes.push("No face track for this take, so the frame holds the centre.")
+  if (crops && !subject) notes.push("No face track for this take, so the frame holds the centre.")
   const clips = step.project.sequences.find((q) => q.id === step.project.active).clips.filter((c) => base.has(c.track))
-  const framing = clips.map((c) => (subject ? { op: "reframe", clip: c.id, mode: "subject" } : { op: "reframe", clip: c.id, mode: "fixed", x: Math.max(0, Math.round((facts.width - cropWidth) / 2)) }))
+  const framing = crops ? clips.map((c) => (subject ? { op: "reframe", clip: c.id, mode: "subject" } : { op: "reframe", clip: c.id, mode: "fixed", x: Math.max(0, Math.round((facts.width - cropWidth) / 2)) })) : []
+  // The template's colour look, on every picture clip
+  const grading = GRADES[brief.grade] ? clips.map((c) => ({ op: "grade", clip: c.id, ...GRADES[brief.grade] })) : []
 
   // Captions, when the brief asks for a look: pages of the kept words, timed to the speech
   const captions = LOOKS[brief.captions] ? chosen.flatMap((l) => runsOf(l)).flatMap((run) => pages(run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
@@ -196,7 +223,7 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   const song = brief.music ? project.assets.find((a) => a.id === brief.music && a.kind === "audio") : null
   if (brief.music && !song) notes.push(`There is no sound "${brief.music}" in this project, so the reel has no music.`)
   const music = song ? [{ op: "set_music", asset: song.id }, { op: "music_shape", fit: true, fadeIn: Math.round(FLICKS * 0.3) }, { op: "duck" }] : []
-  const all = [...ops, ...punches, ...framing, ...captions, ...music]
+  const all = [...ops, ...punches, ...framing, ...grading, ...captions, ...music]
   step = apply(project, all, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
   return { ops: all, project: step.project, notes, calls, slots }

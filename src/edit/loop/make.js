@@ -8,7 +8,7 @@
 import { apply } from "../core/ops.js"
 import { compile } from "../core/plan.js"
 import { runGates } from "../gates/index.js"
-import { planReel, REEL_TALKING_HEAD } from "../recipes/reel.js"
+import { planReel, recipeFor } from "../recipes/reel.js"
 import { search } from "./loop.js"
 import { repairLadder } from "./repair.js"
 
@@ -39,7 +39,7 @@ export function planVerdict(project, index, recipe, { engineVersion = "f0", runt
  * }} input
  */
 export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {} }) {
-  const recipe = REEL_TALKING_HEAD
+  const recipe = recipeFor(brief)
   let calls = 0
   const notes = []
   const slots = {}

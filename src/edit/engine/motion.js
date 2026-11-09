@@ -191,8 +191,9 @@ export function motionRuntime(runtime, platform = `${process.platform}-${process
   const cli = join(runtime.dir, ...CLI)
   const chrome = runtime.manifest?.platforms?.[platform]?.artifacts?.find((a) => a.id === "chrome-headless-shell")
   const chromePath = chrome ? join(runtime.dir, chrome.id, chrome.entry) : null
-  if (!existsSync(cli)) return { missing: "This Media Runtime has no HyperFrames, so captions and motion can't render. A newer runtime brings it." }
   if (!chromePath || !existsSync(chromePath)) return { missing: "This Media Runtime has no Chrome for the motion layer." }
+  // Without HyperFrames, Kriya draws tiles in the runtime's own Chrome, frame by frame (renderTileInChrome)
+  if (!existsSync(cli)) return { cli: null, chrome: chromePath, dir: runtime.dir, reads: [runtime.dir, realpathSync(join(runtime.dir, chrome.id))] }
   // The runtime's own folders, after links: all a confined render may read of it
   return { cli, chrome: chromePath, dir: runtime.dir, reads: [runtime.dir, realpathSync(join(runtime.dir, "hyperframes")), realpathSync(join(runtime.dir, chrome.id))] }
 }
@@ -207,8 +208,9 @@ export function motionEnv(work, runtime, env = process.env) {
  * @param {{ html: string, work: string, output: string, fps: { n: number, d: number }, runtime: ReturnType<typeof motionRuntime>, run?: typeof runTool, signal?: AbortSignal, which?: ReturnType<typeof confinement>, seconds?: number }} input
  *   work: a folder of this tile's own; output: where the tile goes
  */
-export async function renderTile({ html, work, output, fps, runtime, run = runTool, signal, which = confinement(), seconds = 10 }) {
+export async function renderTile({ html, work, output, fps, runtime, run = runTool, signal, which = confinement(), seconds = 10, launch }) {
   if (runtime.missing) throw new EngineFailure("environment", "missing_feature", runtime.missing)
+  if (!runtime.cli) return renderTileInChrome({ html, work, output, fps, runtime, run, signal, which, seconds, launch })
   const comp = join(work, "comp")
   mkdirSync(join(work, "tmp"), { recursive: true })
   mkdirSync(comp, { recursive: true })
@@ -218,6 +220,59 @@ export async function renderTile({ html, work, output, fps, runtime, run = runTo
   const { command, args: wrapped } = confine(process.execPath, args, { read: [installOf(process.execPath), ...runtime.reads, ...ffmpegHome()], write: [work, outDir] }, which)
   await run(command, wrapped, { env: motionEnv(work, runtime), cwd: work, signal, timeoutMs: 60_000 + seconds * 10_000, stallMs: 120_000 })
   if (!existsSync(output)) throw new EngineFailure("render", "failed", "The motion renderer finished without writing its tile.")
+}
+
+/**
+ * A tile without HyperFrames: the composition in the runtime's Chrome, inside the same
+ * sandbox, every animation paused at each frame's time and the stage captured with its
+ * transparency, then encoded by our FFmpeg to the same ProRes 4444 tile. The runtime
+ * signed for 2026.11.0 carries Chrome but not HyperFrames, so captions never rendered.
+ */
+export async function renderTileInChrome({ html, work, output, fps, runtime, run = runTool, signal, which = confinement(), seconds = 10, launch }) {
+  const frames = Math.max(1, Math.round((seconds * fps.n) / fps.d))
+  const dir = join(work, "frames")
+  mkdirSync(dir, { recursive: true })
+  await withChrome({ work, runtime, which, launch }, async (page) => {
+    writeFileSync(join(work, "index.html"), html)
+    await page.goto(`file://${join(work, "index.html")}`)
+    const [width, height] = await page.evaluate(() => {
+      const stage = document.getElementById("stage")
+      return [Number(stage.dataset.width), Number(stage.dataset.height)]
+    })
+    await page.setViewportSize({ width, height })
+    const stage = page.locator("#stage")
+    for (let i = 0; i < frames; i++) {
+      if (signal?.aborted) throw signal.reason
+      await page.evaluate((t) => {
+        for (const animation of document.getAnimations()) {
+          animation.pause()
+          animation.currentTime = t
+        }
+      }, (i * 1000 * fps.d) / fps.n)
+      await stage.screenshot({ path: join(dir, `${String(i).padStart(6, "0")}.png`), omitBackground: true, animations: "allow" })
+    }
+  })
+  await run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-protocol_whitelist", "file,pipe", "-framerate", `${fps.n}/${fps.d}`, "-i", join(dir, "%06d.png"), "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", "-vendor", "apl0", "-y", output], { signal, timeoutMs: 60_000 + seconds * 10_000 })
+  if (!existsSync(output)) throw new EngineFailure("render", "failed", "The caption renderer finished without writing its tile.")
+}
+
+/** The runtime's Chrome, started confined by playwright through a sandbox wrapper; one page. */
+async function withChrome({ work, runtime, which, launch }, use) {
+  const { chromium } = launch ? {} : await import("playwright-core")
+  const open = launch ?? ((dir, options) => chromium.launchPersistentContext(dir, options))
+  if ([work, runtime.chrome].some((path) => path.includes("'"))) throw new EngineFailure("environment", "bad_path", "A folder name with a quote can't hold the motion layer's work.")
+  mkdirSync(join(work, "tmp"), { recursive: true })
+  // Playwright starts this script; the script starts Chrome inside the sandbox
+  const { args } = confine(runtime.chrome, [], { read: [...runtime.reads, work], write: [work] }, which)
+  writeFileSync(join(work, "chrome.sb"), args[1])
+  const wrapper = join(work, "chrome.sh")
+  writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/sandbox-exec -f '${join(work, "chrome.sb")}' '${runtime.chrome}' "$@"\n`, { mode: 0o755 })
+  const context = await open(join(work, "profile"), { executablePath: wrapper, headless: true, offline: true, env: { HOME: work, TMPDIR: join(work, "tmp") } })
+  try {
+    return await use(context.pages()[0] ?? (await context.newPage()))
+  } finally {
+    await context.close()
+  }
 }
 
 // HyperFrames encodes with the FFmpeg on PATH; Homebrew's lives outside the runtime (EDD-06)
@@ -251,9 +306,6 @@ function readBoxes(times) {
  */
 export async function measureText({ items, work, runtime, which = confinement(), launch }) {
   if (runtime.missing) throw new EngineFailure("environment", "missing_feature", runtime.missing)
-  const { chromium } = launch ? {} : await import("playwright-core")
-  const open = launch ?? ((dir, options) => chromium.launchPersistentContext(dir, options))
-  if ([work, runtime.chrome].some((path) => path.includes("'"))) throw new EngineFailure("environment", "bad_path", "A folder name with a quote can't hold the motion layer's work.")
   mkdirSync(join(work, "tmp"), { recursive: true })
   const files = items.map((item, i) => {
     const dir = join(work, `c${i}`)
@@ -261,21 +313,12 @@ export async function measureText({ items, work, runtime, which = confinement(),
     writeFileSync(join(dir, "index.html"), item.html)
     return join(dir, "index.html")
   })
-  // Playwright starts this script; the script starts Chrome inside the sandbox
-  const { args } = confine(runtime.chrome, [], { read: [...runtime.reads, work], write: [work] }, which)
-  writeFileSync(join(work, "chrome.sb"), args[1])
-  const wrapper = join(work, "chrome.sh")
-  writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/sandbox-exec -f '${join(work, "chrome.sb")}' '${runtime.chrome}' "$@"\n`, { mode: 0o755 })
-  const context = await open(join(work, "profile"), { executablePath: wrapper, headless: true, offline: true, env: { HOME: work, TMPDIR: join(work, "tmp") } })
-  try {
-    const page = context.pages()[0] ?? (await context.newPage())
+  return withChrome({ work, runtime, which, launch }, async (page) => {
     const out = new Map()
     for (const [i, item] of items.entries()) {
       await page.goto(`file://${files[i]}`)
       out.set(item.id, await page.evaluate(readBoxes, item.times))
     }
     return out
-  } finally {
-    await context.close()
-  }
+  })
 }

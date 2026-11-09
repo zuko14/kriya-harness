@@ -62,6 +62,8 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
 
   return {
     count: () => running.size,
+    /** Whether a project has a job running now. */
+    runningIn: (project) => [...running.keys()].some((id) => id.startsWith(`${project}.`)),
 
     start(state, request) {
       const number = state.journal.addJob({ kind: request.kind ?? "render", projectVersion: state.log.head, request })

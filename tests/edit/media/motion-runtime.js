@@ -34,13 +34,22 @@ export function motionSkip() {
   return false
 }
 
+/** Why a Chrome-only test can't run here, or false. */
+export function chromeSkip() {
+  if (process.platform !== "darwin" || process.arch !== "arm64") return "the motion layer is confined on macOS arm64 only so far"
+  if (!confinement().kind) return "no OS sandbox on this computer"
+  if (!chromeDir()) return `no chrome-headless-shell ${CHROME_VERSION}: run tests/edit/media/setup-hyperframes.sh`
+  return false
+}
+
 export const MANIFEST = { schema: 1, version: "9.9.9", platforms: { "darwin-arm64": { artifacts: [{ id: "chrome-headless-shell", entry: ENTRY }] } } }
 
 /** Links HyperFrames and Chrome into `<home>/media/9.9.9` and returns it as activeRuntime() would. */
-export function linkMotion(home, { manifest = MANIFEST } = {}) {
+export function linkMotion(home, { manifest = MANIFEST, hyperframes = true } = {}) {
   const dir = join(home, "media", "9.9.9")
   mkdirSync(dir, { recursive: true })
-  if (!existsSync(join(dir, "hyperframes"))) symlinkSync(hyperframesDir(), join(dir, "hyperframes"))
+  // hyperframes: false is the signed 2026.11.0 runtime: Chrome only, so tiles draw in Chrome
+  if (hyperframes && !existsSync(join(dir, "hyperframes"))) symlinkSync(hyperframesDir(), join(dir, "hyperframes"))
   if (!existsSync(join(dir, "chrome-headless-shell"))) symlinkSync(chromeDir(), join(dir, "chrome-headless-shell"))
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest))
   writeFileSync(join(dir, ".complete"), "test")

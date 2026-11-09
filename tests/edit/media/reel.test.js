@@ -14,7 +14,7 @@ import { ROOT } from "../../helpers.js"
 import { startFakeKriya } from "../../fake-kriya.js"
 import { indexOf, wordId } from "../script.js"
 import { fakeRuntime, rawTake } from "../take.js"
-import { linkMotion, motionSkip } from "./motion-runtime.js"
+import { chromeSkip, linkMotion, motionSkip } from "./motion-runtime.js"
 import { drums, writeWav } from "../sound.js"
 
 // ET-RCP-02, the phase's key check: a raw synthetic take with a restart, fillers, a
@@ -218,6 +218,60 @@ test("ED8 end to end: a talking-head reel with word-highlight captions renders t
     assert.equal(result.gates.find((g) => g.id === "QG-11")?.status, "passed", "every tile moves and lasts its window")
     assert.ok(plan.timeline.captions.every((c) => c.words.length >= 1 && c.words.length <= 5 && c.look === "karaoke"))
     assert.ok(result.changes.some((c) => c.startsWith("Captioned")), "What I did lists the captions")
+    const video = probe(result.file).streams.find((s) => s.codec_type === "video")
+    assert.deepEqual([video.width, video.height], [1080, 1920])
+  } finally {
+    await stopHost(home)
+    await fake.close?.()
+  }
+})
+
+test("without HyperFrames (the signed 2026.11.0 runtime), the same captioned reel draws its captions in Chrome: every gate passed", { skip: chromeSkip(), timeout: 480_000 }, async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "kh-reel-chrome-")))
+  const folder = join(home, "work", "reel")
+  mkdirSync(folder, { recursive: true })
+  const source = join(folder, "take.mov")
+  rawTake(source)
+  fakeRuntime(home)
+  linkMotion(home, { hyperframes: false })
+  const index = indexOf()
+  const hook = index.sentences.find((s) => index.words.find((w) => w.id === s.firstWord).text === "It").id
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "story") return { content: JSON.stringify({ hook, drop: [] }) }
+      if (task === "emphasis") return { content: JSON.stringify({ emphasis: [wordId(index, "fifty")] }) }
+      return { content: "{}" }
+    },
+  })
+  const env = { ...process.env, KRIYA_HOME: home, KRIYA_EDIT_ROOTS: join(home, "work"), KRIYA_EDIT_IDLE_MS: "600000" }
+  const login = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), "login", "--url", fake.url, "--no-browser"], { env, stdio: "ignore" })
+  assert.equal(await new Promise((done) => login.on("exit", done)), 0)
+  await ensureHost({ env, home })
+  const call = (method, path, body) => hostCall(home, method, path, body)
+  try {
+    const { id } = await call("POST", "/projects", { name: "Captioned reel", folder })
+    const asset = await call("POST", `/projects/${id}/assets`, { path: source })
+    const started = Date.now()
+    const job = await call("POST", `/projects/${id}/make`, { asset: asset.id, brief: { seconds: 45, captions: "karaoke" } })
+    const done = await until(async () => {
+      const row = (await call("GET", "/jobs")).jobs.find((j) => j.id === job.id)
+      return ["done", "failed"].includes(row.status) ? row : null
+    }, 460_000, "the captioned reel")
+    assert.equal(done.status, "done", done.error)
+    const result = JSON.parse(done.output)
+    const table = result.gates.map((g) => `${g.id} ${g.status}${g.message ? `: ${g.message}` : ""}`).join("\n")
+    const plan = await call("GET", `/projects/${id}/plan`)
+    console.log(`Chrome captions reel: verdict ${result.verdict} in ${Math.round((Date.now() - started) / 1000)} s, ${plan.timeline.captions.length} caption pages, stop ${result.stop}\n${table}`)
+    for (const gateId of ["QG-01", "QG-02", "QG-05", "QG-06", "QG-08", "QG-09", "QG-12"]) assert.equal(result.gates.find((g) => g.id === gateId)?.status, "passed", `${gateId}: ${JSON.stringify(result.gates.find((g) => g.id === gateId))}`)
+    onlyExpectedNotes(result)
+    assert.equal(result.attempts.filter((a) => a.error).length, 0, "no attempt errored")
+    assert.ok(plan.timeline.captions.length >= 10, "the kept speech is captioned page by page")
+    assert.equal(result.gates.find((g) => g.id === "QG-10")?.status, "passed", "OCR read every caption page as meant")
+    assert.equal(result.gates.find((g) => g.id === "QG-11")?.status, "passed", "every tile moves and lasts its window")
+    assert.ok(plan.timeline.captions.every((c) => c.words.length >= 1 && c.words.length <= 5 && c.look === "karaoke"))
+    assert.equal(result.changes.filter((c) => c.startsWith("Captioned")).length, 1, "What I did says the captions once, with their count")
     const video = probe(result.file).streams.find((s) => s.codec_type === "video")
     assert.deepEqual([video.width, video.height], [1080, 1920])
   } finally {
