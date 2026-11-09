@@ -52,7 +52,32 @@ test("templates: each format sets the frame and its own export; colour looks are
   }
   assert.deepEqual(recipeFor({}).canvas, { width: 1080, height: 1920 }, "the reel's 9:16 by default")
   assert.deepEqual(recipeFor({ format: "nonsense" }).canvas, { width: 1080, height: 1920 })
-  for (const grade of Object.values(GRADES)) for (const key of Object.keys(grade)) assert.ok(["lift", "gamma", "gain", "saturation"].includes(key), key)
+  for (const grade of Object.values(GRADES)) for (const key of Object.keys(grade)) assert.ok(["lift", "gamma", "gain", "saturation", "temperature", "vibrance", "vignette"].includes(key), key)
+  // Every look is a valid grade operation
+  const project = apply(newProject({ id: "p", name: "Look" }), [{ op: "add_asset", id: "a1", kind: "video", fingerprint: "f", path: "t.mov", linked: true, rights: "own", facts: { width: 1920, height: 1080, hasAudio: true, duration: FLICKS * 4, vfr: false, fps: { n: 30, d: 1 } } }], { author: "code" }).project
+  const cut = apply(project, [{ op: "keep_range", asset: "a1", from: 0, to: FLICKS * 4 }], { author: "person", index: { words: [] } }).project
+  const clip = cut.sequences[0].clips[0].id
+  for (const [name, grade] of Object.entries(GRADES)) assert.deepEqual(apply(cut, [{ op: "grade", clip, ...grade }], { author: "agent", index: { words: [] } }).diagnostics, [], name)
+  assert.equal(apply(cut, [{ op: "grade", clip, temperature: 99_000 }], { author: "agent", index: { words: [] } }).diagnostics[0].code, "bad_value")
+})
+
+test("a music bed is written by code: the same mood and length give the same file, at its tempo, without clipping", async () => {
+  const { MOODS, writeMusicBed } = await import("../src/edit/engine/music-bed.js")
+  const { readFileSync } = await import("node:fs")
+  const { createHash } = await import("node:crypto")
+  const dir = mkdtempSync(join(tmpdir(), "kbed-"))
+  const a = writeMusicBed(join(dir, "a.wav"), { mood: "upbeat", seconds: 8 })
+  writeMusicBed(join(dir, "b.wav"), { mood: "upbeat", seconds: 8 })
+  const sha = (f) => createHash("sha256").update(readFileSync(f)).digest("hex")
+  assert.equal(sha(join(dir, "a.wav")), sha(join(dir, "b.wav")), "deterministic")
+  assert.equal(a.bpm, MOODS.upbeat.bpm)
+  const wav = readFileSync(join(dir, "a.wav"))
+  assert.equal(wav.toString("ascii", 0, 4), "RIFF")
+  assert.equal(wav.readUInt32LE(24), 48_000)
+  let peak = 0
+  for (let i = 44; i < wav.length; i += 2) peak = Math.max(peak, Math.abs(wav.readInt16LE(i)))
+  assert.ok(peak > 8000 && peak <= 16_400, `peak ${peak}: about -6 dBFS, never clipped`)
+  assert.equal(Math.round(a.seconds), 10, "the length asked for, plus a short tail")
 })
 
 /* ─────────────── the home screen: delete a project, choose and make a folder ─────────────── */

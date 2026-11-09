@@ -416,7 +416,7 @@ async function workspace(id) {
         try {
           const asset = await one(file)
           say.textContent = reference ? `Added ${file.name} as a style reference.` : `Added ${file.name}. Index it to read its words.`
-          if (reference) referenceChoice = asset.id
+          if (reference) using.add(asset.id)
         } catch (error) {
           say.textContent = error.message
         }
@@ -463,34 +463,51 @@ async function workspace(id) {
   )
 
   /* references (EDD-23): videos whose style a cut takes, measured to numbers, never placed */
-  let referenceChoice = ""
-  const referencesEl = h("ul", { class: "bin", "aria-label": "Style references" })
+  // References in use for the next cut: each one added is on until switched off
+  const using = new Set()
+  const seenRefs = new Set()
+  const analyses = new Map() // asset id → its classified analysis, from the Host
+  const referencesEl = h("ul", { class: "bin", "aria-label": "References" })
+  const refSummary = h("p", { class: "note small" })
   const refPicker = h("input", {
     type: "file",
-    accept: "video/*,.mov,.mp4,.m4v,.mkv,.webm",
+    accept: "video/*,image/*,audio/*,.mov,.mp4,.m4v,.mkv,.webm,.jpg,.jpeg,.png,.webp,.wav,.mp3,.m4a,.aac,.flac",
     hidden: true,
     id: "pick-reference",
     onchange: () => {
       const files = [...refPicker.files]
       refPicker.value = ""
-      const ok = files.length && confirm("Use this video only as a style reference?\n\nKriya measures its pace and whether it has captions, as numbers. No picture, sound or words from it go into your video. Add only a video you're allowed to use this way.")
+      const ok = files.length && confirm("Use this only as a reference?\n\nKriya measures it as numbers: a video's pace, captions and colour; an image's colour grade; music's tempo and energy. No picture, sound or words from it go into your video. Add only what you're allowed to use this way.")
       if (ok) upload(files, { reference: true })
     },
   })
   function renderReferences() {
     clear(referencesEl)
     const refs = assets.filter((a) => a.kind === "reference")
-    if (!refs.length) referencesEl.append(h("li", { class: "note" }, "None yet. Add a video whose pace and captions you like."))
-    for (const ref of refs) referencesEl.append(h("li", { class: "asset" }, h("button", { type: "button", class: "btn", onclick: () => showSource(ref.id, 0) }, `${ref.path.split(/[\\/]/).at(-1)} · reference`)))
+    if (!refs.length) referencesEl.append(h("li", { class: "note" }, "None yet. Add a video whose editing you like, an image whose colour you like, or music whose feel you like."))
+    for (const ref of refs) {
+      if (!seenRefs.has(ref.id)) (seenRefs.add(ref.id), using.add(ref.id))
+      const name = ref.path.split(/[\\/]/).at(-1)
+      const kind = ref.facts.width ? (ref.facts.duration ? "video" : "image") : "music"
+      const on = h("input", { type: "checkbox", id: `use-${ref.id}`, checked: using.has(ref.id), onchange: () => (on.checked ? using.add(ref.id) : using.delete(ref.id), showRefSummary()) })
+      const found = analyses.get(ref.id)
+      const lines = h("ul", { class: "ref-lines" }, ...(found ? found.lines.map((line) => h("li", {}, line)) : [h("li", { class: "note" }, "Measuring…")]))
+      referencesEl.append(h("li", { class: "asset ref" }, h("button", { type: "button", class: "btn", onclick: () => ref.facts.duration && showSource(ref.id, 0) }, `${name} · ${kind}`), lines, h("label", { class: "inline", for: `use-${ref.id}` }, on, " Use in the cut")))
+      if (!found) api("GET", `/projects/${id}/references/${encodeURIComponent(ref.id)}`).then((result) => (analyses.set(ref.id, result), renderReferences())).catch((error) => (analyses.set(ref.id, { lines: [`Couldn't measure it: ${error.message}`] }), renderReferences()))
+    }
+    showRefSummary()
     // The make panel's choices follow what's in the project
     const keep = (select, list, none) => {
       const was = select.value
       clear(select).append(h("option", { value: "" }, none), ...list.map((a) => h("option", { value: a.id }, a.path.split(/[\\/]/).at(-1))))
       select.value = list.some((a) => a.id === was) ? was : ""
     }
-    keep(makeReference, refs, "No reference")
-    if (referenceChoice && refs.some((a) => a.id === referenceChoice)) ((makeReference.value = referenceChoice), (referenceChoice = ""))
-    keep(makeMusic, assets.filter((a) => a.kind === "audio"), "No music")
+    keep(makeMusic, assets.filter((a) => a.kind === "audio" && !/kriya-music-/.test(a.path)), "No music")
+    // Music Kriya writes itself, royalty-free by construction, before the person's own files
+    const was = makeMusic.value
+    makeMusic.insertBefore(h("optgroup", { label: "Made by Kriya" }, h("option", { value: "generated:calm" }, "Music: calm bed (made by Kriya)"), h("option", { value: "generated:upbeat" }, "Music: upbeat bed (made by Kriya)"), h("option", { value: "generated:warm" }, "Music: warm bed (made by Kriya)")), makeMusic.options[1] ?? null)
+    if (/^generated:/.test(musicChoice)) makeMusic.value = musicChoice
+    else if (was) makeMusic.value = was
   }
 
   /* the Media Runtime: speech-to-text needs it; set up here, with progress */
@@ -589,20 +606,67 @@ async function workspace(id) {
     )
     return box
   }
-  /** A request about the whole video: the Director's make job does it, with the panel's choices. */
-  function directBlock(direct) {
-    const brief = direct.brief ?? {}
+  /* The Director's plan: pitched in words with its settings; approve it, or say what to
+     change and it's revised. Nothing is made until it's approved */
+  let pendingPlan = null
+  const choicesNow = () => ({ ...briefNow(), ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}) })
+  const wordText = (wid) => index.words.find((w) => w.id === wid)?.text ?? wid
+  function settingsLine(settings = {}) {
+    const parts = [
+      settings.format,
+      settings.seconds ? `about ${settings.seconds} s` : null,
+      settings.captions && settings.captions !== "none" ? `${settings.captions} captions` : "no captions",
+      settings.grade && settings.grade !== "natural" ? `${settings.grade} look` : "natural colour",
+      settings.music && settings.music !== "none" ? `${settings.music} music` : "no music",
+      settings.cleanVoice ? "background noise out of the voice" : null,
+      settings.coldOpen ? `cold open on "${wordText(settings.coldOpen.from)} … ${wordText(settings.coldOpen.to)}"${settings.coldOpen.mono === false ? "" : " in black and white"}` : null,
+      settings.hook ? "a hook line first" : null,
+      settings.cutSound && settings.cutSound !== "none" ? `a ${settings.cutSound} on each cut` : null,
+      settings.introSound && settings.introSound !== "none" ? `a ${settings.introSound} into the story` : null,
+      Number.isInteger(settings.punches) ? `${settings.punches} punch-ins` : null,
+    ]
+    return parts.filter(Boolean).join(" · ")
+  }
+  function planBlock(plan) {
     const box = h(
       "div",
-      { class: "proposal direct" },
-      h("p", { class: "note" }, `The Director can make the whole cut: the best takes, the story, ${brief.captions || makeCaptions.value ? "captions, " : ""}punch-ins and a checked master${brief.seconds ? `, about ${brief.seconds} s` : ""}.`),
-      h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => (clear(box).append(h("p", { class: "note" }, "Directing…")), make(brief)) }, "Direct it"), h("button", { type: "button", class: "btn", onclick: () => box.remove() }, "Not now")),
+      { class: "proposal plan" },
+      h("p", { class: "lead" }, "The Director's plan, not made yet"),
+      plan.steps.length ? h("ol", { class: "steps" }, plan.steps.map((step) => h("li", {}, ...withTimes(step)))) : null,
+      h("p", { class: "note small" }, settingsLine(plan.settings)),
+      h(
+        "div",
+        { class: "row" },
+        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), clear(box).append(h("p", { class: "note" }, "Approved. Making it now; the progress is in Direct.")), make(plan.brief, { exact: true })) }, "Approve and make it"),
+        h("button", { type: "button", class: "btn", onclick: () => ((pendingPlan = plan), prompt.focus(), (prompt.placeholder = "Say what to change in the plan…")) }, "Change…"),
+      ),
     )
     return box
   }
-  async function send() {
+  async function askPlan(text, previous = null) {
+    const thinking = message("kriya", previous ? "Revising the plan…" : "Planning the cut…")
+    try {
+      const plan = await api("POST", `/projects/${id}/plan`, { text, history: history.slice(-6), previous, choices: choicesNow() })
+      thinking.remove()
+      pendingPlan = plan
+      message("kriya", plan.say || "Here's my plan.", planBlock(plan))
+      history.push({ who: "kriya", text: (plan.say || "").slice(0, 400) })
+    } catch (error) {
+      thinking.remove()
+      message("kriya", error.message)
+    }
+  }
+  async function send({ planning = false } = {}) {
     const text = prompt.value.trim()
     if (!text) return
+    prompt.placeholder = "Tell Kriya: \"remove 0:05 to 0:09\", \"change the caption at 0:12 to …\", \"make the start punchier\""
+    // Talking about the plan: revise it; asking for a plan: plan
+    if (pendingPlan || planning) {
+      message("you", text)
+      history.push({ who: "you", text: text.slice(0, 400) })
+      prompt.value = ""
+      return askPlan(text, pendingPlan)
+    }
     const { selection, label } = selectionNow()
     message("you", label ? `${text}  (${label.replace(/^Selected: /, "on ")})` : text)
     prompt.value = ""
@@ -611,8 +675,11 @@ async function workspace(id) {
       const reply = await api("POST", `/projects/${id}/ask`, { text, selection, history: history.slice(-6) })
       thinking.remove()
       const words = reply.say || (reply.proposal ? "Here's what I'd change." : reply.direct ? "That's about the whole video." : (reply.reason ?? "I couldn't turn that into an edit. Try saying it another way."))
-      message("kriya", words, reply.proposal ? proposalBlock(reply.proposal) : null, reply.direct ? directBlock(reply.direct) : null)
-      history.push({ who: "you", text: text.slice(0, 400) }, { who: "kriya", text: words.slice(0, 400) })
+      history.push({ who: "you", text: text.slice(0, 400) })
+      // A request about the whole video: the Director pitches a plan for approval
+      if (reply.direct && !reply.proposal) return askPlan(text)
+      message("kriya", words, reply.proposal ? proposalBlock(reply.proposal) : null)
+      history.push({ who: "kriya", text: words.slice(0, 400) })
     } catch (error) {
       thinking.remove()
       message("kriya", error.status === 0 || error.status >= 500 ? "I can't reach Kriya right now, so I can't make changes by asking. You can still edit by hand." : error.message)
@@ -627,7 +694,7 @@ async function workspace(id) {
     { class: "prompt", onsubmit: (event) => (event.preventDefault(), send()) },
     h("label", { for: "prompt", class: "sr-only" }, "Message Kriya"),
     prompt,
-    h("button", { class: "btn primary", type: "submit" }, "Send"),
+    h("div", { class: "send" }, h("button", { class: "btn primary", type: "submit" }, "Send"), h("button", { type: "button", class: "btn", title: "Ask the Director for a plan of the whole cut", onclick: () => send({ planning: true }) }, "Plan")),
   )
   const markButtons = h(
     "div",
@@ -641,15 +708,18 @@ async function workspace(id) {
   const makeCaptions = h("select", { id: "make-captions", class: "field select" }, [["", "No captions"], ["clean", "Captions: clean"], ["karaoke", "Captions: karaoke"], ["boxed", "Captions: boxed"]].map(([value, label]) => h("option", { value }, label)))
   const makeMusic = h("select", { id: "make-music", class: "field select" })
   const makeFormat = h("select", { id: "make-format", class: "field select" }, [["9:16", "Format: 9:16 (Reels, Shorts)"], ["16:9", "Format: 16:9 (YouTube)"], ["1:1", "Format: 1:1 (square post)"], ["4:5", "Format: 4:5 (feed post)"]].map(([value, label]) => h("option", { value }, label)))
-  const makeGrade = h("select", { id: "make-grade", class: "field select" }, [["", "Look: natural"], ["vivid", "Look: vivid"], ["cinematic", "Look: cinematic"], ["bright", "Look: bright"], ["mono", "Look: black and white"]].map(([value, label]) => h("option", { value }, label)))
+  const makeGrade = h("select", { id: "make-grade", class: "field select" }, [["", "Look: natural"], ["vivid", "Look: vivid"], ["cinematic", "Look: cinematic (cool, vignette)"], ["warm", "Look: warm"], ["bright", "Look: bright"], ["mono", "Look: black and white"]].map(([value, label]) => h("option", { value }, label)))
+  const makeVoice = h("select", { id: "make-voice", class: "field select" }, [["", "Voice: as recorded"], ["clean", "Voice: remove background noise"]].map(([value, label]) => h("option", { value }, label)))
+  let musicChoice = ""
+  makeMusic.addEventListener("change", () => (musicChoice = makeMusic.value))
   // Templates: a starting point for the selects below them, each still yours to change
   const TEMPLATES = {
     "": null,
-    reel: { format: "9:16", captions: "karaoke", grade: "vivid", length: "45" },
-    clean: { format: "9:16", captions: "clean", grade: "", length: "30" },
-    youtube: { format: "16:9", captions: "clean", grade: "", length: "60" },
-    square: { format: "1:1", captions: "boxed", grade: "vivid", length: "30" },
-    cinematic: { format: "16:9", captions: "", grade: "cinematic", length: "60" },
+    reel: { format: "9:16", captions: "karaoke", grade: "vivid", length: "45", music: "generated:upbeat", voice: "clean" },
+    clean: { format: "9:16", captions: "clean", grade: "", length: "30", music: "", voice: "clean" },
+    youtube: { format: "16:9", captions: "clean", grade: "warm", length: "60", music: "generated:calm", voice: "clean" },
+    square: { format: "1:1", captions: "boxed", grade: "vivid", length: "30", music: "generated:upbeat", voice: "clean" },
+    cinematic: { format: "16:9", captions: "", grade: "cinematic", length: "60", music: "generated:warm", voice: "clean" },
   }
   const makeTemplate = h(
     "select",
@@ -663,23 +733,31 @@ async function workspace(id) {
         makeCaptions.value = t.captions
         makeGrade.value = t.grade
         makeLength.value = t.length
+        makeVoice.value = t.voice
+        makeMusic.value = musicChoice = t.music
       },
     },
-    [["", "Template: choose…"], ["reel", "Talking-head reel: karaoke captions, vivid"], ["clean", "Clean reel: simple captions"], ["youtube", "YouTube talk: 16:9, clean captions"], ["square", "Square post: boxed captions, vivid"], ["cinematic", "Cinematic: 16:9, no captions"]].map(([value, label]) => h("option", { value }, label)),
+    [["", "Template: choose…"], ["reel", "Talking-head reel: karaoke captions, upbeat music"], ["clean", "Clean reel: simple captions, no music"], ["youtube", "YouTube talk: 16:9, warm, calm music"], ["square", "Square post: boxed captions, vivid"], ["cinematic", "Cinematic: 16:9, cool look, no captions"]].map(([value, label]) => h("option", { value }, label)),
   )
-  const makeReference = h("select", { id: "make-reference", class: "field select" })
+  const showRefSummary = () => {
+    const n = assets.filter((a) => a.kind === "reference" && using.has(a.id)).length
+    refSummary.textContent = n ? `${n} reference${n === 1 ? "" : "s"} in use: their pace, colour and music guide the cut.` : "No references in use."
+  }
   const briefNow = (extra = {}) => ({
     ...(makeLength.value ? { seconds: Number(makeLength.value) } : {}),
     ...(makeCaptions.value ? { captions: makeCaptions.value } : {}),
     ...(makeMusic.value ? { music: makeMusic.value } : {}),
-    ...(makeReference.value ? { reference: makeReference.value } : {}),
+    ...(using.size ? { references: [...using].filter((rid) => assets.some((a) => a.id === rid && a.kind === "reference")) } : {}),
     format: makeFormat.value,
     ...(makeGrade.value ? { grade: makeGrade.value } : {}),
+    ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}),
     ...extra,
   })
-  async function make(extra) {
+  /** exact: the brief as given (an approved plan) plus the references in use; else the panel's choices under it */
+  async function make(extra, { exact = false } = {}) {
     try {
-      const job = await api("POST", `/projects/${id}/make`, { brief: briefNow(extra) })
+      const refs = briefNow().references
+      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}) } : briefNow(extra) })
       makeJob = job.id
       jobsNow.set(job.id, job)
       say.textContent = "Directing your reel: reading the footage, choosing the story, cutting and checking it. You can keep working."
@@ -711,8 +789,9 @@ async function workspace(id) {
     makeGrade,
     h("label", { for: "make-music", class: "sr-only" }, "Music"),
     makeMusic,
-    h("label", { for: "make-reference", class: "sr-only" }, "Style reference"),
-    h("div", { class: "row tight" }, makeReference, refPicker, h("button", { type: "button", class: "btn", "aria-label": "Add a style reference", title: "Add a style reference", onclick: () => refPicker.click() }, "+ Reference")),
+    h("label", { for: "make-voice", class: "sr-only" }, "Voice"),
+    makeVoice,
+    h("div", { class: "row tight" }, refSummary, refPicker, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference")),
     makeButton,
     makeStatus,
   )

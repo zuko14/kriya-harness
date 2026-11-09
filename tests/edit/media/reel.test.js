@@ -16,6 +16,8 @@ import { indexOf, wordId } from "../script.js"
 import { fakeRuntime, rawTake } from "../take.js"
 import { chromeSkip, linkMotion, motionSkip } from "./motion-runtime.js"
 import { drums, writeWav } from "../sound.js"
+import { writeMusicBed } from "../../../src/edit/engine/music-bed.js"
+import { request } from "node:http"
 
 // ET-RCP-02, the phase's key check: a raw synthetic take with a restart, fillers, a
 // stutter and a retake becomes a cut, reframed, mastered and checked reel, through a
@@ -274,6 +276,167 @@ test("without HyperFrames (the signed 2026.11.0 runtime), the same captioned ree
     assert.equal(result.changes.filter((c) => c.startsWith("Captioned")).length, 1, "What I did says the captions once, with their count")
     const video = probe(result.file).streams.find((s) => s.codec_type === "video")
     assert.deepEqual([video.width, video.height], [1080, 1920])
+  } finally {
+    await stopHost(home)
+    await fake.close?.()
+  }
+})
+
+test("the whole pipeline twice: a generated music bed fitted and ducked, the voice cleaned, a warm 16:9 cut, then a 9:16 karaoke remake with its captions once", { skip: chromeSkip(), timeout: 900_000 }, async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "kh-reel-full-")))
+  const folder = join(home, "work", "reel")
+  mkdirSync(folder, { recursive: true })
+  const source = join(folder, "take.mov")
+  rawTake(source)
+  fakeRuntime(home)
+  linkMotion(home, { hyperframes: false })
+  const index = indexOf()
+  const hook = index.sentences.find((s) => index.words.find((w) => w.id === s.firstWord).text === "It").id
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "story") return { content: JSON.stringify({ hook, drop: [] }) }
+      if (task === "emphasis") return { content: JSON.stringify({ emphasis: [wordId(index, "fifty")] }) }
+      return { content: "{}" }
+    },
+  })
+  const env = { ...process.env, KRIYA_HOME: home, KRIYA_EDIT_ROOTS: join(home, "work"), KRIYA_EDIT_IDLE_MS: "600000" }
+  const login = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), "login", "--url", fake.url, "--no-browser"], { env, stdio: "ignore" })
+  assert.equal(await new Promise((done) => login.on("exit", done)), 0)
+  await ensureHost({ env, home })
+  const call = (method, path, body) => hostCall(home, method, path, body)
+  try {
+    const { id } = await call("POST", "/projects", { name: "Captioned reel", folder })
+    const asset = await call("POST", `/projects/${id}/assets`, { path: source })
+    const started = Date.now()
+    const makeOnce = async (brief) => {
+      const job = await call("POST", `/projects/${id}/make`, { asset: asset.id, brief })
+      return until(async () => {
+        const row = (await call("GET", "/jobs")).jobs.find((j) => j.id === job.id)
+        return ["done", "failed"].includes(row.status) ? row : null
+      }, 440_000, "the reel")
+    }
+    const first = await makeOnce({ seconds: 45, captions: "clean", music: "generated:calm", cleanVoice: true, grade: "warm", format: "16:9" })
+    assert.equal(first.status, "done", first.error)
+    const firstResult = JSON.parse(first.output)
+    const firstPlan = await call("GET", `/projects/${id}/plan`)
+    const view = await call("GET", `/projects/${id}`)
+    const bed = view.project.assets.find((a) => /kriya-music-calm/.test(a.path))
+    assert.ok(bed && bed.rights === "own", "the bed is a project asset Kriya owns")
+    assert.ok(firstPlan.timeline.audio.some((item) => item.asset === bed.id && item.role === "music"), "the bed is on the music track")
+    const clips = view.project.sequences[0].clips
+    assert.ok(clips.some((c) => c.effects?.some((e) => e.type === "eq" && e.preset === "voice-clean")), "the voice is cleaned")
+    assert.ok(clips.some((c) => c.effects?.some((e) => e.type === "grade" && e.temperature === 5200)), "the warm look is on the picture")
+    assert.ok(["passed"].includes(firstResult.gates.find((g) => g.id === "QG-13")?.status), "the bed's rights are known")
+    assert.deepEqual(probe(firstResult.file).streams.filter((s) => s.codec_type === "video").map((v) => [v.width, v.height]), [[1920, 1080]])
+    console.log(`Full pipeline, first make: ${firstResult.verdict}; ${firstResult.changes.join("; ")}`)
+    const done = await makeOnce({ seconds: 45, captions: "karaoke" })
+    assert.equal(done.status, "done", done.error)
+    const result = JSON.parse(done.output)
+    const table = result.gates.map((g) => `${g.id} ${g.status}${g.message ? `: ${g.message}` : ""}`).join("\n")
+    const plan = await call("GET", `/projects/${id}/plan`)
+    console.log(`Full pipeline, remake: verdict ${result.verdict} in ${Math.round((Date.now() - started) / 1000)} s, ${plan.timeline.captions.length} caption pages, stop ${result.stop}\n${table}`)
+    for (const gateId of ["QG-01", "QG-02", "QG-05", "QG-06", "QG-08", "QG-09", "QG-12"]) assert.equal(result.gates.find((g) => g.id === gateId)?.status, "passed", `${gateId}: ${JSON.stringify(result.gates.find((g) => g.id === gateId))}`)
+    onlyExpectedNotes(result)
+    assert.equal(result.attempts.filter((a) => a.error).length, 0, "no attempt errored")
+    assert.ok(plan.timeline.captions.length >= 10, "the kept speech is captioned page by page")
+    assert.equal(result.gates.find((g) => g.id === "QG-10")?.status, "passed", "OCR read every caption page as meant")
+    assert.equal(result.gates.find((g) => g.id === "QG-11")?.status, "passed", "every tile moves and lasts its window")
+    assert.ok(plan.timeline.captions.every((c) => c.words.length >= 1 && c.words.length <= 5 && c.look === "karaoke"))
+    assert.equal(result.changes.filter((c) => c.startsWith("Captioned")).length, 1, "What I did says the captions once, with their count")
+    // The remake replaced the first cut's captions and music: each spoken word is captioned once
+    const after = await call("GET", `/projects/${id}`)
+    const captionClips = after.project.sequences[0].clips.filter((c) => c.effects?.some((e) => e.type === "caption"))
+    assert.equal(captionClips.length, plan.timeline.captions.length, "no caption left from the first make")
+    const wordsShown = plan.timeline.captions.flatMap((c) => c.words.map((w) => w.id))
+    assert.equal(new Set(wordsShown).size, wordsShown.length, "no word on screen twice")
+    const video = probe(result.file).streams.find((s) => s.codec_type === "video")
+    assert.deepEqual([video.width, video.height], [1080, 1920])
+  } finally {
+    await stopHost(home)
+    await fake.close?.()
+  }
+})
+
+test("a Director's plan made real: a black-and-white cold open, a whoosh on each cut, a riser into the story, a music reference's tempo and an image's colour", { timeout: 600_000 }, async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "kh-reel-plan-")))
+  const folder = join(home, "work", "reel")
+  mkdirSync(folder, { recursive: true })
+  const source = join(folder, "take.mov")
+  rawTake(source)
+  fakeRuntime(home)
+  const index = indexOf()
+  const hook = index.sentences.find((s) => index.words.find((w) => w.id === s.firstWord).text === "It").id
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "story") return { content: JSON.stringify({ hook: null, drop: [] }) }
+      if (task === "emphasis") return { content: JSON.stringify({ emphasis: [wordId(index, "fifty")] }) }
+      return { content: "{}" }
+    },
+  })
+  const env = { ...process.env, KRIYA_HOME: home, KRIYA_EDIT_ROOTS: join(home, "work"), KRIYA_EDIT_IDLE_MS: "600000" }
+  const login = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), "login", "--url", fake.url, "--no-browser"], { env, stdio: "ignore" })
+  assert.equal(await new Promise((done) => login.on("exit", done)), 0)
+  await ensureHost({ env, home })
+  const call = (method, path, body) => hostCall(home, method, path, body)
+  // A reference upload, as the Studio's picker sends it
+  const upload = (path, bytes) =>
+    new Promise((done, fail) => {
+      const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: { host: "kriya-edit" } }, (res) => {
+        const chunks = []
+        res.on("data", (c) => chunks.push(c))
+        res.on("end", () => (res.statusCode === 200 ? done(JSON.parse(Buffer.concat(chunks).toString())) : fail(new Error(Buffer.concat(chunks).toString()))))
+      })
+      req.on("error", fail)
+      req.end(bytes)
+    })
+  try {
+    const { id } = await call("POST", "/projects", { name: "Planned reel", folder })
+    const asset = await call("POST", `/projects/${id}/assets`, { path: source })
+    // References: music at 120 bpm, a warm still
+    const song = join(home, "song.wav")
+    writeMusicBed(song, { mood: "upbeat", seconds: 20, bpm: 120 })
+    const still = join(home, "warm.png")
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=0xd08848:s=640x360:d=1", "-frames:v", "1", still])
+    const musicRef = await upload(`/projects/${id}/upload?name=song.wav&as=reference`, readFileSync(song))
+    const imageRef = await upload(`/projects/${id}/upload?name=warm.png&as=reference`, readFileSync(still))
+    const music = await call("GET", `/projects/${id}/references/${musicRef.id}`)
+    assert.equal(music.kind, "audio")
+    assert.equal(music.music.bpm, 120, "the music reference's tempo, measured")
+    const image = await call("GET", `/projects/${id}/references/${imageRef.id}`)
+    assert.equal(image.kind, "image")
+    assert.equal(image.colour.words[0], "warm")
+
+    // The plan as the Director pitched it and the person approved it
+    const cold = { from: wordId(index, "fifty"), to: wordId(index, "total."), mono: true }
+    const job = await call("POST", `/projects/${id}/make`, { asset: asset.id, brief: { seconds: 45, format: "16:9", hook, coldOpen: cold, cutSound: "whoosh", introSound: "riser", cleanVoice: true, references: [musicRef.id, imageRef.id] } })
+    const done = await until(async () => {
+      const row = (await call("GET", "/jobs")).jobs.find((j) => j.id === job.id)
+      return ["done", "failed"].includes(row.status) ? row : null
+    }, 560_000, "the planned reel")
+    assert.equal(done.status, "done", done.error)
+    const result = JSON.parse(done.output)
+    console.log(`Planned reel: ${result.verdict}\n${result.changes.join("\n")}\n${result.gates.map((g) => `${g.id} ${g.status}${g.message ? `: ${g.message}` : ""}`).join("\n")}`)
+    const view = await call("GET", `/projects/${id}`)
+    const clips = view.project.sequences[0].clips
+    const tracks = new Map(view.project.sequences[0].tracks.map((t) => [t.id, t.role]))
+    const base = clips.filter((c) => tracks.get(c.track) === "base")
+    assert.equal(base[0].echo, true, "the cold open plays first")
+    assert.equal(base[0].effects.find((e) => e.type === "grade")?.saturation, 0, "in black and white")
+    const story = base.filter((c) => !c.echo)
+    assert.ok(story.every((c) => c.effects.some((e) => e.type === "grade" && e.temperature < 6500)), "the story takes the warm still's colour")
+    assert.ok(story.every((c) => c.effects.some((e) => e.type === "eq" && e.preset === "voice-clean")), "the voice is cleaned")
+    const sfx = clips.filter((c) => tracks.get(c.track) === "sfx")
+    assert.equal(sfx.length, story.length - 1 + 1, "a whoosh on each cut of the story, and a riser into it")
+    const bed = view.project.assets.find((a) => /kriya-music-upbeat-120bpm/.test(a.path))
+    assert.ok(bed, "the bed follows the music reference's tempo")
+    assert.ok(clips.some((c) => tracks.get(c.track) === "music" && c.source?.asset === bed.id), "and it's on the music track")
+    assert.ok(result.changes.some((c) => /Opened cold/.test(c)) || result.notes.some((n) => /Opened cold/.test(n)), "the cold open is reported")
+    for (const gate of ["QG-01", "QG-02", "QG-06", "QG-07", "QG-13"]) assert.equal(result.gates.find((g) => g.id === gate)?.status, "passed", `${gate}: ${JSON.stringify(result.gates.find((g) => g.id === gate))}`)
+    assert.deepEqual(probe(result.file).streams.filter((s) => s.codec_type === "video").map((v) => [v.width, v.height]), [[1920, 1080]])
   } finally {
     await stopHost(home)
     await fake.close?.()

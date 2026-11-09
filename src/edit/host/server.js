@@ -353,6 +353,15 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (typeof brief.reference === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.reference)) clean.reference = brief.reference
           if (Object.hasOwn(FORMATS, brief.format)) clean.format = brief.format
           if (Object.hasOwn(GRADES, brief.grade)) clean.grade = brief.grade
+          if (brief.cleanVoice === true) clean.cleanVoice = true
+          // From the Director's approved plan: checked again in the recipe against the index
+          const safeId = (v) => typeof v === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(v)
+          if (Array.isArray(brief.references)) clean.references = brief.references.filter(safeId).slice(0, 6)
+          if (safeId(brief.hook)) clean.hook = brief.hook
+          if (brief.coldOpen && safeId(brief.coldOpen.from) && safeId(brief.coldOpen.to)) clean.coldOpen = { from: brief.coldOpen.from, to: brief.coldOpen.to, mono: brief.coldOpen.mono !== false }
+          if (["whoosh", "pop"].includes(brief.cutSound)) clean.cutSound = brief.cutSound
+          if (["riser", "hit"].includes(brief.introSound)) clean.introSound = brief.introSound
+          if (Number.isInteger(brief.punches) && brief.punches >= 0 && brief.punches <= 8) clean.punches = brief.punches
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))
@@ -363,6 +372,16 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         if (typeof text !== "string" || text.length > 60 || /[\n\r<>]/.test(text)) return refuse(res, 400, "Give the word as it should read, in up to 60 characters.")
         return say(200, { word: projects.correctWord(state, decodeURIComponent(parts[3]), text) })
       }
+      // The Director's plan: proposed in words with its settings; nothing is made here
+      if (parts[2] === "plan" && parts.length === 3 && method === "POST") {
+        const { text, history, previous, choices } = await readJson(req)
+        if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want, in up to 2,000 characters.")
+        const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
+        const prior = previous && typeof previous === "object" ? { say: String(previous.say ?? "").slice(0, 900), steps: Array.isArray(previous.steps) ? previous.steps.slice(0, 10).map((s) => String(s).slice(0, 240)) : [], settings: previous.settings && typeof previous.settings === "object" ? previous.settings : {} } : null
+        return say(200, await projects.plan(state, { text, history: turns, previous: prior, choices: choices && typeof choices === "object" ? choices : {} }))
+      }
+      // A reference's classified analysis, measured once and kept
+      if (parts[2] === "references" && parts.length === 4 && method === "GET") return say(200, await projects.referenceAnalysis(state, decodeURIComponent(parts[3])))
       if (parts[2] === "export" && parts[3] === "handoff" && parts.length === 4 && method === "POST") return say(200, projects.handoff(state))
       if (parts[2] === "index" && parts.length === 3 && method === "GET") {
         const { words, sentences, takes, shots } = state.index

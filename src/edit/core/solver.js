@@ -135,7 +135,7 @@ function layBase(s, clips) {
     const piece = (from, to, length, hold) => {
       const frames = framesFor(length, s.fps)
       if (frames === 0) return
-      const item = { clip: clip.id, asset: asset.id, in: from, out: to, at: framesToFlicks(frame, s.fps), end: framesToFlicks(frame + frames, s.fps), speed: clip.speed, effects, ...(hold ? { hold } : {}) }
+      const item = { clip: clip.id, asset: asset.id, in: from, out: to, at: framesToFlicks(frame, s.fps), end: framesToFlicks(frame + frames, s.fps), speed: clip.speed, effects, ...(hold ? { hold } : {}), ...(clip.echo ? { echo: true } : {}) }
       frame += frames
       s.picture.push(item)
       return item
@@ -169,7 +169,8 @@ function layBase(s, clips) {
 /** Where a time in an asset sits on the timeline, or null if it was cut. */
 function mapSource(s, place, anchor, spot) {
   const edge = anchor.edge ?? "start"
-  const hit = s.picture.find(({ asset, in: from, out, hold }) => !hold && asset === spot.asset && (edge === "start" ? from <= spot.t && spot.t < out : from < spot.t && spot.t <= out))
+  // A word lives where the story says it: never in a hold, never in a cold open's echo of it
+  const hit = s.picture.find(({ asset, in: from, out, hold, echo }) => !hold && !echo && asset === spot.asset && (edge === "start" ? from <= spot.t && spot.t < out : from < spot.t && spot.t <= out))
   if (hit) return hit.at + scaleFlicks(spot.t - hit.in, inverse(hit.speed))
   for (const clip of s.rest) {
     if (clip.source?.asset !== spot.asset || s.tracks.get(clip.track).role === "ambience") continue

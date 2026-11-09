@@ -37,6 +37,7 @@ const roleOf = (project, clip) => project.sequences[0].tracks.find((t) => t.id =
 // op: a valid use and what it must have done; bad: a use refused with this code
 const CASES = {
   keep_range: { op: { asset: "a1", from: w(20), to: w(24, "end") }, done: (p) => assert.deepEqual(last(p).source.in, w(20)), bad: [{ asset: "a1", from: w(9), to: w(2) }, "range_inverted"] },
+  cold_open: { op: { asset: "a1", from: w(20), to: w(24, "end"), mono: true }, done: (p) => { assert.equal(clips(p)[0].echo, true); assert.equal(clips(p)[0].effects.find((e) => e.type === "grade").saturation, 0) }, bad: [{ asset: "a1", from: w(9), to: w(2) }, "range_inverted"] },
   remove_range: { op: { from: w(3), to: w(5, "end") }, done: (p) => assert.deepEqual(byId(p, "c1").source.out, w(2, "end")), bad: [{ from: w(30), to: w(31, "end") }, "range_not_on_timeline"] },
   use_take: { op: { clip: "c2", from: w(30), to: w(34, "end") }, done: (p) => assert.deepEqual(byId(p, "c2").source.in, w(30)), bad: [{ clip: "nope", from: w(30), to: w(34, "end") }, "unknown_clip"] },
   reorder: { op: { clip: "c2", after: null }, done: (p) => assert.equal(clips(p)[0].id, "c2"), bad: [{ clip: "c3", after: null }, "not_on_base"] },
@@ -88,7 +89,7 @@ const CASES = {
 
 test("ET-OPS-01: the case table covers every operation in EDIT_ENGINE §4", () => {
   assert.deepEqual(Object.keys(CASES).sort(), [...OPERATIONS].sort())
-  assert.equal(OPERATIONS.length, 38) // 37 edits, and text_behind from ED8
+  assert.equal(OPERATIONS.length, 39) // 37 edits, text_behind from ED8, cold_open (2026-11-09)
 })
 
 for (const [name, { op, done, bad }] of Object.entries(CASES)) {
