@@ -61,28 +61,74 @@ export async function musicOf(file, { run = runTool, signal } = {}) {
  */
 export async function analyseReference(file, facts, { run = runTool, signal } = {}) {
   const kind = facts.width ? (facts.duration ? "video" : "image") : "audio"
-  const out = { kind, lines: [] }
+  // `parts`: each line under the aspect it informs, so a reference taken for one aspect gives only that
+  const out = { kind, lines: [], parts: {} }
+  const line = (aspect, text) => (out.lines.push(text), (out.parts[aspect] = text))
   if (kind !== "audio") {
     const stats = await colourStats(file, { image: kind === "image", run, signal })
     if (stats) {
       out.colour = gradeFromStats(stats)
-      out.lines.push(`Colour: ${out.colour.words.join(", ")}`)
+      line("colour", `Colour: ${out.colour.words.join(", ")}`)
     }
   }
   if (kind === "video") {
     const dna = await extractDna(file, { run, signal }).catch(() => null)
     if (dna?.pace?.median) {
       out.pace = { every: dna.pace.median, shots: dna.pace.shots }
-      out.lines.push(`Pace: the picture changes every ${dna.pace.median.toFixed(1)} s (${dna.pace.shots} shots)`)
+      line("editing", `Pace: the picture changes every ${dna.pace.median.toFixed(1)} s (${dna.pace.shots} shots)`)
     }
     if (dna) {
       out.captions = !!dna.captions?.present
-      out.lines.push(out.captions ? "Captions: yes, on screen" : "Captions: none")
+      line("graphics", out.captions ? "Captions: yes, on screen" : "Captions: none")
     }
   }
-  if (kind === "audio" || (kind === "video" && facts.hasAudio && !out.pace)) {
+  // A video's soundtrack is measured too: it's what a reference taken for its sound gives
+  if (kind === "audio" || (kind === "video" && facts.hasAudio)) {
     out.music = await musicOf(file, { run, signal }).catch(() => null)
-    if (out.music) out.lines.push(`Music: ${out.music.bpm ? `${out.music.bpm} bpm, ` : ""}${out.music.mood}${out.music.lufs !== null ? `, ${out.music.lufs} LUFS` : ""}`)
+    if (out.music) line("sound", `Music: ${out.music.bpm ? `${out.music.bpm} bpm, ` : ""}${out.music.mood}${out.music.lufs !== null ? `, ${out.music.lufs} LUFS` : ""}`)
   }
+  return out
+}
+
+/** What a reference can be taken for: the person picks one per reference, or all of it. */
+export const ASPECTS = {
+  all: "Everything it shows",
+  editing: "Editing: cuts and pace",
+  sound: "Sound: music and feel",
+  colour: "Colour grade",
+  graphics: "Graphics: captions and text",
+}
+
+/** References as the person sent them: ids, or { id, aspect }; anything else dropped. At most six. */
+export function cleanRefs(list) {
+  if (!Array.isArray(list)) return []
+  const safe = (v) => typeof v === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(v)
+  const out = []
+  for (const item of list) {
+    const ref = safe(item) ? { id: item, aspect: "all" } : item && safe(item.id) ? { id: item.id, aspect: Object.hasOwn(ASPECTS, item.aspect) ? item.aspect : "all" } : null
+    if (ref && !out.some((r) => r.id === ref.id)) out.push(ref)
+  }
+  return out.slice(0, 6)
+}
+
+/**
+ * Only what the reference was taken for. "all" keeps the earlier rule for a video's sound: used
+ * only when it has no cuts to read, since a cut video's soundtrack is usually speech.
+ */
+export function takeFrom(found, aspect = "all") {
+  const wants = (a) => aspect === "all" || aspect === a
+  const parts = found.parts ?? {}
+  const out = { kind: found.kind, lines: [] }
+  const keep = (a, key) => {
+    if (!wants(a) || found[key] === undefined || found[key] === null) return
+    out[key] = found[key]
+    if (parts[a]) out.lines.push(parts[a])
+  }
+  keep("colour", "colour")
+  keep("editing", "pace")
+  keep("graphics", "captions")
+  if (aspect === "sound" || (aspect === "all" && !(found.kind === "video" && found.pace))) keep("sound", "music")
+  // An analysis kept from before `parts` existed: its lines, for everything
+  if (!found.parts && aspect === "all") out.lines = [...(found.lines ?? [])]
   return out
 }

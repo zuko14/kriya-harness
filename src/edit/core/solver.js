@@ -3,6 +3,7 @@
 // satisfy and never silently drops a request.
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
+import { mapBox } from "./faces.js"
 import { safeZoneFor, solveLayout } from "./layout.js"
 import { flicksToFrames, frameAtTimestamp, framesToFlicks, scaleFlicks, snapToFrame } from "./time.js"
 
@@ -332,19 +333,30 @@ function placeRest(s) {
   }
 }
 
-// shortcut: scales face boxes by frame size and ignores any crop path, ED11's reframe recipes must map them through it
+// Faces under a caption, on the output, mapped as the render draws the frame (faces.js's mapBox:
+// one scale that covers the frame, centred). Found in use: scaling width and height apart put
+// faces in the wrong place whenever the take's shape differs from the frame, so captions sat on them.
+// shortcut: a reframe's crop path isn't known yet here (plan.js makes it after the solver), so x is
+// the centred crop's; a caption is a full-width row, so its y, which this gets exactly, is what matters
+const FACE_REACH = 705_600_000 // faces are sampled once a second (L8), so look a second either side
 function facesDuring(s, at, end) {
-  const { width, height } = s.project.canvas
+  const canvas = s.project.canvas
   const boxes = []
+  const zooms = s.zooms.filter((z) => z.at < end && at < z.end)
   for (const piece of s.picture) {
     if (piece.end <= at || piece.at >= end) continue
     const facts = s.assets.get(piece.asset).facts
-    const scaleX = width / (facts.width ?? width)
-    const scaleY = height / (facts.height ?? height)
-    const from = piece.in + scaleFlicks(Math.max(0, at - piece.at), piece.speed)
-    const to = piece.in + scaleFlicks(Math.min(piece.end, end) - piece.at, piece.speed)
+    const size = { width: facts.width ?? canvas.width, height: facts.height ?? canvas.height }
+    const from = piece.in + scaleFlicks(Math.max(0, at - piece.at), piece.speed) - FACE_REACH
+    const to = piece.in + scaleFlicks(Math.min(piece.end, end) - piece.at, piece.speed) + FACE_REACH
     for (const face of s.raw.faces ?? []) {
-      if (face.asset === piece.asset && face.t >= from && face.t <= to) boxes.push({ x: Math.floor(face.box.x * scaleX), y: Math.floor(face.box.y * scaleY), w: Math.ceil(face.box.w * scaleX), h: Math.ceil(face.box.h * scaleY) })
+      if (face.asset !== piece.asset || face.t < from || face.t > to) continue
+      // Clear the face both as shot and inside any punch-in over the caption
+      for (const zoom of [undefined, ...zooms]) {
+        const box = mapBox(face.box, { zoom }, size, canvas, canvas, face.t)
+        // A little room around the face: a caption touching the chin still reads as on it
+        if (box) boxes.push({ x: box.x - Math.round(box.w * 0.1), y: box.y - Math.round(box.h * 0.1), w: Math.round(box.w * 1.2), h: Math.round(box.h * 1.25) })
+      }
     }
   }
   return boxes

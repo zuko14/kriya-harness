@@ -220,6 +220,7 @@ async function workspace(id) {
   let timelineData = { picture: [], overlays: [], audio: [], captions: [] }
   let source = null // an asset id when the monitor shows a source instead of the cut
   let mode = MODES.includes(remember("kriya-edit-mode")) ? remember("kriya-edit-mode") : "direct"
+  let formatFollowed = false // reload(): Format follows the project's frame once, on opening
   const fps = () => project.canvas.fps
 
   const time = h("span", { class: "time label-mono", "aria-live": "off" }, "00:00.00")
@@ -313,6 +314,13 @@ async function workspace(id) {
     transcript.load(index)
     showChip()
     renderBin()
+    // On opening, Format follows the project's frame: found in use, a 16:9 project reopened
+    // showed 9:16, so a plain "Make it" went back to 9:16. After that it's the person's choice
+    if (!formatFollowed) {
+      formatFollowed = true
+      const frame = [...makeFormat.options].map((o) => o.value).find((f) => { const [a, b] = f.split(":").map(Number); return a * project.canvas.height === b * project.canvas.width })
+      if (frame && project.sequences.some((q) => q.clips.length)) makeFormat.value = frame
+    }
     // The preview shape the person chose holds through every reload (a finished Index used to reset it)
     if (!source) await monitor.load(pieces, { fps: fps(), duration: total, shape: shapeNow() })
     for (const asset of new Set([...timelineData.audio, ...timelineData.picture].map((item) => item.asset))) {
@@ -386,7 +394,7 @@ async function workspace(id) {
   }
 
   /** Copies picked files into the project's media folder with a progress bar, then imports them. */
-  function upload(files, { reference = false } = {}) {
+  function upload(files, { reference = false, aspect = "all" } = {}) {
     const one = (file) =>
       new Promise((done, fail) => {
         const row = h("li", { class: "asset" }, h("span", { class: "note" }, `Copying ${file.name}…`), progressBar(0, `Copying ${file.name}`))
@@ -415,8 +423,8 @@ async function workspace(id) {
       for (const file of files) {
         try {
           const asset = await one(file)
-          say.textContent = reference ? `Added ${file.name} as a style reference.` : `Added ${file.name}. Index it to read its words.`
-          if (reference) using.add(asset.id)
+          say.textContent = reference ? `Added ${file.name} as a reference for ${ASPECT[aspect].toLowerCase()}.` : `Added ${file.name}. Index it to read its words.`
+          if (reference) (using.add(asset.id), remember(aspectKey(asset.id), aspect))
         } catch (error) {
           say.textContent = error.message
         }
@@ -466,8 +474,23 @@ async function workspace(id) {
   // References in use for the next cut: each one added is on until switched off
   const using = new Set()
   const seenRefs = new Set()
+  // What each reference is taken for (reference.js ASPECTS on the Host; the same words here):
+  // the person picks it, so only that aspect of the reference shapes the cut. Kept per project
+  const ASPECT = { all: "Everything it shows", editing: "Editing: cuts and pace", sound: "Sound: music and feel", colour: "Colour grade", graphics: "Graphics: captions and text" }
+  const aspectKey = (rid) => `kriya-ref-aspect:${id}:${rid}`
+  const aspectOf = (rid) => (Object.hasOwn(ASPECT, remember(aspectKey(rid)) ?? "") ? remember(aspectKey(rid)) : "all")
+  const aspectSelect = (attrs, value, onchange) => h("select", { class: "field select", ...attrs, onchange }, Object.entries(ASPECT).map(([key, label]) => h("option", { value: key, selected: key === value }, label)))
+  const addAspect = aspectSelect({ id: "ref-aspect", "aria-label": "The next reference is for" }, "all", () => (addAspectBin.value = addAspect.value))
+  const addAspectBin = aspectSelect({ id: "ref-aspect-bin", "aria-label": "The next reference is for" }, "all", () => (addAspect.value = addAspectBin.value))
+  const linesFor = (found, aspect) => {
+    if (!found.parts) return found.lines
+    if (aspect !== "all") return found.parts[aspect] ? [found.parts[aspect]] : [`Nothing to take for ${ASPECT[aspect].toLowerCase()} from this one.`]
+    // As the Host takes "everything": a cut video's soundtrack is usually speech, so not its music
+    return found.lines.filter((line) => !(found.kind === "video" && found.pace && line === found.parts.sound))
+  }
   const analyses = new Map() // asset id → its classified analysis, from the Host
   const referencesEl = h("ul", { class: "bin", "aria-label": "References" })
+  const directRefsEl = h("ul", { class: "bin refs-direct", "aria-label": "References for this cut" })
   const refSummary = h("p", { class: "note small" })
   const refPicker = h("input", {
     type: "file",
@@ -477,25 +500,39 @@ async function workspace(id) {
     onchange: () => {
       const files = [...refPicker.files]
       refPicker.value = ""
-      const ok = files.length && confirm("Use this only as a reference?\n\nKriya measures it as numbers: a video's pace, captions and colour; an image's colour grade; music's tempo and energy. No picture, sound or words from it go into your video. Add only what you're allowed to use this way.")
-      if (ok) upload(files, { reference: true })
+      const aspect = addAspect.value
+      const what = aspect === "all" ? "a video's pace, captions, colour and music; an image's colour grade; music's tempo and energy" : `only its ${ASPECT[aspect].toLowerCase()}`
+      const ok = files.length && confirm(`Use this only as a reference for ${ASPECT[aspect].toLowerCase()}?\n\nKriya measures it as numbers: ${what}. No picture, sound or words from it go into your video. Add only what you're allowed to use this way.`)
+      if (ok) upload(files, { reference: true, aspect })
     },
   })
-  function renderReferences() {
+  // One row per reference, in the bin's list (Edit) and in Direct's, each with its aspect and its switch
+  function refRow(ref, where) {
+    const name = ref.path.split(/[\\/]/).at(-1)
+    const kind = ref.facts.width ? (ref.facts.duration ? "video" : "image") : "music"
+    const on = h("input", { type: "checkbox", id: `use-${where}-${ref.id}`, checked: using.has(ref.id), onchange: () => (on.checked ? using.add(ref.id) : using.delete(ref.id), renderReferences(on.id)) })
+    const found = analyses.get(ref.id)
+    const aspect = aspectOf(ref.id)
+    const lines = h("ul", { class: "ref-lines" }, ...(found ? linesFor(found, aspect).map((line) => h("li", {}, line)) : [h("li", { class: "note" }, "Measuring…")]))
+    const take = aspectSelect({ id: `aspect-${where}-${ref.id}`, "aria-label": `Take from ${name}` }, aspect, (event) => (remember(aspectKey(ref.id), event.target.value), renderReferences(event.target.id)))
+    return h("li", { class: "asset ref" }, h("button", { type: "button", class: "btn", onclick: () => ref.facts.duration && showSource(ref.id, 0) }, `${name} · ${kind}`), h("label", { class: "note small", for: `aspect-${where}-${ref.id}` }, "Take from it"), take, lines, h("label", { class: "inline", for: `use-${where}-${ref.id}` }, on, " Use in the cut"))
+  }
+  function renderReferences(focus = null) {
     clear(referencesEl)
+    clear(directRefsEl)
     const refs = assets.filter((a) => a.kind === "reference")
-    if (!refs.length) referencesEl.append(h("li", { class: "note" }, "None yet. Add a video whose editing you like, an image whose colour you like, or music whose feel you like."))
+    if (!refs.length) referencesEl.append(h("li", { class: "note" }, "None yet. Pick what a reference is for, then add a video whose cuts you like, music whose feel you like, or an image whose colour you like."))
     for (const ref of refs) {
       if (!seenRefs.has(ref.id)) (seenRefs.add(ref.id), using.add(ref.id))
-      const name = ref.path.split(/[\\/]/).at(-1)
-      const kind = ref.facts.width ? (ref.facts.duration ? "video" : "image") : "music"
-      const on = h("input", { type: "checkbox", id: `use-${ref.id}`, checked: using.has(ref.id), onchange: () => (on.checked ? using.add(ref.id) : using.delete(ref.id), showRefSummary()) })
-      const found = analyses.get(ref.id)
-      const lines = h("ul", { class: "ref-lines" }, ...(found ? found.lines.map((line) => h("li", {}, line)) : [h("li", { class: "note" }, "Measuring…")]))
-      referencesEl.append(h("li", { class: "asset ref" }, h("button", { type: "button", class: "btn", onclick: () => ref.facts.duration && showSource(ref.id, 0) }, `${name} · ${kind}`), lines, h("label", { class: "inline", for: `use-${ref.id}` }, on, " Use in the cut")))
-      if (!found) api("GET", `/projects/${id}/references/${encodeURIComponent(ref.id)}`).then((result) => (analyses.set(ref.id, result), renderReferences())).catch((error) => (analyses.set(ref.id, { lines: [`Couldn't measure it: ${error.message}`] }), renderReferences()))
+      referencesEl.append(refRow(ref, "bin"))
+      directRefsEl.append(refRow(ref, "direct"))
+      if (!analyses.has(ref.id)) {
+        analyses.set(ref.id, null) // asked once, though it shows in two lists
+        api("GET", `/projects/${id}/references/${encodeURIComponent(ref.id)}`).then((result) => (analyses.set(ref.id, result), renderReferences())).catch((error) => (analyses.set(ref.id, { lines: [`Couldn't measure it: ${error.message}`] }), renderReferences()))
+      }
     }
     showRefSummary()
+    if (focus) document.getElementById(focus)?.focus()
     // The make panel's choices follow what's in the project
     const keep = (select, list, none) => {
       const was = select.value
@@ -641,7 +678,7 @@ async function workspace(id) {
       h(
         "div",
         { class: "row" },
-        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), clear(box).append(h("p", { class: "note" }, "Approved. Making it now; the progress is in Direct.")), make(plan.brief, { exact: true })) }, "Approve and make it"),
+        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), plan.brief.format && (makeFormat.value = plan.brief.format), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Direct.`)), make(plan.brief, { exact: true })) }, "Approve and make it"),
         h("button", { type: "button", class: "btn", onclick: () => ((pendingPlan = plan), prompt.focus(), (prompt.placeholder = "Say what to change in the plan…")) }, "Change…"),
       ),
     )
@@ -754,14 +791,15 @@ async function workspace(id) {
     [["", "Template: choose…"], ["reel", "Talking-head reel: karaoke captions, upbeat music"], ["clean", "Clean reel: simple captions, no music"], ["youtube", "YouTube talk: 16:9, warm, calm music"], ["square", "Square post: boxed captions, vivid"], ["cinematic", "Cinematic: 16:9, cool look, no captions"]].map(([value, label]) => h("option", { value }, label)),
   )
   const showRefSummary = () => {
-    const n = assets.filter((a) => a.kind === "reference" && using.has(a.id)).length
-    refSummary.textContent = n ? `${n} reference${n === 1 ? "" : "s"} in use: their pace, colour and music guide the cut.` : "No references in use."
+    const inUse = assets.filter((a) => a.kind === "reference" && using.has(a.id))
+    const fors = [...new Set(inUse.map((a) => aspectOf(a.id)))].map((a) => (a === "all" ? "everything" : ASPECT[a].split(":")[0].toLowerCase()))
+    refSummary.textContent = inUse.length ? `${inUse.length} reference${inUse.length === 1 ? "" : "s"} in use, for ${fors.join(", ")}.` : "No references in use."
   }
   const briefNow = (extra = {}) => ({
     ...(makeLength.value ? { seconds: Number(makeLength.value) } : {}),
     ...(makeCaptions.value ? { captions: makeCaptions.value } : {}),
     ...(makeMusic.value ? { music: makeMusic.value } : {}),
-    ...(using.size ? { references: [...using].filter((rid) => assets.some((a) => a.id === rid && a.kind === "reference")) } : {}),
+    ...(using.size ? { references: [...using].filter((rid) => assets.some((a) => a.id === rid && a.kind === "reference")).map((rid) => ({ id: rid, aspect: aspectOf(rid) })) } : {}),
     format: makeFormat.value,
     ...(makeGrade.value ? { grade: makeGrade.value } : {}),
     ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}),
@@ -809,7 +847,9 @@ async function workspace(id) {
     h("label", { for: "make-voice", class: "sr-only" }, "Voice"),
     makeVoice,
     h("div", { class: "extras", role: "group", "aria-label": "Extras" }, makeAngles.el, makeBroll.el, makeTitles.el),
-    h("div", { class: "row tight" }, refSummary, refPicker, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference")),
+    refSummary,
+    directRefsEl,
+    h("div", { class: "row tight" }, refPicker, addAspect, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference for what's chosen: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference")),
     makeButton,
     makeStatus,
   )
@@ -872,6 +912,49 @@ async function workspace(id) {
   }
   const modeButtons = h("div", { class: "modes", role: "group", "aria-label": "Mode" }, MODES.map((m, i) => h("button", { type: "button", class: "btn", dataset: { mode: m }, "aria-pressed": "false", "aria-keyshortcuts": String(i + 1), onclick: () => setMode(m) }, m[0].toUpperCase() + m.slice(1))))
 
+  /* The Kriya panel's width: it fits the window by itself, and the person can drag its edge
+     (or use the arrow keys on it) to make room for the chat; double-click goes back to fitting */
+  const SIDE = { min: 300, step: 32 }
+  const sideMax = () => Math.max(SIDE.min, Math.min(960, Math.round(window.innerWidth * 0.62)))
+  const sideNow = () => document.querySelector(".area-kriya")?.getBoundingClientRect().width ?? 0
+  function setSide(px) {
+    if (px === null) {
+      root.style.removeProperty("--side")
+      remember("kriya-side-width", "")
+    } else {
+      const width = Math.round(Math.min(sideMax(), Math.max(SIDE.min, px)))
+      root.style.setProperty("--side", `${width}px`)
+      remember("kriya-side-width", String(width))
+    }
+    sideHandle.setAttribute("aria-valuenow", String(Math.round(sideNow())))
+    timeline.draw()
+    strip.draw()
+  }
+  const sideHandle = h("div", {
+    class: "side-handle",
+    role: "separator",
+    tabindex: "0",
+    "aria-orientation": "vertical",
+    "aria-label": "Resize the Kriya panel",
+    "aria-valuemin": String(SIDE.min),
+    title: "Drag to resize. Double-click to fit the window.",
+    onpointerdown: (event) => {
+      event.preventDefault()
+      sideHandle.setPointerCapture(event.pointerId)
+      const right = document.querySelector(".area-kriya").getBoundingClientRect().right
+      const move = (e) => setSide(right - e.clientX)
+      const up = () => (sideHandle.removeEventListener("pointermove", move), sideHandle.removeEventListener("pointerup", up), sideHandle.removeEventListener("pointercancel", up))
+      sideHandle.addEventListener("pointermove", move)
+      sideHandle.addEventListener("pointerup", up)
+      sideHandle.addEventListener("pointercancel", up)
+    },
+    ondblclick: () => setSide(null),
+    onkeydown: (event) => {
+      const by = { ArrowLeft: SIDE.step, ArrowRight: -SIDE.step }[event.key]
+      if (by) (event.preventDefault(), event.stopPropagation(), setSide(sideNow() + by))
+      else if (event.key === "Home") (event.preventDefault(), setSide(null))
+    },
+  })
   const root = h(
     "div",
     { class: "workspace" },
@@ -881,14 +964,14 @@ async function workspace(id) {
     h(
       "div",
       { class: "grid" },
-      h("div", { class: "area-bin" }, binPanel, h("section", { class: "panel refs", "aria-label": "Style references" }, h("h2", {}, "References"), referencesEl, h("button", { type: "button", class: "btn wide", onclick: () => refPicker.click() }, "Add a reference…"))),
+      h("div", { class: "area-bin" }, binPanel, h("section", { class: "panel refs", "aria-label": "Style references" }, h("h2", {}, "References"), referencesEl, addAspectBin, h("button", { type: "button", class: "btn wide", onclick: () => refPicker.click() }, "Add a reference…"))),
       h(
         "section",
         { class: "area-monitor panel", "aria-label": "Monitor" },
         h("div", { class: "monitor-frame" }, canvas),
         h("div", { class: "transport" }, play, time, which, shape, markButtons, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
       ),
-      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Chat with Kriya"), chatEl, chip, promptForm, h("p", { class: "note small" }, "Say times like 0:05 or mark a stretch with I and O. Enter sends."), h("h2", {}, "What I did"), did),
+      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, sideHandle, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Chat with Kriya"), chatEl, chip, promptForm, h("p", { class: "note small" }, "Say times like 0:05 or mark a stretch with I and O. Enter sends."), h("h2", {}, "What I did"), did),
       h("section", { class: "area-transcript panel", "aria-label": "Transcript" }, h("h2", {}, "Transcript"), h("p", { class: "note small hint" }, "Click a word to jump there. Double-click (or F2) to fix a misheard word."), transcriptEl),
       h("div", { class: "area-strip" }, stripEl),
       h("section", { class: "area-timeline panel", "aria-label": "Timeline" }, timelineEl),
@@ -896,7 +979,11 @@ async function workspace(id) {
     ),
   )
   clear(app).append(root)
+  const savedSide = Number(remember("kriya-side-width"))
+  if (savedSide >= SIDE.min) root.style.setProperty("--side", `${Math.min(sideMax(), savedSide)}px`)
   setMode(mode)
+  sideHandle.setAttribute("aria-valuemax", String(sideMax()))
+  sideHandle.setAttribute("aria-valuenow", String(Math.round(sideNow())))
 
   window.onkeydown = (event) => {
     const typing = event.target.closest?.("input, select, textarea")

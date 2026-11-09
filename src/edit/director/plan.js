@@ -65,6 +65,43 @@ export function briefOf(settings = {}) {
   }
 }
 
+// The frame the person asked for in their own words. Code decides it, not the model: found in
+// use, a plan approved for 16:9 left `format` out and the make fell back to 9:16.
+const RATIO = (a, b) => new RegExp(`\\b${a}\\s*(?::|x|×|/|by|to)\\s*${b}\\b`, "gi")
+const FORMAT_CUES = [
+  ["16:9", RATIO(16, 9), 2],
+  ["9:16", RATIO(9, 16), 2],
+  ["1:1", RATIO(1, 1), 2],
+  ["4:5", RATIO(4, 5), 2],
+  ["16:9", /\b(?:landscape|horizontal|wide ?screen|youtube(?! ?shorts?))\b/gi, 1],
+  ["9:16", /\b(?:vertical|portrait|reels?|shorts|tiktok|stories)\b/gi, 1],
+  ["1:1", /\bsquare\b/gi, 1],
+]
+// "not 9:16", "instead of a reel", "from 9:16 to 16:9", "but it made 9:16": a mention turned away from
+const AWAY = /(?:\bnot|\bno|\bisn't|\bwasn't|instead of|rather than|\bthan|\bfrom|\bmade(?: it| me)?|\bgave(?: me)?|came out|turned out|\bcurrently|\bbut it's|output (?:is|was))\s+(?:(?:a|an|the|in|at|as|like)\s+)?$/i
+
+/** The format one message asks for: a ratio beats a word ("a reel in 16:9"), the last mention wins; null if none. */
+export function formatIn(text) {
+  const said = String(text ?? "")
+  let best = null
+  for (const [format, cue, strength] of FORMAT_CUES) {
+    for (const m of said.matchAll(cue)) {
+      if (AWAY.test(said.slice(Math.max(0, m.index - 24), m.index))) continue
+      if (!best || strength > best.strength || (strength === best.strength && m.index > best.at)) best = { format, strength, at: m.index }
+    }
+  }
+  return best?.format ?? null
+}
+
+/** The format the person wants: this message, then their earlier messages (latest first), then the plan being revised. */
+export function formatAsked(text, history = [], previous = null) {
+  for (const said of [text, ...history.filter((h) => h.who === "you").map((h) => h.text).reverse()]) {
+    const format = formatIn(said)
+    if (format) return format
+  }
+  return Object.hasOwn(FORMATS, previous?.settings?.format ?? "") ? previous.settings.format : null
+}
+
 /** Problems with a plan's settings against this project: unknown ids, a cold open that isn't one short stretch. */
 export function planProblems(settings, index) {
   const problems = []
@@ -88,9 +125,11 @@ export async function planCut({ ask, project, index, text, history = [], previou
   const assets = project.assets.filter((a) => a.kind === "video" || a.kind === "audio").map((a) => a.id)
   const refs = references.length ? `References the person added, measured by code:\n${references.map((r) => `- ${r.name}: ${r.lines.join("; ")}`).join("\n")}` : "No references added."
   const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`].join("\n\n")
+  const asked = formatAsked(text, history, previous)
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    asked ? `The person wants the ${asked} format: settings.format is "${asked}", and your pitch says ${asked}.` : "",
     previous ? `Your previous plan, which they want changed: ${JSON.stringify(previous).slice(0, 3000)}. Revise it by what they say now; keep what they didn't ask to change.` : "",
     "You are the Director: plan the whole cut the way a top editor pitches it. Decide the opening (a hook sentence first, or a cold open: one strong later moment of 2 to 6 seconds played first, in black and white, before the story starts), the pacing (punch-ins), captions, the colour look, music, sound design (a sound on each cut, a riser into the story after a cold open), whether to clean background noise from the voice, the format and the length. You can also cut one camera like two (angles: wide then tight on alternate clips), lay the person's other clips over the story as B-roll (broll 'own', only if the project has other video), pop key words on screen as title cards (titles, when there are no captions), and ramp the speed out of a cold open into the story (ramps). Follow the references where they say something. Don't promise what these settings can't do: no stock footage or generated video.",
     "Answer with JSON only: `say` is your pitch in 2 to 4 plain sentences, `steps` the concrete things you'll do, and `settings` exactly what will be made. Use sentence ids for `hook` and word ids for `coldOpen`, only from the paper edit. Music 'reference' means follow the music reference.",
@@ -103,5 +142,8 @@ export async function planCut({ ask, project, index, text, history = [], previou
   })
   const answer = await ask({ task: "plan", tier: "budget", schema: PLAN_SCHEMA, view, request, maxOutput: 1500, check, fallback, signal, priority: 0 })
   const clean = (value) => String(value ?? "").replace(/[\u0000-\u001f<>]/g, " ").trim()
-  return { say: clean(answer.value.say).slice(0, 900), steps: (answer.value.steps ?? []).map((s) => clean(s).slice(0, 240)).filter(Boolean), settings: answer.value.settings ?? {}, source: answer.source, ...(answer.reason ? { reason: answer.reason } : {}) }
+  // The frame is always set, and set by what the person said, never left to a default
+  const settings = { ...(answer.value.settings ?? {}) }
+  settings.format = asked ?? (Object.hasOwn(FORMATS, settings.format ?? "") ? settings.format : Object.hasOwn(FORMATS, choices.format ?? "") ? choices.format : "9:16")
+  return { say: clean(answer.value.say).slice(0, 900), steps: (answer.value.steps ?? []).map((s) => clean(s).slice(0, 240)).filter(Boolean), settings, source: answer.source, ...(answer.reason ? { reason: answer.reason } : {}) }
 }
