@@ -4,7 +4,7 @@
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
 import { mapBox } from "./faces.js"
-import { safeZoneFor, solveLayout } from "./layout.js"
+import { isSceneBlock, safeZoneFor, sceneFrame, solveLayout } from "./layout.js"
 import { flicksToFrames, frameAtTimestamp, framesToFlicks, scaleFlicks, snapToFrame } from "./time.js"
 
 const ms = (n) => n * 705_600
@@ -362,17 +362,53 @@ function facesDuring(s, at, end) {
   return boxes
 }
 
+// A page a fast speaker says in a blink stays up long enough to read, until the next one starts (found on real footage)
+const MIN_CAPTION = 1.2 * 705_600_000
+function holdCaptions(s) {
+  // Only where a playbook asked for it (DP3): off, every existing project solves exactly as before
+  if (s.project.look?.caption?.hold !== true) return
+  const list = [...s.captions].sort((a, b) => a.at - b.at)
+  list.forEach((caption, i) => {
+    const next = list[i + 1]?.at ?? s.duration
+    // Text behind the speaker keeps its matte's window exactly
+    if (!caption.behind && caption.end - caption.at < MIN_CAPTION) caption.end = Math.max(caption.end, Math.min(caption.at + MIN_CAPTION, next, s.duration))
+  })
+}
+
 /** Step 6: every caption and card gets a place, or a report. */
 function layOut(s) {
+  holdCaptions(s)
   const { rules } = s
   const { width, height } = s.project.canvas
   const safe = rules.safe ?? safeZoneFor(s.project)
   // Narrower than the look's width when the safe zone is (found in ED8: else no row fits)
   const w = Math.min(Math.floor((width * rules.boxWidth) / 100), width - (safe.left ?? 0) - (safe.right ?? 0))
   const h = Math.floor((height * rules.boxHeight) / 100)
-  const placeable = [...s.captions, ...s.overlays.filter((o) => o.block)]
+  // A scene takes its content box; what plays over it sits on the row below that, with no face to clear
+  const scenes = s.overlays.filter((o) => isSceneBlock(o.block))
+  const frame = sceneFrame({ width, height }, safe, { w, h })
+  for (const scene of scenes) scene.placement = frame.content
+  // A definition has its own place, above the caption row or at the top, wherever no face is; with none free
+  // it stays out. Captions under it keep to their row, so the two never meet
+  const terms = s.overlays.filter((o) => o.block?.blockId === "term")
+  for (const term of terms) {
+    const tall = Math.floor(height * 0.18)
+    const gap = Math.round(height * 0.012)
+    const clash = (box) => facesDuring(s, term.at, term.end).some((f) => box.x < f.x + f.w && f.x < box.x + box.w && box.y < f.y + f.h && f.y < box.y + box.h)
+    const options = [{ ...frame.row, y: frame.row.y - gap - tall, h: tall }, { ...frame.row, y: frame.content.y, h: tall }]
+    term.placement = options.find((box) => !clash(box)) ?? null
+    if (!term.placement) s.issue("no_placement", { clip: term.clip, message: "there's no place for this definition clear of the speaker's face, so it isn't shown" })
+  }
+  const onScene = (item) => [...scenes, ...terms].some((scene) => scene.at < item.end && item.at < scene.end)
+  // Footage over the whole frame hides the speaker, so a caption there has no face to clear
+  const footage = s.overlays.filter((o) => !o.block)
+  const hidden = (item) => footage.some((o) => o.at <= item.at && item.end <= o.end)
+  const placeable = [...s.captions, ...s.overlays.filter((o) => o.block && !isSceneBlock(o.block) && o.block.blockId !== "term")]
   // Text behind the speaker may sit on the face: the matte puts the speaker in front of it
-  const items = placeable.map((item) => ({ id: item.clip, at: item.at, end: item.end, w, h, faces: item.behind ? [] : facesDuring(s, item.at, item.end), ...(item.placement ? { fixed: item.placement } : {}) }))
+  const items = placeable.map((item) => {
+    const covered = onScene(item)
+    return { id: item.clip, at: item.at, end: item.end, w, h, faces: item.behind || covered || hidden(item) ? [] : facesDuring(s, item.at, item.end), ...(item.placement ? { fixed: item.placement } : covered ? { fixed: frame.row } : {}) }
+  })
   const { placements, issues } = solveLayout(items, { canvas: { width, height }, safe, prefer: rules.prefer })
   for (const item of placeable) item.placement = placements[item.clip]
   for (const issue of issues) s.issue(issue.code, issue)

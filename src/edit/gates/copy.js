@@ -7,7 +7,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { isSceneBlock } from "../core/layout.js"
 import { scriptOf } from "../engine/captions.js"
+import { sceneText } from "../engine/scenes.js"
 
 const HELPER = join(dirname(fileURLToPath(import.meta.url)), "text.swift")
 const FLICKS = 705_600_000
@@ -72,6 +74,8 @@ export function similarity(a, b) {
 /** What a tile meant to show. */
 export function intendedText(tile) {
   if (tile.kind === "caption") return tile.node.text ?? tile.node.words.map((w) => w.text).join(" ")
+  if (isSceneBlock(tile.node)) return sceneText(tile.node.variables)
+  if (tile.node.blockId === "term") return [tile.node.variables?.text, tile.node.variables?.quote, tile.node.variables?.source].filter(Boolean).join(" ")
   return [tile.node.variables?.text, tile.node.variables?.subtitle].filter(Boolean).join(" ")
 }
 
@@ -86,19 +90,35 @@ export function judgeCopy(read, { copySimilarity }) {
   const failures = []
   const unread = []
   let worst = 1
-  for (const { tile, seen, unsure = [] } of read) {
+  for (const { tile, seen: reading, unsure = [] } of read) {
     const meant = intendedText(tile)
+    // A reader's stray space ("O kay") isn't on the screen
+    const squeezed = (text) => normalise(text).replace(/ /g, "")
+    const seen = squeezed(meant) === squeezed(reading ?? "") ? meant : reading
     if (scriptOf(meant) !== "latin") {
       unread.push({ tile: tile.key, script: scriptOf(meant) })
       continue
     }
-    const score = similarity(meant, seen ?? "")
-    worst = Math.min(worst, score)
     // Every word meant must be on screen as itself: a one-letter change in a name passes a similarity (found in ED10)
     const shownWords = new Set(normalise(seen ?? "").split(" "))
     // Where the reader wasn't sure, one letter off is the reader's slip; where it was sure, it is the screen
-    const lost = normalise(meant).split(" ").filter((w) => w && !shownWords.has(w) && !unsure.some((u) => nearly(u, w)))
-    if (score < copySimilarity || lost.length) failures.push({ kind: "copy_mismatch", t: tile.at, seconds: Math.round((tile.at / FLICKS) * 100) / 100, meant, seen: seen ?? "", similarity: Math.round(score * 100) / 100, ...(lost.length ? { missing: lost } : {}) })
+    const expected = normalise(meant).split(" ").filter(Boolean)
+    const isScene = isSceneBlock(tile.node)
+    // A scene's unit sits apart from its number and a reader runs them together ("50000₹" read as "50000k"): the digits must still be exact
+    const shownNumber = (w) => isScene && /^\d/.test(w) && [...shownWords].some((seenWord) => new RegExp(`^${w}(?:\\D|$)`).test(seenWord))
+    // A caption's text comes from code, so one letter misread in an ordinary word, the same length, is the reader's slip ("back" read as "Dack", found on real footage).
+    // A name or a number must still match exactly
+    const ordinary = new Set(tile.kind === "caption" ? meant.split(/\s+/).filter((w, i) => !isNameOrNumber(w, i)).map(normalise) : [])
+    // Thin strokes (l, i, 1) and doubled letters are what a reader drops ("all" read as "a", "mellitus" as "melitus")
+    const thin = (w) => w.replace(/[li1|]/g, "").replace(/(.)\1+/g, "$1")
+    const slip = (w) => ordinary.has(w) && [...shownWords].some((seenWord) => (seenWord.length === w.length && nearly(seenWord, w)) || (thin(seenWord) === thin(w) && thin(w).length > 0))
+    const lost = expected.filter((w) => !shownWords.has(w) && !shownNumber(w) && !slip(w) && !unsure.some((u) => nearly(u, w)))
+    // A diagram has no reading order, so a scene is judged by its words alone
+    const score = isScene ? 1 - lost.length / Math.max(1, expected.length) : similarity(meant, seen ?? "")
+    worst = Math.min(worst, score)
+    // Nothing meant is missing and the reading only adds a stray letter ("week.s"): the screen is right
+    const strays = tile.kind === "caption" && !lost.length && [...shownWords].filter((w) => !expected.includes(w)).every((w) => w.length === 1)
+    if ((score < copySimilarity && !strays) || lost.length) failures.push({ kind: "copy_mismatch", t: tile.at, seconds: Math.round((tile.at / FLICKS) * 100) / 100, meant, seen: seen ?? "", similarity: Math.round(score * 100) / 100, ...(lost.length ? { missing: lost } : {}) })
     // What was said: a caption's names and numbers must be on screen as they were spoken
     if (tile.kind === "caption") {
       const shown = ` ${normalise(seen ?? "")} `

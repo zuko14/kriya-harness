@@ -88,7 +88,7 @@ test("EG-4 for QG-08, -09, -10 and -11 on real renders: every seed caught at its
     let caught = 0
     const colours = ["#ffd23f", "#ffe680", "#f5f5f5", "#ffcc99", "#ccffcc", "#e0e0ff", "#fff0b3", "#ffb3b3", "#d9f2ff", "#eeeeee"]
     for (let i = 0; i < 10; i++) {
-      const { gates } = await run("qg09", i, [{ op: "set_look", caption: { color: colours[i] } }, { op: "caption_style", look: "clean", words: page }], { source: "white" })
+      const { gates } = await run("qg09", i, [{ op: "set_look", caption: { color: colours[i], stroke: "none" } }, { op: "caption_style", look: "clean", words: page }], { source: "white" })
       if (gates["QG-09"].status === "failed" && gates["QG-09"].numbers.first.kind === "low_contrast") caught++
       else console.log(`QG-09 missed ${i}: ${JSON.stringify(gates["QG-09"].numbers)}`)
     }

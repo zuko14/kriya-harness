@@ -8,20 +8,30 @@ import { dirname, extname, isAbsolute, join, relative, sep } from "node:path"
 import { checkout, commit, createLog, parseEntry, undo, versions } from "../core/history.js"
 import { canonical, newProject, parseProject, serialize, sha256 } from "../core/project.js"
 import { createEngine, ENGINE_VERSION, guardPath } from "../engine/index.js"
-import { motionRuntime } from "../engine/motion.js"
+import { blockComposition, motionRuntime } from "../engine/motion.js"
+import { cleanScene, SCENE_BLOCK, SCENE_KINDS, SCENE_THEMES, SCENE_VERSION, swapsFor } from "../engine/scenes.js"
 import { parseCube } from "../engine/color.js"
 import { fingerprint } from "../engine/media.js"
 import { probe } from "../engine/probe.js"
 import { EngineFailure, runTool } from "../engine/tool.js"
 import { openJournal } from "../graph/journal.js"
-import { solve } from "../core/solver.js"
+import { DEFAULT_RULES, solve } from "../core/solver.js"
+import { safeZoneFor, sceneFrame } from "../core/layout.js"
+import { revealWords } from "../director/beats.js"
+import { termId } from "../director/lookups.js"
+import { allowedMediaUrl, downloadMedia, MEDIA_TYPES, stillClipArgs } from "../engine/found-media.js"
+import { planMontage } from "../recipes/montage.js"
+import { analyseMulticam, PODCAST_MULTICAM } from "../recipes/multicam.js"
+import { planProgramme, programmeRecipe } from "../recipes/programme.js"
+import { defineTerms, fetchFeatures, searchMedia } from "../runtime/fetch.js"
+import { readDevice } from "../../store.js"
 import { createAsk } from "../director/ask.js"
 import { LOOKS } from "../engine/captions.js"
 import { cleanSelection, cleanWord, describe, noteWord, revise } from "../director/revise.js"
 import { openIndexDb } from "../index/db.js"
 import { makeReel, rebase } from "../loop/make.js"
 import { runGates } from "../gates/index.js"
-import { REEL_TALKING_HEAD } from "../recipes/reel.js"
+import { FORMATS, REEL_TALKING_HEAD } from "../recipes/reel.js"
 import { compareRuns, replayAsk } from "../loop/replay.js"
 import { verifiedRecogniser, writeDelivery, writeHandoff } from "./deliver.js"
 import { createIndexer, layersFor } from "../index/index.js"
@@ -77,8 +87,17 @@ const FLICKS = 705_600_000
 // Director model calls a job may make (DIRECTOR_AND_AGENT §13, short form)
 const JOB_CALLS = 40
 
-export function createProjects({ home, roots, scheduler, tools, governor = null }) {
+// What the server has switched on, asked for at most once a minute, so turning a switch off takes effect soon
+const FEATURES_MS = 60_000
+const askServer = async () => {
+  const device = readDevice()
+  return device ? fetchFeatures(device) : { visuals: false, playbooks: false, mediaSearch: false }
+}
+const NOTHING_FOUND = { items: {}, definitions: {} }
+
+export function createProjects({ home, roots, scheduler, tools, governor = null, features = askServer }) {
   const base = editHome(home)
+  let known = null
   const taste = createTaste({ home })
   const registry = join(base, "projects.json")
   const open = new Map()
@@ -300,6 +319,104 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       return { applied: ops.length + fixes.length, dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })) }
     },
 
+    /** What this Kriya allows now. A failed question means off. */
+    async features() {
+      if (!known || Date.now() - known.at > FEATURES_MS) known = { at: Date.now(), value: await features().catch(() => ({ visuals: false, playbooks: false, mediaSearch: false })) }
+      return known.value
+    },
+
+    /**
+     * One scene as the render will draw it, for the Plan Card: the words fall where they will,
+     * so the person sees the real thing before anything is rendered.
+     * @returns {string} a complete document
+     */
+    scenePreview(state, raw, format) {
+      const scene = cleanScene(raw)
+      const words = new Map(state.index.words.map((w) => [w.id, w]))
+      const from = words.get(scene?.from)
+      const to = words.get(scene?.to)
+      if (!from || !to || to.end <= from.start) throw new EngineFailure("input", "bad_scene", "That isn't a scene from this project's plan.")
+      const shape = FORMATS[format] ?? FORMATS["9:16"]
+      const canvas = { width: shape.width, height: shape.height }
+      const safe = safeZoneFor({ canvas, deliverables: [{ preset: shape.preset, size: canvas }] })
+      const { content } = sceneFrame(canvas, safe, { w: Math.floor((canvas.width * DEFAULT_RULES.boxWidth) / 100), h: Math.floor((canvas.height * DEFAULT_RULES.boxHeight) / 100) })
+      const duration = to.end - from.start
+      const landing = revealWords(scene, state.index.words.filter((w) => w.asset === from.asset && w.start >= from.start && w.end <= to.end))
+      const items = scene.items.map((item, i) => ({ ...item, ...(landing[i] ? { reveal: Math.round(((landing[i].start - from.start) / FLICKS) * 1000) } : {}) }))
+      return blockComposition({ blockId: SCENE_BLOCK, version: SCENE_VERSION, variables: { ...scene, items }, placement: content, duration }, { output: canvas, canvas })
+    },
+
+    foundOf(state) {
+      const file = join(dirOf(state.id), "cache", "found.json")
+      return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : NOTHING_FOUND
+    },
+
+    keepFound(state, { items = [], definitions = [] }) {
+      const dir = join(dirOf(state.id), "cache")
+      mkdirSync(dir, { recursive: true })
+      const known = this.foundOf(state)
+      const next = { items: { ...known.items, ...Object.fromEntries(items.map((item) => [item.id, item])) }, definitions: { ...known.definitions, ...Object.fromEntries(definitions.map((d) => [termId(d.term), d])) } }
+      atomicWrite(join(dir, "found.json"), JSON.stringify(next))
+    },
+
+    /** A found picture's small version for the Plan Card, fetched once. Only ids this project's plan found. */
+    async foundThumb(state, id, { signal } = {}) {
+      const item = this.foundOf(state).items[id]
+      if (!item || !allowedMediaUrl(item.thumb)) throw new EngineFailure("input", "unknown_media", "That picture isn't from this project's plan.")
+      const dir = join(dirOf(state.id), "cache", "found-thumbs")
+      mkdirSync(dir, { recursive: true })
+      const base = join(dir, sha256(id).slice(0, 24))
+      for (const [type, extension] of Object.entries(MEDIA_TYPES)) if (existsSync(`${base}${extension}`)) return { file: `${base}${extension}`, type }
+      return downloadMedia(item.thumb, base, { signal, maxBytes: 12 * 1024 * 1024 })
+    },
+
+    /**
+     * The approved pictures on disk, as assets with their credit, and the approved definitions as
+     * kept. A still becomes a clip with a slow move. One that can't be had is left out with a note.
+     */
+    async resolveFound(state, brief, { signal, say }) {
+      const found = this.foundOf(state)
+      const words = new Map(state.index.words.map((w) => [w.id, w]))
+      const shape = FORMATS[brief.format] ?? FORMATS["9:16"]
+      const media = join(state.folder, "media")
+      const pictures = []
+      for (const { from, to, id } of brief.pictures ?? []) {
+        const item = found.items[id]
+        const first = words.get(from)
+        const last = words.get(to)
+        if (!item || !first || !last || !allowedMediaUrl(item.url)) {
+          say("Left out a picture that isn't from this project's plan.")
+          continue
+        }
+        try {
+          mkdirSync(media, { recursive: true })
+          const tag = `found-${sha256(id).slice(0, 16)}`
+          const seconds = Math.min(16, Math.ceil((last.end - first.start) / FLICKS) + 2)
+          const clipName = `${tag}-${shape.width}x${shape.height}-${seconds}s.mp4`
+          const note = `${item.title} by ${item.creator}, ${item.licence}, ${item.page}`
+          let known = state.log.current.assets.find((a) => a.path.endsWith(item.kind === "video" ? tag : clipName) || a.path.includes(`${tag}.`))
+          if (!known) {
+            const { file } = await downloadMedia(item.url, join(media, tag), { signal })
+            let path = file
+            if (item.kind === "image") {
+              path = join(media, clipName)
+              await runTool("ffmpeg", stillClipArgs({ image: file, output: path, width: shape.width, height: shape.height, seconds, inward: pictures.length % 2 === 0 }), { signal, timeoutMs: 180_000 })
+            }
+            known = await this.addAsset(state, path, { rights: item.rights, rightsNote: note })
+          }
+          pictures.push({ asset: known.id, from, to })
+        } catch (error) {
+          if (signal?.aborted) throw error
+          say(`Left out the picture "${item.title}": ${error.message}`)
+        }
+      }
+      const terms = (brief.terms ?? []).flatMap(({ at, id }) => {
+        const d = found.definitions[id]
+        return d && words.has(at) ? [{ at, term: d.term, quote: d.quote, source: d.source, page: d.page }] : []
+      })
+      return { pictures, terms }
+    },
+
     /** The Director's plan for the whole cut: proposed, never made until the person approves it. */
     async plan(state, { text, history = [], previous = null, choices = {}, job = 0, signal } = {}) {
       // The references in use, each only for what the person took it for; with none named, every reference, whole
@@ -314,9 +431,19 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
         const name = `${ref.path.split(/[\\/]/).at(-1)}${aspect === "all" ? "" : ` (only for: ${ASPECTS[aspect]})`}`
         references.push({ name, lines: taken.lines.length ? taken.lines : [`nothing measured for ${ASPECTS[aspect].toLowerCase()}`] })
       }
-      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, signal })
+      const { visuals, playbooks, mediaSearch } = await this.features()
+      const device = mediaSearch ? readDevice() : null
+      // What was found is kept here, so an approval names an id and never carries a URL or a licence from the browser
+      const lookups = device ? { search: (queries) => searchMedia(device, queries), define: (terms) => defineTerms(device, terms), keep: (found) => this.keepFound(state, found) } : null
+      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, signal })
+      const scenes = plan.settings.scenes ?? []
       // The exact brief an approval makes, so the Studio sends back what was shown
-      return { ...plan, brief: briefOf(plan.settings) }
+      return {
+        ...plan,
+        brief: briefOf(plan.settings),
+        // What the card may swap each scene to; code says, so it can't offer what won't draw
+        ...(scenes.length ? { sceneChoices: { kinds: Object.fromEntries(Object.entries(SCENE_KINDS).map(([id, kind]) => [id, kind.label])), themes: Object.fromEntries(Object.entries(SCENE_THEMES).map(([id, theme]) => [id, theme.label])), swaps: scenes.map(swapsFor) } } : {}),
+      }
     },
 
     /** A reference's classified analysis (reference.js), kept by its fingerprint so it's measured once. */
@@ -421,9 +548,21 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
         const bed = known ?? (await this.addAsset(state, file, { rights: "own", rightsNote: "Made by Kriya's music generator: no one else's recording." }))
         request = { ...request, brief: { ...request.brief, music: bed.id } }
       }
-      // Sound design Kriya writes itself (sfx.js): a cut sound and an intro sound, each knowing its peak
-      const wanted = { cut: request.brief?.cutSound, intro: request.brief?.introSound }
-      if (!replay && (wanted.cut || wanted.intro)) {
+      // The pictures the person approved, downloaded now and not before, and their definitions as found
+      if (request.brief?.pictures?.length || request.brief?.terms?.length) {
+        const resolved = replay ? { pictures: [], terms: [] } : await this.resolveFound(state, request.brief, { signal, say: (line) => styled.push(line) })
+        request = { ...request, brief: { ...request.brief, ...resolved } }
+      }
+      // Scenes are drawn by the motion layer: without it they go, with a note, rather than fail the cut
+      if ((request.brief?.scenes?.length || request.brief?.terms?.length) && state.engine.motion().missing) {
+        request = { ...request, brief: { ...request.brief, scenes: undefined, terms: undefined } }
+        styled.push(`No animated scenes or definitions this time: ${state.engine.motion().missing}`)
+      }
+      // Sound design Kriya writes itself (sfx.js): a cut sound and an intro sound, each knowing its peak;
+      // a whoosh as a scene arrives and a pop as each of its labels lands
+      const sceneSound = (request.brief?.scenes?.length || request.brief?.pictures?.length) && request.brief.sceneSound !== false
+      const wanted = { cut: request.brief?.cutSound, intro: request.brief?.introSound, scene: sceneSound ? "whoosh" : undefined, reveal: sceneSound ? "pop" : undefined }
+      if (!replay && (wanted.cut || wanted.intro || wanted.scene)) {
         const media = join(state.folder, "media")
         mkdirSync(media, { recursive: true })
         const sfx = {}
@@ -461,6 +600,24 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const run = runTool
       const work = join(dirOf(state.id), "cache", "gates")
       const sourcePath = sourcesOf(state)
+      // A podcast's cameras or a montage's song: their own recipes, with the same render and gates.
+      // Cameras that won't sync fall back to the reel, and it says so
+      let planner = null
+      let plannerRecipe = null
+      const direct = { ...extra, ...request.brief }
+      if (!replay && direct.multicam) {
+        const { master, angles } = direct.multicam
+        const facts = (id) => state.log.current.assets.find((a) => a.id === id)?.facts
+        if (facts(master)?.duration && angles.every((a) => facts(a.asset))) {
+          const analysis = await analyseMulticam({ master: { asset: master, file: sourcePath(master), duration: facts(master).duration }, angles: angles.map((a) => ({ ...a, file: sourcePath(a.asset) })) }, { signal })
+          if (angles.every((a) => analysis.sync[a.asset].confidence >= PODCAST_MULTICAM.syncFloor)) {
+            planner = () => planProgramme({ project: state.log.current, index: state.index, brief: direct, multicam: { master, angles, analysis } })
+            plannerRecipe = programmeRecipe
+          } else styled.push("The cameras' sound didn't match well enough to sync them, so this is cut from one camera.")
+        }
+      } else if (!replay && direct.montage && direct.music) {
+        planner = () => planMontage({ project: state.log.current, index: state.index, brief: direct })
+      }
       const runtime = activeRuntime(home)
       const ask = replay ? replayAsk(replay.answers) : this.askFor(state, job)
       const parent = state.log.head
@@ -474,6 +631,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
         render: (project, deliverable, abort) => state.engine.render({ quality: "master", deliverable, project, job, signal: abort }),
         sourcePath,
         signal,
+        planner,
+        plannerRecipe,
         onStage: (stage) => onStep(stages.indexOf(stage) + 1, stages.length + 1),
         gateKit: {
           tilePath: state.engine.tilePath,
@@ -504,8 +663,10 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const delivery = result.best.file
         ? await writeDelivery({ file: result.best.file, title: state.log.current.name, project: result.best.project, parent, plan: result.best.plan, sourcePath, tools: { engine: ENGINE_VERSION, ffmpeg: version, runtime: runtime?.version ?? null }, gates: gates?.gates ?? [], verdict: gates?.verdict ?? "not_checked", calls: state.journal.calls(job), changes, notes, repairs, beforeFrom: sourcePath(asset), run, work })
         : null
+      if (delivery?.credits) changes.push(`Credits for your description are in ${delivery.credits.split(/[\\/]/).at(-1)}`)
       return {
         verdict: gates?.verdict ?? "not_checked",
+        credits: delivery?.credits ?? null,
         file: result.best.file ?? null,
         head: state.log.head, // the version this file shows, so the Studio can say when it's out of date
         receipt: delivery?.receipt ?? null,

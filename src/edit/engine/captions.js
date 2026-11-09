@@ -21,6 +21,10 @@ export const LOOKS = {
   clean: { font: "sans", weight: 800, size: 0.042, color: "#ffffff", accent: "#ffd23f", box: null, stroke: "#000000", highlight: false },
   karaoke: { font: "sans", weight: 800, size: 0.046, color: "#ffffff", accent: "#ffd23f", box: { color: "#0a0a0a", alpha: 0.7 }, stroke: null, highlight: true },
   boxed: { font: "sans", weight: 700, size: 0.04, color: "#f2eadf", accent: "#ffb347", box: { color: "#13292b", alpha: 0.92 }, stroke: null, highlight: false },
+  // The playbooks' looks (DP3): bold and word by word for a promo, quieter for a story, plain for a talk
+  pop: { font: "rounded", weight: 800, size: 0.05, color: "#ffffff", accent: "#ffe14d", box: null, stroke: "#000000", highlight: true },
+  story: { font: "serif", weight: 700, size: 0.036, color: "#fff8ec", accent: "#ffd9a0", box: { color: "#14110d", alpha: 0.78 }, stroke: null, highlight: false },
+  minimal: { font: "sans", weight: 700, size: 0.034, color: "#ffffff", accent: "#ffffff", box: { color: "#000000", alpha: 0.72 }, stroke: null, highlight: false },
 }
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -34,6 +38,7 @@ export function lookOf(id, style = {}) {
   if (style.font in FONTS) look.font = style.font
   if (Number.isFinite(style.size) && style.size >= 0.02 && style.size <= 0.1) look.size = style.size
   if (HEX.test(style.box ?? "") && look.box) look.box = { ...look.box, color: style.box }
+  if (style.stroke === "none") look.stroke = null
   // The repair ladder's contrast fix (QUALITY_GATES §4 rung 0): a dark scrim behind the words
   if (style.scrim === true) look.box = look.box ? { ...look.box, alpha: Math.max(look.box.alpha, 0.85) } : { color: "#000000", alpha: 0.8 }
   return look
@@ -97,6 +102,33 @@ export function scriptOf(text) {
   if (/\p{Script=Telugu}/u.test(text)) return "telugu"
   if (/\p{Script=Latin}/u.test(text)) return "latin"
   return "other"
+}
+
+/**
+ * Pages a reader keeps up with: a burst of fast speech joins its neighbour, so it stays on screen
+ * longer, rather than flash by (found on real footage). A page that's readable is left alone.
+ * @param {string[][]} list pages of word ids, from pages()
+ * @param {{ id: string, text: string, start: number, end: number }[]} words
+ */
+export function readablePages(list, words) {
+  const byId = new Map(words.map((w) => [w.id, w]))
+  const tooFast = (ids) => {
+    const script = scriptOf(ids.map((id) => byId.get(id)?.text ?? "").join(" "))
+    const seconds = (byId.get(ids.at(-1)).end - byId.get(ids[0]).start) / FLICKS
+    return seconds < 1.2 && ids.length / Math.max(seconds, 1e-3) > READING_LIMITS[script]
+  }
+  const out = list.map((p) => [...p])
+  for (let i = 0; i < out.length && out.length > 1; i++) {
+    if (!tooFast(out[i])) continue
+    // With the smaller neighbour, so the page stays short; never over ten words, and the gate says so if it's still fast
+    const before = i > 0 ? out[i - 1].length : Infinity
+    const after = i + 1 < out.length ? out[i + 1].length : Infinity
+    const into = before < after ? i - 1 : i
+    if (Math.min(before, after) + out[i].length > 10) continue
+    out.splice(into, 2, [...out[into], ...out[into + 1]])
+    i = into - 1
+  }
+  return out
 }
 
 /* ─────────────────────────────── the composition ─────────────────────────────── */

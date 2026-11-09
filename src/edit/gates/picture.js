@@ -121,6 +121,11 @@ export function judgeMotion(tiles, { minMotion }) {
     // The entrance: how far the first second moves from the first frame
     let moved = 0
     for (let i = 1; i < Math.min(frames.length, 30); i++) moved = Math.max(moved, meanDiff(frames[0], frames[i]))
+    // Against the text's own share of the frame, so a two-word page that springs in isn't called still
+    // (found on real footage: 0.48 for a small caption). A tile that doesn't move still scores 0
+    const last = frames[Math.min(frames.length, 30) - 1]
+    const covered = last ? last.reduce((sum, a) => sum + (a > 0 ? 1 : 0), 0) / last.length : 1
+    if (covered > 0 && covered < 0.25) moved *= 0.25 / covered
     if (moved < minMotion) {
       still++
       failures.push({ kind: "no_motion", t: tile.at, change: round(moved, 2), needed: minMotion })

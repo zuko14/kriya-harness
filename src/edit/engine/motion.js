@@ -9,6 +9,7 @@ import { join } from "node:path"
 
 import { childEnv } from "../runtime/setup.js"
 import { confine, confinement, installOf } from "./confine.js"
+import { buildScene, SCENE_VERSION } from "./scenes.js"
 import { EngineFailure, runTool } from "./tool.js"
 
 const FLICKS = 705_600_000
@@ -118,6 +119,22 @@ export const BLOCKS = {
       animations: [{ id: "t", keyframes: springKeyframes({ ...RISE, from: { y: Math.round(size * 6), scale: 0.8, opacity: 0 }, to: { y: 0, scale: 1, opacity: 1 } }), options: { duration: RISE.ms, fill: "both" } }],
     }),
   },
+  // A hard term, its definition quoted with its source (EDD-57). The words are never edited
+  term: {
+    version: 1,
+    build: ({ variables, area, size, output }) => {
+      const floor = Math.ceil(output.height * 0.0205)
+      const quote = Math.max(floor, Math.round(size * 0.72))
+      const cite = Math.max(floor, Math.round(size * 0.6))
+      return {
+        css: `#a{position:absolute;left:${area.x}px;top:${area.y}px;width:${area.w}px;height:${area.h}px;display:flex;align-items:flex-end}#t{width:100%;box-sizing:border-box;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#13292b;color:#f2eadf;padding:${Math.round(size * 0.4)}px ${Math.round(size * 0.55)}px;border-left:${Math.round(size * 0.18)}px solid #ffb347;border-radius:${Math.round(size * 0.2)}px}#t b,#t q,#t small{display:block;background:#13292b}#t b{font-size:${Math.round(size * 1.05)}px;font-weight:800}#t q{font-size:${quote}px;line-height:1.2;margin:${Math.round(size * 0.15)}px 0;quotes:'“' '”'}#t small{font-size:${cite}px;color:#ffb347}`,
+        body: `<div id="a"><div id="t"><b data-text>${escapeText(textVar(variables, "text", 60))}</b><q data-text>${escapeText(textVar(variables, "quote", 120))}</q><small data-text>${escapeText(textVar(variables, "source", 40))}</small></div></div>`,
+        animations: [{ id: "t", keyframes: springKeyframes({ ...RISE, from: { y: Math.round(size * 2), opacity: 0 }, to: { y: 0, opacity: 1 } }), options: { duration: RISE.ms, fill: "both" } }],
+      }
+    },
+  },
+  // An explainer scene (VISUAL_SCENES.md): an opaque cutaway; `placement` is its content box
+  scene: { version: SCENE_VERSION, build: (parts) => buildScene(parts, springKeyframes) },
 }
 
 /** A block tile's composition. An unknown block or version is refused, never drawn as something else. */
@@ -129,7 +146,7 @@ export function blockComposition(node, { output, canvas }) {
   const box = node.placement ?? { x: Math.round(canvas.width * 0.1), y: Math.round(canvas.height * 0.4), w: Math.round(canvas.width * 0.8), h: Math.round(canvas.height * 0.12) }
   const area = { x: Math.round(box.x * sx), y: Math.round(box.y * sy), w: Math.round(box.w * sx), h: Math.round(box.h * sy) }
   const size = Math.round(output.height * 0.03)
-  return tileDocument({ width: output.width, height: output.height, duration: node.duration, ...block.build({ variables: node.variables, area, size }) })
+  return tileDocument({ width: output.width, height: output.height, duration: node.duration, ...block.build({ variables: node.variables, area, size, output, duration: node.duration }) })
 }
 
 /* ─────────────────────────────── model-written code ─────────────────────────────── */
@@ -293,7 +310,7 @@ function readBoxes(times) {
       const r = el.getBoundingClientRect()
       const style = getComputedStyle(el)
       const colours = new Set([style.color, ...[...el.querySelectorAll("span")].map((span) => getComputedStyle(span).color)])
-      return { x: r.x, y: r.y, w: r.width, h: r.height, text: el.textContent, size: parseFloat(style.fontSize), colours: [...colours], plate: style.backgroundColor, clipped: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1 }
+      return { x: r.x, y: r.y, w: r.width, h: r.height, text: el.textContent, size: parseFloat(style.fontSize), colours: [...colours], plate: style.backgroundColor, stroke: style.webkitTextStrokeColor, strokeWidth: parseFloat(style.webkitTextStrokeWidth) || 0, clipped: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1 }
     })
   })
 }

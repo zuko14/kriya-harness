@@ -202,6 +202,18 @@ export async function startFakeKriya(script = {}) {
       })
     // Editing: 404 unless the test says this Kriya has it. An upload goes to `uploads`,
     // as to Storage: a signed link on this same fake, needing no token
+    if (req.method === "GET" && path === "/editing/features") {
+      if (!script.features) return fail(404, "not_found", "Not found.")
+      return send(200, script.features)
+    }
+    if (req.method === "POST" && path === "/editing/media") {
+      if (!script.media) return fail(404, "not_found", "Not found.")
+      return send(200, script.media)
+    }
+    if (req.method === "POST" && path === "/editing/define") {
+      if (!script.define) return fail(404, "not_found", "Not found.")
+      return send(200, script.define)
+    }
     if (req.method === "GET" && path === "/editing/manifest") {
       if (!script.editing) return fail(404, "not_found", "Not found.")
       return send(200, { manifest: "{}", signature: null })
