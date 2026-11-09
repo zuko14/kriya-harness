@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import { readDevice } from "../src/store.js"
+import { CLIENT_VERSION } from "../src/paths.js"
 import { startFakeKriya } from "./fake-kriya.js"
 import { freshHome, ROOT } from "./helpers.js"
 
@@ -62,7 +63,7 @@ test("login, doctor, run, logout", { timeout: 300_000 }, async () => {
     assert.ok(calls.length >= 1)
     for (const call of calls) {
       assert.equal(call.headers.authorization, `Bearer ${token}`)
-      assert.equal(call.headers["x-kriya-harness"], "0.2.0")
+      assert.equal(call.headers["x-kriya-harness"], CLIENT_VERSION)
       assert.equal(call.body.model, "balanced")
     }
     // The token never lands in the Kriya home in plain text outside device.json
@@ -118,7 +119,10 @@ test("unknown commands and --version", async () => {
   freshHome()
   const version = await kriya(["--version"])
   assert.equal(version.code, 0)
-  assert.match(version.stdout, /^kriya 0\.2\.0 \(Kriya Harness beta, built on DeepSeek Harness \d+\.\d+\.\d+[\w.-]*\)\n$/)
+  assert.match(
+    version.stdout,
+    new RegExp(`^kriya ${CLIENT_VERSION.replace(/\./g, "\\.")} \\(Kriya Harness beta, built on DeepSeek Harness \\d+\\.\\d+\\.\\d+[\\w.-]*\\)\\n$`)
+  )
   const unknown = await kriya(["fly"])
   assert.equal(unknown.code, 1)
   assert.match(unknown.stdout, /Unknown command fly/)
@@ -132,6 +136,6 @@ test("help and doctor name Kriya only", async () => {
   assert.match(help.stdout, /^Kriya Harness \(beta\)\n/)
   assert.doesNotMatch(help.stdout, /deepseek|\bdsh\b/i)
   const doctor = await kriya(["doctor"])
-  assert.match(doctor.stdout, /ok {4}Kriya Harness 0\.2\.0\n/)
+  assert.match(doctor.stdout, new RegExp(`ok {4}Kriya Harness ${CLIENT_VERSION.replace(/\./g, "\\.")}\\n`))
   assert.doesNotMatch(doctor.stdout, /deepseek|\bdsh\b/i)
 })

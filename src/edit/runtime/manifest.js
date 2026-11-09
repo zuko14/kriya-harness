@@ -6,7 +6,7 @@ import { createHash, createPublicKey, verify } from "node:crypto"
 import { createReadStream } from "node:fs"
 
 /** Ed25519 public keys, base64 SPKI DER, from `npx tsx lib/editing/sign.ts keygen` in Kriya. */
-export const TRUSTED_KEYS = []
+export const TRUSTED_KEYS = ["MCowBQYDK2VwAyEAOS8m+4bFVNmiA4Q/iM3osrmj/O2uShAD7lROZezQ6Rk="]
 
 export class RuntimeError extends Error {}
 

@@ -207,7 +207,7 @@ test("ET-RT-02: an unsigned, forged or altered manifest is refused before anythi
   const other = generateKeyPairSync("ed25519")
   assert.throws(() => openManifest({ ...good, signature: sign(null, Buffer.from(good.manifest), other.privateKey).toString("base64") }, [PUBLIC]), /isn't signed/)
   assert.throws(() => openManifest(good, []), /isn't signed/, "no trusted key, no install")
-  assert.deepEqual(TRUSTED_KEYS, [], "no production key is pinned until the owner makes one")
+  assert.deepEqual(TRUSTED_KEYS, ["MCowBQYDK2VwAyEAOS8m+4bFVNmiA4Q/iM3osrmj/O2uShAD7lROZezQ6Rk="])
 })
 
 test("ET-RT-02: a signed manifest still can't name a path, a plain-http host or a loose hash", () => {
