@@ -443,6 +443,83 @@ test("a Director's plan made real: a black-and-white cold open, a whoosh on each
   }
 })
 
+test("speed and B-roll made real: a cold open that ramps into the story, angles, B-roll from the person's second clip, title cards and whooshes, rendered", { skip: chromeSkip(), timeout: 600_000 }, async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "kh-reel-ramp-")))
+  const folder = join(home, "work", "reel")
+  mkdirSync(folder, { recursive: true })
+  const source = join(folder, "take.mov")
+  rawTake(source)
+  fakeRuntime(home)
+  linkMotion(home, { hyperframes: false })
+  const index = indexOf()
+  const hook = index.sentences.find((s) => index.words.find((w) => w.id === s.firstWord).text === "It").id
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "story") return { content: JSON.stringify({ hook: null, drop: [] }) }
+      if (task === "emphasis") return { content: JSON.stringify({ emphasis: [wordId(index, "fifty")] }) }
+      return { content: "{}" }
+    },
+  })
+  const env = { ...process.env, KRIYA_HOME: home, KRIYA_EDIT_ROOTS: join(home, "work"), KRIYA_EDIT_IDLE_MS: "600000" }
+  const login = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), "login", "--url", fake.url, "--no-browser"], { env, stdio: "ignore" })
+  assert.equal(await new Promise((done) => login.on("exit", done)), 0)
+  await ensureHost({ env, home })
+  const call = (method, path, body) => hostCall(home, method, path, body)
+  // A reference upload, as the Studio's picker sends it
+  const upload = (path, bytes) =>
+    new Promise((done, fail) => {
+      const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: { host: "kriya-edit" } }, (res) => {
+        const chunks = []
+        res.on("data", (c) => chunks.push(c))
+        res.on("end", () => (res.statusCode === 200 ? done(JSON.parse(Buffer.concat(chunks).toString())) : fail(new Error(Buffer.concat(chunks).toString()))))
+      })
+      req.on("error", fail)
+      req.end(bytes)
+    })
+  try {
+    const { id } = await call("POST", "/projects", { name: "Planned reel", folder })
+    const asset = await call("POST", `/projects/${id}/assets`, { path: source })
+    // A second clip in the bin: the B-roll
+    const second = join(folder, "street.mov")
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=10", "-f", "lavfi", "-i", "sine=f=330:r=48000:d=10", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", second])
+    const broll = await call("POST", `/projects/${id}/assets`, { path: second })
+    const cold = { from: wordId(index, "fifty"), to: wordId(index, "total."), mono: true }
+    const job = await call("POST", `/projects/${id}/make`, { asset: asset.id, brief: { seconds: 45, format: "16:9", hook, coldOpen: cold, ramps: true, angles: true, broll: "own", titles: true, cutSound: "whoosh" } })
+    const done = await until(async () => {
+      const row = (await call("GET", "/jobs")).jobs.find((j) => j.id === job.id)
+      return ["done", "failed"].includes(row.status) ? row : null
+    }, 560_000, "the ramped reel")
+    assert.equal(done.status, "done", done.error)
+    const result = JSON.parse(done.output)
+    console.log(`Ramped reel: ${result.verdict}\n${result.changes.join("\n")}\n${result.gates.map((g) => `${g.id} ${g.status}${g.message ? `: ${g.message}` : ""}`).join("\n")}`)
+    const view = await call("GET", `/projects/${id}`)
+    const clips = view.project.sequences[0].clips
+    const tracks = new Map(view.project.sequences[0].tracks.map((t) => [t.id, t.role]))
+    const base = clips.filter((c) => tracks.get(c.track) === "base")
+    assert.equal(base[0].echo, true, "the cold open plays first")
+    assert.equal(base[0].effects.find((e) => e.type === "grade")?.saturation, 0, "in black and white")
+    const echoes = base.filter((c) => c.echo)
+    assert.deepEqual(echoes.map((c) => c.speed.n / c.speed.d), [1, 1.4, 1.8, 2, 1.8, 1.4], "the cold open runs, then ramps up to 2x and back as it hands over")
+    const story = base.filter((c) => !c.echo)
+    // A punch-in is its own zoom clip, anchored to the clip it tightens
+    const tight = new Set(clips.filter((c) => c.effects?.some((e) => e.type === "zoom") && c.at?.clip && c.until?.clip === c.at.clip).map((c) => c.at.clip))
+    assert.ok(story.filter((c, i) => i % 2 === 1).every((c) => tight.has(c.id)), "alternate story clips are the tight angle")
+    const placed = clips.filter((c) => tracks.get(c.track) === "broll")
+    assert.ok(placed.length >= 1 && placed.every((c) => c.source.asset === broll.id), `B-roll laid from the second clip: ${placed.length}`)
+    assert.ok(clips.some((c) => c.effects?.some((e) => e.type === "block")), "a title card is on screen")
+    const plan = await call("GET", `/projects/${id}/plan`)
+    const seconds = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", result.file], { encoding: "utf8" }))
+    assert.ok(Math.abs(seconds - plan.duration / 705_600_000) < 0.1, `the render is as long as the plan: ${seconds} s`)
+    for (const gate of ["QG-01", "QG-02", "QG-07"]) assert.equal(result.gates.find((g) => g.id === gate)?.status, "passed", `${gate}: ${JSON.stringify(result.gates.find((g) => g.id === gate))}`)
+    assert.deepEqual(probe(result.file).streams.filter((s) => s.codec_type === "video").map((v) => [v.width, v.height]), [[1920, 1080]])
+  } finally {
+    await stopHost(home)
+    await fake.close?.()
+  }
+})
+
 test("ED9 end to end: a reel with music through the Host: the song's beats indexed, fitted on its downbeats, ducked, mastered, QG-06 complete", { timeout: 280_000 }, async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "kh-reel-music-")))
   const folder = join(home, "work", "reel")

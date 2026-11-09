@@ -362,6 +362,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (["whoosh", "pop"].includes(brief.cutSound)) clean.cutSound = brief.cutSound
           if (["riser", "hit"].includes(brief.introSound)) clean.introSound = brief.introSound
           if (Number.isInteger(brief.punches) && brief.punches >= 0 && brief.punches <= 8) clean.punches = brief.punches
+          for (const flag of ["angles", "titles", "ramps"]) if (brief[flag] === true) clean[flag] = true
+          if (brief.broll === "own") clean.broll = "own"
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))

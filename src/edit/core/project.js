@@ -98,6 +98,9 @@ export const SHAPES = {
             "linkGroup?": "str",
             // A cold open's teaser: the same words again, before the story. Anchors skip it
             "echo?": "bool",
+            // A join, not a cut: this edge continues the clip beside it exactly (a speed ramp's steps)
+            "seamIn?": "bool",
+            "seamOut?": "bool",
             "audioLead?": "flicks",
             "audioLag?": "flicks",
             createdBy: AUTHOR,

@@ -4,6 +4,7 @@
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
 import { check, EFFECTS, SHAPES, validateProject } from "./project.js"
+import { snapToFrame } from "./time.js"
 
 class Refused extends Error {
   constructor(code, message) {
@@ -301,6 +302,53 @@ const OPS = {
     fields: { clip: "id", rate: "rate" },
     run(op, s) {
       writable(s, op.clip).speed = op.rate
+    },
+  },
+  // A speed ramp: the stretch from..to eases up to `peak` and back, in five steps, so a 2×
+  // whoosh through a moment or an eased slow motion (peak 1/2) reads as one movement.
+  // The sound goes with it, pitch kept (atempo)
+  speed_ramp: {
+    fields: { clip: "id", from: "ref", to: "ref", peak: "rate" },
+    run(op, s) {
+      const clip = writable(s, op.clip)
+      if (!clip.source) refuse("no_source", `clip "${op.clip}" has no picture to ramp`)
+      const ratio = op.peak.n / op.peak.d
+      if (!(ratio >= 0.25 && ratio <= 4) || ratio === 1) refuse("bad_value", "a ramp's peak is between 1/4 and 4 times, and not 1")
+      const asset = clip.source.asset
+      // Joins on frames, so neither side of a step drops or repeats one
+      const rate = assetOf(s, asset, SEQUENCED).facts.fps ?? s.project.canvas.fps
+      const onFrame = (t) => snapToFrame(t, rate, "nearest")
+      const t0 = onFrame(sourceEdge(s, op.from, asset, "start"))
+      const t1 = onFrame(sourceEdge(s, op.to, asset, "end"))
+      const [start, end] = clipRange(s, clip)
+      if (!(t0 >= start && t1 <= end && t1 > t0)) refuse("outside_clip", `that stretch isn't inside clip "${op.clip}"`)
+      let region = clip
+      if (t0 > start) {
+        region = splitClip(s, clip, { out: t0, in: t0 }, t0)
+        clip.seamOut = true
+        region.seamIn = true
+      }
+      if (t1 < end) {
+        const after = splitClip(s, region, { out: t1, in: t1 }, t1)
+        region.seamOut = true
+        after.seamIn = true
+      }
+      // Five equal steps of source: up, up, the peak, down, down
+      const shape = [0.4, 0.8, 1, 0.8, 0.4]
+      const gcd = (a, b) => (b ? gcd(b, a % b) : a)
+      const rateOf = (f) => {
+        const n = Math.round((1 + (ratio - 1) * f) * 100)
+        const g = gcd(n, 100)
+        return { n: n / g, d: 100 / g }
+      }
+      let piece = region
+      for (let i = 0; i < shape.length; i++) {
+        const cut = onFrame(t0 + ((t1 - t0) * (i + 1)) / shape.length)
+        const next = i < shape.length - 1 ? splitClip(s, piece, { out: cut, in: cut }, cut) : null
+        if (next) ((piece.seamOut = true), (next.seamIn = true))
+        piece.speed = rateOf(shape[i])
+        piece = next
+      }
     },
   },
   freeze: {

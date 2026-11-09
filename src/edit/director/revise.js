@@ -11,7 +11,7 @@ const FLICKS = 705_600_000
 
 // What the console may ask for: edits that render today, captions and titles included
 // (drawn in the runtime's Chrome when it has no HyperFrames)
-export const CONSOLE_OPS = ["keep_range", "remove_range", "use_take", "reorder", "trim", "split", "ripple_delete", "punch_in", "reframe", "speed", "set_format", "mark", "caption_style", "caption_edit", "caption_emphasis", "add_title", "grade", "clean_voice", "set_level"]
+export const CONSOLE_OPS = ["keep_range", "remove_range", "use_take", "reorder", "trim", "split", "ripple_delete", "punch_in", "reframe", "speed", "set_format", "mark", "caption_style", "caption_edit", "caption_emphasis", "add_title", "grade", "clean_voice", "set_level", "speed_ramp", "freeze", "place_broll"]
 export const CAPTION_LOOKS = ["clean", "karaoke", "boxed"]
 
 const ID = { type: "string", maxLength: 64 }
@@ -70,6 +70,7 @@ export const OPS_SCHEMA = {
           vignette: { type: "number", minimum: 0, maximum: 1 },
           strength: { type: "number", minimum: 0, maximum: 1 },
           db: { type: "number", minimum: -40, maximum: 20 },
+          peak: RATE,
         },
         required: ["op"],
         additionalProperties: false,
@@ -169,6 +170,12 @@ export function describe(op, index) {
       return `Added the title "${op.text}" at ${place(op.at)}`
     case "grade":
       return `Graded ${op.clip}${op.saturation !== undefined ? `, saturation ${op.saturation}` : ""}${op.gain !== undefined ? `, contrast ${op.gain}` : ""}${op.gamma !== undefined ? `, gamma ${op.gamma}` : ""}${op.lift !== undefined ? `, lift ${op.lift}` : ""}`
+    case "speed_ramp":
+      return op.peak.n > op.peak.d ? `Ramped ${op.clip} up to ${(op.peak.n / op.peak.d).toFixed(1)}× and back, from ${place(op.from)} to ${place(op.to)}` : `Slow motion in ${op.clip} (${(op.peak.n / op.peak.d).toFixed(2)}×), eased in and out, from ${place(op.from)} to ${place(op.to)}`
+    case "freeze":
+      return `Froze the frame at ${place(op.at)} for ${seconds(op.duration)}`
+    case "place_broll":
+      return `Laid B-roll ${op.asset} over ${place(op.at)}${op.duration ? ` for ${seconds(op.duration)}` : ""}`
     case "clean_voice":
       return `Cleaned the background noise out of ${op.clip}'s voice`
     case "set_level":
@@ -331,14 +338,15 @@ export async function revise({ ask, project, index, text, selection, history = [
   // A marked range reads like a typed one: code says what it points at
   const marked = Number.isInteger(selection?.from) && Number.isInteger(selection?.to) ? ` from ${clock(selection.from)} to ${clock(selection.to)}` : ""
   const times = timesView(`${text}${marked}`, project, index)
-  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), selectionText(selection, index), times].filter(Boolean).join("\n\n")
+  const bin = `Footage in the project: ${project.assets.filter((a) => ["video", "audio"].includes(a.kind)).map((a) => `${a.id} (${a.kind}, ${seconds(a.facts.duration ?? 0)})`).join(", ")}`
+  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), bin, selectionText(selection, index), times].filter(Boolean).join("\n\n")
   // The last turns of this chat, so "shorter" or "no, the other one" mean something. The
   // person's lines are theirs; Kriya's are what it said before, not instructions
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
     "Answer with JSON only. Put in `ops` the operations that do exactly what they ask, and nothing else.",
-    "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch the person names by time, use the exact remove_range given for it above, unchanged; for a stretch named by words, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor; to take background noise out of the voice, clean_voice on each picture clip; to warm or cool the picture, grade with temperature (lower is warmer, 6500 neutral), vibrance or vignette.",
+    "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch the person names by time, use the exact remove_range given for it above, unchanged; for a stretch named by words, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor; to take background noise out of the voice, clean_voice on each picture clip; to warm or cool the picture, grade with temperature (lower is warmer, 6500 neutral), vibrance or vignette; for a speed ramp or slow motion, speed_ramp on the clip with from and to (source flicks from the lines above, or word anchors) and peak {n, d} (2/1 speeds up and back, 1/2 is eased slow motion); for a constant speed, speed; to lay other footage over a moment, place_broll with a video asset id from the project, at a word anchor or clip edge, and duration in flicks.",
     "Put one plain sentence in `say`: what you changed, or the answer if they asked a question.",
     "If they ask to fix or correct the transcript (names, misheard words), put each wrong word in `corrections` as {word: its id, text: the right word}, only where you are confident from the context.",
     "If they ask for the whole video to be made, directed, edited or improved (not one part of it), set `direct` to an object (with `seconds` and a caption look if they say so) and leave `ops` empty: the Director makes the whole cut.",
