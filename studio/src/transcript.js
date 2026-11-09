@@ -1,5 +1,6 @@
 // The transcript (L2 words, L5 flags): one button per word. A click seeks to the
 // word's first frame; Shift+click selects a run, and Delete cuts it from the edit.
+// Double-click (or F2) fixes a word the recogniser misheard: Enter keeps it, Escape doesn't.
 // Fillers, stutters and takes that lost are struck through, never hidden: the
 // person sees what Kriya would cut. Words are untrusted text: only ever textContent.
 
@@ -8,9 +9,9 @@ import { clear, h } from "./dom.js"
 const STRUCK = new Set(["filler", "stutter", "restart"])
 
 /**
- * @param {{ root: HTMLElement, onSeek: (word: object) => void, onCut: (first: object, last: object) => void }} options
+ * @param {{ root: HTMLElement, onSeek: (word: object) => void, onCut: (first: object, last: object) => void, onFix?: (word: object, text: string) => Promise<void> }} options
  */
-export function createTranscript({ root, onSeek, onCut }) {
+export function createTranscript({ root, onSeek, onCut, onFix = async () => {} }) {
   let words = []
   let byId = new Map()
   let anchor = null
@@ -37,7 +38,42 @@ export function createTranscript({ root, onSeek, onCut }) {
     mark()
   })
 
+  /** Swaps a word for a field with its text; the word comes back on Enter, Escape or leaving it. */
+  function fix(el) {
+    const word = byId.get(el.dataset.word)
+    if (!word) return
+    const input = h("input", { class: "word-edit", value: word.text, size: String(Math.max(4, word.text.length + 2)), maxlength: "60", "aria-label": `Fix the word "${word.text}"` })
+    el.replaceWith(input)
+    input.focus()
+    input.select()
+    let done = false
+    const finish = async (keep) => {
+      if (done) return
+      done = true
+      const text = input.value.trim()
+      input.replaceWith(el)
+      if (keep && text && text !== word.text) await onFix(word, text)
+      else el.focus()
+    }
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation()
+      if (event.key === "Enter") (event.preventDefault(), finish(true))
+      else if (event.key === "Escape") (event.preventDefault(), finish(false))
+    })
+    input.addEventListener("blur", () => finish(true))
+  }
+
+  root.addEventListener("dblclick", (event) => {
+    const el = event.target.closest(".word")
+    if (el) fix(el)
+  })
+
   root.addEventListener("keydown", (event) => {
+    if (event.key === "F2" && event.target.closest(".word")) {
+      event.preventDefault()
+      event.stopPropagation()
+      return fix(event.target.closest(".word"))
+    }
     if ((event.key === "Backspace" || event.key === "Delete") && selected.length) {
       event.preventDefault()
       event.stopPropagation()
@@ -74,7 +110,8 @@ export function createTranscript({ root, onSeek, onCut }) {
           if (!word) continue
           const struck = lost || word.flags.some((flag) => STRUCK.has(flag))
           const label = struck ? `${word.text} (${lost ? "retake" : word.flags.filter((f) => STRUCK.has(f)).join(", ")})` : null
-          const el = h("button", { type: "button", class: `word${struck ? " struck" : ""}${word.flags.includes("low_confidence") ? " unsure" : ""}`, "aria-pressed": "false", "aria-label": label, dataset: { word: word.id } })
+          const fixed = typeof word.heard === "string"
+          const el = h("button", { type: "button", class: `word${struck ? " struck" : ""}${!fixed && word.flags.includes("low_confidence") ? " unsure" : ""}${fixed ? " fixed" : ""}`, "aria-pressed": "false", "aria-label": label ?? (fixed ? `${word.text} (fixed; heard as ${word.heard})` : null), title: fixed ? `Heard as "${word.heard}". Double-click to change.` : "Double-click to fix this word", dataset: { word: word.id } })
           el.textContent = word.text
           line.append(el, " ")
         }

@@ -117,6 +117,24 @@ test("ET-RT-01: installs from a fixture manifest, and marks it complete last", a
   }
 })
 
+test("the install reports each download's bytes as they arrive, for the Studio's progress bar", async () => {
+  const home = freshHome()
+  const data = Buffer.from(Array.from({ length: 300_000 }, (_, i) => i % 251))
+  const files = await fileServer({ "/tool.bin": data })
+  try {
+    const seen = []
+    await install(open(fixtureManifest(files.url, { data })), options(home, { progress: (at) => seen.push({ ...at }) }))
+    const bytes = seen.filter((at) => at.step === "tool")
+    assert.ok(bytes.length >= 2, `${bytes.length} reports`)
+    assert.ok(bytes.every((at) => at.total === data.length))
+    assert.deepEqual(bytes.map((at) => at.done), [...bytes.map((at) => at.done)].sort((a, b) => a - b), "never goes backwards")
+    assert.equal(bytes.at(-1).done, data.length, "ends at the whole file")
+    assert.ok(seen.some((at) => at.total === null), "then the Python step, with no byte count")
+  } finally {
+    await files.close()
+  }
+})
+
 test("ET-RT-01: a cut connection resumes where it stopped", async () => {
   const home = freshHome()
   const data = Buffer.from(Array.from({ length: 300_000 }, (_, i) => i % 251))

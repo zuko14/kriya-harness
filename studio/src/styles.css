@@ -73,6 +73,18 @@ a { color: var(--teal); }
 .btn[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--teal); }
 .field { min-height: 44px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--sheet); color: inherit; font: inherit; box-shadow: inset 0 0 0 1px var(--edge); width: 100%; }
 .field.small { width: auto; }
+/* A select draws its own chevron, inset from the edge, so the arrow never sits on the border */
+.field.select { appearance: none; -webkit-appearance: none; padding-right: 36px; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; cursor: pointer; }
+.field.small.select { min-width: 132px; }
+.btn.wide { width: 100%; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.note.small { font-size: 13px; }
+.row.tight { flex-wrap: nowrap; }
+.row.tight .field { flex: 1; min-width: 0; }
+.progress { height: 6px; border-radius: 999px; background: var(--hover); overflow: hidden; margin: 4px 0; }
+.progress span { display: block; height: 100%; background: var(--teal); border-radius: inherit; transition: width 0.2s; }
+.progress span.busy { width: 35%; animation: busy 1.2s ease-in-out infinite; }
+@keyframes busy { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .inline { display: inline-flex; gap: 6px; align-items: center; min-height: 44px; }
@@ -113,7 +125,7 @@ a { color: var(--teal); }
 .monitor { max-width: 100%; max-height: 62vh; background: #000; display: block; }
 .transport { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 .area-monitor .chip { background: rgb(255 255 255 / 0.12); color: #ddd; }
-.area-monitor .field { background: #2a2a2a; color: #eee; }
+.area-monitor .field { background-color: #2a2a2a; color: #eee; }
 
 .prompt { display: flex; gap: 8px; }
 .chip.selection { background: color-mix(in srgb, var(--teal) 16%, transparent); color: var(--ink); }
@@ -131,6 +143,9 @@ a { color: var(--teal); }
 .word.unsure { text-decoration: underline dotted var(--saffron); }
 .word.now { background: color-mix(in srgb, var(--saffron) 25%, transparent); }
 .word[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--teal); }
+.word.fixed { text-decoration: underline solid color-mix(in srgb, var(--teal) 60%, transparent); text-underline-offset: 4px; }
+.word-edit { font: inherit; color: inherit; background: var(--paper); border: 0; border-radius: 6px; padding: 4px 6px; min-height: 32px; box-shadow: inset 0 0 0 2px var(--teal); }
+.hint { margin-top: -4px; }
 
 .timeline { display: grid; grid-template-columns: 80px minmax(0, 1fr); grid-template-rows: auto auto; gap: 0 8px; }
 .lane-labels { display: grid; grid-auto-rows: 50px; font-size: 12px; color: var(--ink-2); align-items: center; }
@@ -144,6 +159,19 @@ a { color: var(--teal); }
 
 .bin { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 8px; }
 .asset { display: grid; gap: 4px; }
+.refs { margin-top: 12px; }
+.by-path { margin-top: 10px; }
+.by-path summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--ink-2); font-size: 13px; }
+.make { display: grid; gap: 8px; margin-bottom: 16px; }
+.make-status:empty { display: none; }
+.banner { padding: 8px 12px 0; display: grid; gap: 8px; }
+.banner > .note { margin: 0; padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, var(--teal) 12%, transparent); color: var(--ink); }
+.banner > .note:empty, .banner > [hidden] { display: none; }
+.setup { box-shadow: inset 0 0 0 1px var(--teal); display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.setup h2, .setup > div { grid-column: 1 / -1; }
+.setup > div:empty { display: none; }
+.setup > p { margin: 0; }
+.area-kriya h2 + .make { margin-top: 0; }
 .finish { display: grid; gap: 12px; }
 .scope-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .scope-row figure { margin: 0; }
@@ -160,4 +188,4 @@ a { color: var(--teal); }
   .modes .btn { flex: 1; }
   .monitor { max-height: 50vh; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

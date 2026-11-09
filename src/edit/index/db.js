@@ -69,14 +69,36 @@ export function openIndexDb(file) {
       })
     },
 
+    /**
+     * The person's fix of a misheard word. Kept by word id beside the recogniser's rows,
+     * which a re-index replaces; the word's original text is kept too, so a re-index
+     * that moves the words never lands a fix on a different word.
+     * Text equal to the recogniser's, or empty, removes the fix.
+     */
+    correct(asset, word, text) {
+      const media = mediaOf(asset)
+      const n = Number(word.slice(`${asset}:w`.length))
+      const row = media && word.startsWith(`${asset}:w`) && Number.isInteger(n) ? db.prepare("select text from words where media = ? and n = ?").get(media, n) : null
+      if (!row) return false
+      tx(() => {
+        db.prepare("delete from corrections where asset = ? and word = ?").run(asset, word)
+        if (text && text !== row.text) db.prepare("insert into corrections (asset, word, text, at) values (?, ?, ?, ?)").run(asset, word, JSON.stringify({ text, was: row.text }), new Date().toISOString())
+      })
+      return true
+    },
+
     /** Rows for Edit Core and the views, for these assets (DATA_MODEL §3.1 shapes, ids per asset). */
     read(assets = db.prepare("select asset from assets order by asset").all().map((row) => row.asset)) {
       const raw = { words: [], sentences: [], takes: [], shots: [], faces: [], silences: [], beats: [], bars: [], timestamps: {}, subjects: {} }
       for (const asset of assets) {
         const media = mediaOf(asset)
         if (!media) continue
+        const fixes = new Map(db.prepare("select word, text from corrections where asset = ?").all(asset).map((c) => [c.word, JSON.parse(c.text)]))
         for (const w of db.prepare('select * from words where media = ? order by n').all(media)) {
-          raw.words.push({ id: `${asset}:w${w.n}`, asset, start: w.start, end: w.end, text: w.text, conf: w.conf, flags: flagList(w.flags) })
+          const id = `${asset}:w${w.n}`
+          const fix = fixes.get(id)
+          const fixed = fix && fix.was === w.text
+          raw.words.push({ id, asset, start: w.start, end: w.end, text: fixed ? fix.text : w.text, conf: fixed ? 1 : w.conf, flags: flagList(w.flags).filter((f) => !fixed || f !== "low_confidence"), ...(fixed ? { heard: w.text } : {}) })
         }
         for (const s of db.prepare('select * from sentences where media = ? order by n').all(media)) {
           raw.sentences.push({ id: `${asset}:s${s.n}`, asset, start: s.start, end: s.end, firstWord: `${asset}:w${s.first_word}`, lastWord: `${asset}:w${s.last_word}`, takeGroup: s.take_group === null ? null : `${asset}:g${s.take_group}`, score: s.score })

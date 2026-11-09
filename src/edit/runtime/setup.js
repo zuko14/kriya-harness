@@ -48,7 +48,7 @@ async function fetchFrom(artifact, offset) {
 }
 
 /** Downloads to `part`, resuming what's there. The hash decides; a wrong file is deleted. */
-async function download(artifact, part) {
+async function download(artifact, part, onBytes = () => {}) {
   let offset = sizeOf(part)
   if (offset > artifact.bytes) {
     rmSync(part)
@@ -70,6 +70,7 @@ async function download(artifact, part) {
           break
         }
         if (!out.write(chunk)) await once(out, "drain")
+        onBytes(written)
       }
     } catch {
       cut = true
@@ -88,10 +89,11 @@ async function download(artifact, part) {
   }
 }
 
-async function placeArtifact(artifact, root, dir, home, say) {
+async function placeArtifact(artifact, root, dir, home, say, progress = () => {}) {
   say(`Downloading ${artifact.id} ${artifact.version} (${(artifact.bytes / 1e6).toFixed(0)} MB)`)
   const part = join(root, ".downloads", `${artifact.sha256}.part`)
-  await download(artifact, part)
+  progress({ step: artifact.id, done: sizeOf(part), total: artifact.bytes })
+  await download(artifact, part, (done) => progress({ step: artifact.id, done, total: artifact.bytes }))
   const target = join(dir, artifact.id)
   mkdirSync(target, { recursive: true })
   if (artifact.unpack === "zip") await runChild(home)("unzip", ["-q", "-o", part, "-d", target])
@@ -99,8 +101,9 @@ async function placeArtifact(artifact, root, dir, home, say) {
   rmSync(part)
 }
 
-async function placePython(python, dir, run, say) {
+async function placePython(python, dir, run, say, progress) {
   say(`Installing the ${python.id} environment (Python ${python.version}, ${python.packages.length} packages)`)
+  progress({ step: python.id, done: null, total: null })
   const lock = join(dir, `${python.id}.lock`)
   writeFileSync(lock, python.requirements)
   const venv = join(dir, "python")
@@ -153,9 +156,10 @@ function use(root, version) {
 
 /**
  * @param {{ text: string, data: object }} opened from openManifest
- * @param {{ home?: string, platform?: string, run?: (command: string, args: string[]) => Promise<string>, free?: (dir: string) => number, say?: (line: string) => void }} [options]
+ * @param {{ home?: string, platform?: string, run?: (command: string, args: string[]) => Promise<string>, free?: (dir: string) => number, say?: (line: string) => void, progress?: (at: { step: string, done: number | null, total: number | null }) => void }} [options]
+ *   progress: bytes of each download as they arrive, for the Studio's progress bar
  */
-export async function install({ text, data }, { home = kriyaHome(), platform = platformId(), run = runChild(home), free = freeBytes, say = () => {} } = {}) {
+export async function install({ text, data }, { home = kriyaHome(), platform = platformId(), run = runChild(home), free = freeBytes, say = () => {}, progress = () => {} } = {}) {
   const spec = data.platforms[platform]
   if (!spec) throw new RuntimeError(`This runtime isn't available for this computer (${platform}) yet.`)
   refuseLicences(data)
@@ -183,8 +187,8 @@ export async function install({ text, data }, { home = kriyaHome(), platform = p
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   try {
-    for (const artifact of spec.artifacts) await placeArtifact(artifact, root, dir, home, say)
-    await placePython(spec.python, dir, run, say)
+    for (const artifact of spec.artifacts) await placeArtifact(artifact, root, dir, home, say, progress)
+    await placePython(spec.python, dir, run, say, progress)
     writeFileSync(join(dir, "manifest.json"), text)
     writeFileSync(join(dir, ".complete"), hash)
     // The environment no longer needs it, and it's as big as the environment
