@@ -9,6 +9,7 @@ import { FORMATS, GRADES } from "../recipes/reel.js"
 import { MOODS } from "../engine/music-bed.js"
 import { SFX } from "../engine/sfx.js"
 import { paperEdit, shotDigest } from "../index/views.js"
+import { timesIn } from "./revise.js"
 
 const FLICKS = 705_600_000
 const ID = { type: "string", maxLength: 64 }
@@ -62,6 +63,7 @@ export function briefOf(settings = {}) {
     ...(settings.broll === "own" ? { broll: "own" } : {}),
     ...(settings.titles ? { titles: true } : {}),
     ...(settings.ramps ? { ramps: true } : {}),
+    ...(Array.isArray(settings.cuts) && settings.cuts.length ? { cuts: mergeCuts(settings.cuts) } : {}),
   }
 }
 
@@ -102,6 +104,126 @@ export function formatAsked(text, history = [], previous = null) {
   return Object.hasOwn(FORMATS, previous?.settings?.format ?? "") ? previous.settings.format : null
 }
 
+// What words ask for, as plan settings. Used twice: the person's own words decide (trusted);
+// the Director's pitch must be matched by its settings, and code fills what it left out.
+// shortcut: English keywords; a pitch in another language is checked only by its settings
+const SAID = [
+  ["captions", /\bno (?:captions?|subtitles?)\b/i, "none"],
+  ["captions", /\bkaraoke\b/i, "karaoke"],
+  ["captions", /\bboxed\b/i, "boxed"],
+  ["captions", /\b(?:captions?|subtitles?)\b/i, "clean"],
+  ["grade", /\bcinematic\b|\bcool(?:er)?[- ](?:tone|look|grade)/i, "cinematic"],
+  ["grade", /\bwarm(?:er)? (?:grade|look|tone|colou?r)/i, "warm"],
+  ["grade", /\bvivid\b/i, "vivid"],
+  ["grade", /\bbright(?:er)? (?:grade|look)\b/i, "bright"],
+  ["music", /\bno music\b/i, "none"],
+  ["music", /\bupbeat\b[^.]{0,24}\bmusic|\bmusic\b[^.]{0,16}\bupbeat/i, "upbeat"],
+  ["music", /\bwarm\b[^.]{0,24}\bmusic|\bmusic\b[^.]{0,16}\bwarm/i, "warm"],
+  ["music", /\b(?:calm|soft|gentle|low)\b[^.]{0,24}\bmusic|\bmusic\b/i, "calm"],
+  ["cleanVoice", /\bnoise\b|\bdenois|\bclean (?:up )?(?:the |my |your )?(?:voice|audio)/i, true],
+  ["cutSound", /\bwhoosh/i, "whoosh"],
+  ["cutSound", /\bpops? on\b/i, "pop"],
+  ["cutSound", /sound ?eff?ect|\bsfx\b|sound design/i, "whoosh"], // typed fast: "bestsound effectes"
+  ["introSound", /\briser\b/i, "riser"],
+  ["introSound", /\b(?:bass |impact )?hit into\b/i, "hit"],
+  ["titles", /\btitle cards?\b/i, true],
+  ["angles", /\bangles\b|\bwide (?:and|then) tight\b/i, true],
+  ["broll", /\bb-?roll\b/i, "own"],
+  ["ramps", /\b(?:speed )?ramp/i, true],
+  ["coldOpen", /\bcold open|\bopen(?:s|ing)? cold\b/i, true],
+]
+const NO = /(?:\bno|\bnot|\bwithout|\bdon't|\bdo not|\bskip)\s+(?:any\s+|the\s+|a\s+)?$/i
+
+/** Plan settings the words ask for; a later mention of the same setting wins, "no X" turns X off. */
+export function settingsIn(text) {
+  const said = String(text ?? "")
+  const out = {}
+  const done = new Set()
+  for (const [key, cue, value] of SAID) {
+    if (done.has(key)) continue
+    const m = cue.exec(said)
+    if (!m) continue
+    done.add(key)
+    const away = NO.test(said.slice(Math.max(0, m.index - 16), m.index))
+    out[key] = away ? (typeof value === "boolean" ? false : key === "broll" ? "none" : "none") : value
+  }
+  const punches = /\bpunch(?:[- ]?ins?|ing in)?\b[^.]{0,24}?\b(\d)\b/i.exec(said) ?? /\b(\d)\s*(?:-|to)?\s*\d?\s*(?:key )?(?:words|punch)/i.exec(said)
+  if (punches) out.punches = Math.min(8, Number(punches[1]))
+  // The last length that could be a cut's ("about 4 seconds" of a cold open isn't)
+  const lengths = [...said.matchAll(/\b(?:at|to|under|max(?:imum)?|about|around|of|after(?: the)?|upto|up to|only)\s+(\d{1,3})\s*(?:s|secs?|seconds?)\b|\b(\d{1,3})\s*(?:s|secs?|seconds?)\s+(?:max|long|video|reel|cut|only)\b/gi)].map((m) => Number(m[1] ?? m[2])).filter((n) => n >= 8 && n <= 600)
+  if (lengths.length) out.seconds = lengths.at(-1)
+  const format = formatIn(said)
+  if (format) out.format = format
+  return out
+}
+
+// Trims in the person's words, per clause so "a whoosh on every cut" never trims anything.
+// "trim it to 0:05–0:20" and "keep 0:05 to 0:20" keep that stretch; "remove/cut/delete 0:05 to
+// 0:09", "everything after 25 seconds", "the first 3 seconds" take it out. Times are the raw take's.
+const REMOVE = /\b(?:remove|delete|drop|erase|skip|chop|get rid of|take out|trim (?:out|off|away)|cut (?:out|off|away|from|the|it|this|that|everything|anything|all|after|before|till|until|up ?to|[0-9]))/i
+const KEEP = /\b(?:keep|only use|use only|trim (?:it |the video |this |the clip )?(?:to|from|down to|between))\b/i
+
+/** The stretches of the take the person wants out, in seconds, merged and in order. */
+export function trimsIn(text, duration) {
+  const end = duration / FLICKS
+  const cuts = []
+  for (const clause of String(text ?? "").split(/(?:[;!?\n]|\.(?!\d))+/)) { // "14.6 seconds" stays whole
+    const ranges = timesIn(clause, { duration }).filter((r) => r.to !== undefined && r.to > r.at).map((r) => ({ from: r.at / FLICKS, to: Math.min(end, r.to / FLICKS) })).filter((r) => r.from < end)
+    if (!ranges.length) continue
+    if (KEEP.test(clause) && !REMOVE.test(clause)) {
+      let at = 0
+      for (const r of [...ranges].sort((a, b) => a.from - b.from)) (r.from > at && cuts.push({ from: at, to: r.from }), (at = Math.max(at, r.to)))
+      if (at < end) cuts.push({ from: at, to: end })
+    } else if (REMOVE.test(clause)) cuts.push(...ranges)
+  }
+  return mergeCuts(cuts, end)
+}
+
+/** In order, overlaps joined, inside the take, to the hundredth of a second. At most eight. */
+export function mergeCuts(cuts, end = Infinity) {
+  const out = []
+  for (const c of cuts.filter((c) => Number.isFinite(c.from) && Number.isFinite(c.to)).map((c) => ({ from: Math.max(0, c.from), to: Math.min(end, c.to) })).filter((c) => c.to - c.from >= 0.05).sort((a, b) => a.from - b.from)) {
+    const last = out.at(-1)
+    if (last && c.from <= last.to) last.to = Math.max(last.to, c.to)
+    else out.push({ ...c })
+  }
+  return out.slice(0, 8).map((c) => ({ from: Math.round(c.from * 100) / 100, to: Math.round(c.to * 100) / 100 }))
+}
+
+const OFF = { captions: "none", grade: "natural", music: "none", cutSound: "none", introSound: "none", broll: "none" }
+const unset = (settings, key) => settings[key] === undefined || settings[key] === null || settings[key] === false || settings[key] === OFF[key]
+
+/** What the pitch says that the settings don't make: the Director is sent back once with these. */
+export function pitchGaps(plan) {
+  const promised = settingsIn([plan.say, ...(plan.steps ?? [])].join("\n"))
+  const settings = plan.settings ?? {}
+  return Object.entries(promised)
+    .filter(([key, value]) => key !== "format" && value !== false && value !== "none" && (key === "coldOpen" ? !settings.coldOpen : unset(settings, key)))
+    .map(([key, value]) => (key === "coldOpen" ? "your pitch promises a cold open but settings.coldOpen is empty: give its first and last word ids" : `your pitch promises ${key} ${JSON.stringify(value)} but settings.${key} doesn't make it`))
+}
+
+/**
+ * A cold open chosen by code when the pitch promised one and the model gave no ids: 3 to 5
+ * seconds of clean speech from the middle of the main take, ending on a sentence end when one is near.
+ */
+export function pickColdOpen(index, asset, cuts = []) {
+  const out = (w) => cuts.some((c) => (w.start + w.end) / 2 >= c.from * FLICKS && (w.start + w.end) / 2 < c.to * FLICKS)
+  const words = (index.words ?? []).filter((w) => w.asset === asset && !out(w))
+  if (words.length < 4) return null
+  const span = words.at(-1).end - words[0].start
+  let i = words.findIndex((w) => w.start >= words[0].start + span * 0.4)
+  if (i < 0) return null
+  while (i < words.length && words[i].flags?.some((f) => f === "filler" || f === "stutter")) i++
+  let end = null
+  for (let j = i; j < words.length; j++) {
+    const length = words[j].end - words[i].start
+    if (length > 6 * FLICKS) break
+    if (length >= 3 * FLICKS && (end === null || /[.!?]$/.test(words[j].text))) end = j
+    if (end !== null && /[.!?]$/.test(words[end].text)) break
+  }
+  return end === null ? null : { from: words[i].id, to: words[end].id, mono: true }
+}
+
 /** Problems with a plan's settings against this project: unknown ids, a cold open that isn't one short stretch. */
 export function planProblems(settings, index) {
   const problems = []
@@ -126,24 +248,51 @@ export async function planCut({ ask, project, index, text, history = [], previou
   const refs = references.length ? `References the person added, measured by code:\n${references.map((r) => `- ${r.name}: ${r.lines.join("; ")}`).join("\n")}` : "No references added."
   const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`].join("\n\n")
   const asked = formatAsked(text, history, previous)
+  // Trims are the person's, read by code from their words (this message and earlier ones) and kept through revisions
+  const take = project.assets.find((a) => a.kind === "video" && (index.words ?? []).some((w) => w.asset === a.id)) ?? project.assets.find((a) => a.kind === "video")
+  const length = take?.facts?.duration ?? Math.max(0, ...(index.words ?? []).filter((w) => w.asset === take?.id).map((w) => w.end))
+  const kept = Array.isArray(previous?.settings?.cuts) ? previous.settings.cuts.filter((c) => c && Number.isFinite(c.from) && Number.isFinite(c.to)) : []
+  const cuts = take ? mergeCuts([...kept, ...[...history.filter((h) => h.who === "you").map((h) => h.text), text].flatMap((said) => trimsIn(said, length))], length / FLICKS) : []
+  const at = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, "0")}`
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    cuts.length ? `The person asked to trim ${cuts.map((c) => `${at(c.from)} to ${at(c.to)}`).join(", ")} of the take (${take.id}); code cuts exactly that, between words. Plan around it: no hook or cold open inside a trimmed stretch, and say the trim in your pitch.` : "",
     asked ? `The person wants the ${asked} format: settings.format is "${asked}", and your pitch says ${asked}.` : "",
     previous ? `Your previous plan, which they want changed: ${JSON.stringify(previous).slice(0, 3000)}. Revise it by what they say now; keep what they didn't ask to change.` : "",
     "You are the Director: plan the whole cut the way a top editor pitches it. Decide the opening (a hook sentence first, or a cold open: one strong later moment of 2 to 6 seconds played first, in black and white, before the story starts), the pacing (punch-ins), captions, the colour look, music, sound design (a sound on each cut, a riser into the story after a cold open), whether to clean background noise from the voice, the format and the length. You can also cut one camera like two (angles: wide then tight on alternate clips), lay the person's other clips over the story as B-roll (broll 'own', only if the project has other video), pop key words on screen as title cards (titles, when there are no captions), and ramp the speed out of a cold open into the story (ramps). Follow the references where they say something. Don't promise what these settings can't do: no stock footage or generated video.",
-    "Answer with JSON only: `say` is your pitch in 2 to 4 plain sentences, `steps` the concrete things you'll do, and `settings` exactly what will be made. Use sentence ids for `hook` and word ids for `coldOpen`, only from the paper edit. Music 'reference' means follow the music reference.",
+    "Answer with JSON only: `say` is your pitch in 2 to 4 plain sentences, `steps` the concrete things you'll do, and `settings` exactly what will be made: every promise in the pitch has its setting (captions, grade, music, cleanVoice, cutSound, introSound, punches, seconds, coldOpen), because only the settings are made. Use sentence ids for `hook` and word ids for `coldOpen`, only from the paper edit. Music 'reference' means follow the music reference.",
   ].filter(Boolean).join("\n")
-  const check = ({ settings }) => planProblems(settings, index)
+  // Only real faults go back to the model: a second refusal throws the whole plan away for the
+  // fallback, so what the pitch promised and the settings left out is filled by code below instead
+  const check = ({ settings }) => planProblems(settings ?? {}, index)
   const fallback = () => ({
     say: "I couldn't reach the Director's model, so here's a plan from your current choices: the best takes, fillers out, and your settings as they are.",
     steps: ["Keep each line's best take and cut fillers and restarts", "Use the format, length, captions, look and music you've chosen"],
     settings: { format: choices.format ?? "9:16", ...(choices.seconds ? { seconds: choices.seconds } : {}), captions: choices.captions ?? "none", grade: choices.grade ?? "natural", music: (choices.music ?? "").replace(/^generated:/, "") || "none", cleanVoice: !!choices.cleanVoice },
   })
-  const answer = await ask({ task: "plan", tier: "budget", schema: PLAN_SCHEMA, view, request, maxOutput: 1500, check, fallback, signal, priority: 0 })
+  const answer = await ask({ task: "plan", tier: "budget", schema: PLAN_SCHEMA, view, request, maxOutput: 2500, check, fallback, signal, priority: 0 })
   const clean = (value) => String(value ?? "").replace(/[\u0000-\u001f<>]/g, " ").trim()
   // The frame is always set, and set by what the person said, never left to a default
   const settings = { ...(answer.value.settings ?? {}) }
   settings.format = asked ?? (Object.hasOwn(FORMATS, settings.format ?? "") ? settings.format : Object.hasOwn(FORMATS, choices.format ?? "") ? choices.format : "9:16")
-  return { say: clean(answer.value.say).slice(0, 900), steps: (answer.value.steps ?? []).map((s) => clean(s).slice(0, 240)).filter(Boolean), settings, source: answer.source, ...(answer.reason ? { reason: answer.reason } : {}) }
+  // What the pitch promised and the settings left out, code fills; what the person said, code
+  // sets. So the approved brief makes what the card says, not just the format
+  // Only a model's pitch promises anything: the fallback's own sentence names captions and music without asking for them
+  const promised = answer.source === "default" ? {} : settingsIn([answer.value.say, ...(answer.value.steps ?? [])].join("\n"))
+  for (const [key, value] of Object.entries(promised)) if (key !== "format" && key !== "coldOpen" && value !== false && unset(settings, key)) settings[key] = value
+  const person = [...history.filter((h) => h.who === "you").map((h) => h.text), text].map(settingsIn).reduce((all, one) => ({ ...all, ...one }), {})
+  for (const [key, value] of Object.entries(person)) {
+    if (key === "format") continue
+    if (key === "coldOpen") value ? (promised.coldOpen = true) : (settings.coldOpen = null)
+    else settings[key] = value
+  }
+  if (cuts.length) settings.cuts = cuts
+  else delete settings.cuts
+  if (promised.coldOpen && !settings.coldOpen && take) settings.coldOpen = pickColdOpen(index, take.id, cuts)
+  if (settings.coldOpen && planProblems({ coldOpen: settings.coldOpen }, index).length) settings.coldOpen = null
+  // Said plainly when a promise can't be kept, so the card never pitches what won't be made
+  const steps = (answer.value.steps ?? []).map((s) => clean(s).slice(0, 240)).filter(Boolean)
+  if (promised.coldOpen && !settings.coldOpen) steps.push("No cold open: the footage has no clean 3-second stretch in its middle to open on.")
+  return { say: clean(answer.value.say).slice(0, 900), steps: steps.slice(0, 11), settings, source: answer.source, ...(answer.reason ? { reason: answer.reason } : {}) }
 }

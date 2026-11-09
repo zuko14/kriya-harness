@@ -648,6 +648,7 @@ async function workspace(id) {
   let pendingPlan = null
   const choicesNow = () => ({ ...briefNow(), ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}) })
   const wordText = (wid) => index.words.find((w) => w.id === wid)?.text ?? wid
+  const clockOf = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, "0")}`
   function settingsLine(settings = {}) {
     const parts = [
       settings.format,
@@ -665,6 +666,7 @@ async function workspace(id) {
       settings.broll === "own" ? "B-roll from your clips" : null,
       settings.titles ? "title cards" : null,
       settings.ramps ? "a speed ramp into the story" : null,
+      settings.cuts?.length ? `trims ${settings.cuts.map((c) => `${clockOf(c.from)}–${clockOf(c.to)}`).join(", ")} of the take` : null,
     ]
     return parts.filter(Boolean).join(" · ")
   }
@@ -678,11 +680,27 @@ async function workspace(id) {
       h(
         "div",
         { class: "row" },
-        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), plan.brief.format && (makeFormat.value = plan.brief.format), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Direct.`)), make(plan.brief, { exact: true })) }, "Approve and make it"),
+        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), showPlanInPanel(plan.brief), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Direct.`)), make(plan.brief, { exact: true })) }, "Approve and make it"),
         h("button", { type: "button", class: "btn", onclick: () => ((pendingPlan = plan), prompt.focus(), (prompt.placeholder = "Say what to change in the plan…")) }, "Change…"),
       ),
     )
     return box
+  }
+  /** An approved plan sets the Direct panel, so its controls show what's being made (found in use: they kept their old values) */
+  function showPlanInPanel(brief = {}) {
+    if (brief.format) makeFormat.value = brief.format
+    const length = brief.seconds ? String(brief.seconds) : ""
+    if (length && ![...makeLength.options].some((o) => o.value === length)) makeLength.append(h("option", { value: length }, `${length} seconds`))
+    makeLength.value = length
+    makeCaptions.value = brief.captions ?? ""
+    makeGrade.value = brief.grade ?? ""
+    if (/^generated:/.test(brief.music ?? "") && [...makeMusic.options].some((o) => o.value === brief.music)) makeMusic.value = brief.music
+    else if (!brief.music) makeMusic.value = ""
+    makeVoice.value = brief.cleanVoice ? "clean" : ""
+    makeAngles.box.checked = !!brief.angles
+    makeBroll.box.checked = brief.broll === "own"
+    makeTitles.box.checked = !!brief.titles
+    makeTemplate.value = ""
   }
   async function askPlan(text, previous = null) {
     const thinking = message("kriya", previous ? "Revising the plan…" : "Planning the cut…")

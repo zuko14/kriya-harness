@@ -5,6 +5,8 @@
 
 import { DatabaseSync } from "node:sqlite"
 
+import { decimalSplit } from "./layers/retakes.js"
+
 const SCHEMA = `
 create table if not exists assets (asset text primary key, media text not null, kind text not null);
 create table if not exists layers (media text not null, layer text not null, model_version text not null, status text not null, notice text, data text, updated_at text not null, primary key (media, layer));
@@ -100,6 +102,9 @@ export function openIndexDb(file) {
           const fixed = fix && fix.was === w.text
           raw.words.push({ id, asset, start: w.start, end: w.end, text: fixed ? fix.text : w.text, conf: fixed ? 1 : w.conf, flags: flagList(w.flags).filter((f) => !fixed || f !== "low_confidence"), ...(fixed ? { heard: w.text } : {}) })
         }
+        // An index made before decimalSplit flagged "5" in "5 .5" as a stutter: unflagged on read, so it isn't cut
+        const spoken = raw.words.filter((w) => w.asset === asset)
+        spoken.forEach((w, i) => w.flags.includes("stutter") && decimalSplit(w, spoken[i + 1]) && (w.flags = w.flags.filter((f) => f !== "stutter")))
         for (const s of db.prepare('select * from sentences where media = ? order by n').all(media)) {
           raw.sentences.push({ id: `${asset}:s${s.n}`, asset, start: s.start, end: s.end, firstWord: `${asset}:w${s.first_word}`, lastWord: `${asset}:w${s.last_word}`, takeGroup: s.take_group === null ? null : `${asset}:g${s.take_group}`, score: s.score })
         }

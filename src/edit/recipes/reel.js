@@ -23,7 +23,22 @@ export const REEL_TALKING_HEAD = {
   notes: "Recipe: a talking-head reel for phones. The first sentence must work on its own as a hook. Keep the speaker's meaning; drop only lines that repeat or wander.",
 }
 
-const STRUCK = new Set(["filler", "stutter", "restart"])
+const STRUCK = new Set(["filler", "stutter", "restart", "trimmed"])
+
+const clock = (t) => { const s = Math.round(t / (FLICKS / 10)) / 10; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}` }
+
+/**
+ * The person's trims ("remove everything after 0:25"): each word whose middle falls inside a
+ * stretch is marked `trimmed`, so the cut lands between words, never inside one (QG-05).
+ * @param {{ from: number, to: number }[]} cuts source flicks of `asset`
+ */
+export function trimIndex(index, asset, cuts = []) {
+  if (!cuts.length) return { index, trimmed: 0 }
+  let trimmed = 0
+  const inside = (w) => cuts.some((c) => (w.start + w.end) / 2 >= c.from && (w.start + w.end) / 2 < c.to)
+  const words = index.words.map((w) => (w.asset === asset && inside(w) ? (trimmed++, { ...w, flags: [...w.flags, "trimmed"] }) : w))
+  return { index: { ...index, words }, trimmed }
+}
 
 /** Templates' frames: the reel's 9:16 by default; the same cut also makes a landscape, square or 4:5 film. */
 export const FORMATS = {
@@ -137,9 +152,12 @@ const EMPHASIS_SCHEMA = { type: "object", properties: { emphasis: { type: "array
  * @param {{ project: object, index: object, asset: string, ask: Function, brief?: object, variant?: { tighter?: number, noHook?: boolean }, signal?: AbortSignal }} input
  * @returns {Promise<{ ops: object[], project: object, notes: string[], calls: number, slots: Record<string, string> }>}
  */
-export async function planReel({ project, index, asset, ask, brief = {}, variant = {}, signal }) {
+export async function planReel({ project, index: fullIndex, asset, ask, brief = {}, variant = {}, signal }) {
   const recipe = recipeFor(brief)
   const notes = []
+  const cuts = (brief.cuts ?? []).filter((c) => Number.isFinite(c.from) && Number.isFinite(c.to) && c.to > c.from)
+  const { index, trimmed } = trimIndex(fullIndex, asset, cuts)
+  if (cuts.length) notes.push(`Trimmed ${cuts.map((c) => `${clock(c.from)} to ${clock(c.to)}`).join(", ")} of the take, as you asked (${trimmed} word${trimmed === 1 ? "" : "s"}, cut between words).`)
   const slots = {}
   let calls = 0
   const lines = candidateLines(index, asset, brief.picks)
@@ -195,7 +213,10 @@ export async function planReel({ project, index, asset, ask, brief = {}, variant
   for (const line of chosen) for (const run of runsOf(line)) ops.push({ op: "keep_range", asset, from: { word: run[0].id, edge: "start" }, to: { word: run.at(-1).id, edge: "end" } })
   // A cold open: a later moment first (an echo, so captions stay on the moment), in black and white
   const takeWords = new Set(index.words.filter((w) => w.asset === asset).map((w) => w.id))
-  const cold = brief.coldOpen && takeWords.has(brief.coldOpen.from) && takeWords.has(brief.coldOpen.to) ? brief.coldOpen : null
+  const cutOut = new Set(index.words.filter((w) => w.flags.includes("trimmed")).map((w) => w.id))
+  const coldTrimmed = brief.coldOpen && index.words.some((w) => cutOut.has(w.id) && w.asset === asset && w.start >= (index.words.find((x) => x.id === brief.coldOpen.from)?.start ?? Infinity) && w.end <= (index.words.find((x) => x.id === brief.coldOpen.to)?.end ?? -Infinity))
+  if (coldTrimmed) notes.push("No cold open: its moment is inside a stretch you asked to trim.")
+  const cold = !coldTrimmed && brief.coldOpen && takeWords.has(brief.coldOpen.from) && takeWords.has(brief.coldOpen.to) ? brief.coldOpen : null
   if (cold) {
     ops.push({ op: "cold_open", asset, from: { word: cold.from, edge: "start" }, to: { word: cold.to, edge: "end" }, mono: cold.mono !== false })
     notes.push(`Opened cold on "${index.words.find((w) => w.id === cold.from).text} …"${cold.mono !== false ? " in black and white" : ""}, then the story starts.`)

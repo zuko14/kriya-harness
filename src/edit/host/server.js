@@ -366,6 +366,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (Number.isInteger(brief.punches) && brief.punches >= 0 && brief.punches <= 8) clean.punches = brief.punches
           for (const flag of ["angles", "titles", "ramps"]) if (brief[flag] === true) clean[flag] = true
           if (brief.broll === "own") clean.broll = "own"
+          // The person's trims from an approved plan, in seconds of the take: up to eight, in order, checked
+          if (Array.isArray(brief.cuts)) clean.cuts = brief.cuts.filter((c) => c && Number.isFinite(c.from) && Number.isFinite(c.to) && c.from >= 0 && c.to > c.from && c.to <= 86_400).slice(0, 8).map((c) => ({ from: Math.round(c.from * 705_600_000), to: Math.round(c.to * 705_600_000) }))
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))
