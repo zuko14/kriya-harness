@@ -193,3 +193,30 @@ test("without the model, only the person's words and choices are made: the fallb
   const brief = briefOf(plan.settings)
   assert.deepEqual([brief.format, brief.grade, brief.music, brief.captions], ["16:9", "cinematic", "generated:warm", undefined])
 })
+
+test("the final cut: finished films listed newest first, only from exports, current or not, never a path from the browser", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { createJobs } = await import("../src/edit/host/jobs.js")
+  const folder = mkdtempSync(join(tmpdir(), "kh-final-"))
+  mkdirSync(join(folder, "exports"))
+  for (const name of ["a-draft.mp4", "b-master.mp4"]) writeFileSync(join(folder, "exports", name), "x")
+  writeFileSync(join(folder, "elsewhere.mp4"), "x")
+  const rows = [
+    { id: 1, kind: "render", status: "done", dispatch: join(folder, "exports", "a-draft.mp4"), project_version: "v1", request: JSON.stringify({ quality: "draft" }), finished_at: "2026-11-09T10:00:00Z" },
+    { id: 2, kind: "make", status: "done", dispatch: JSON.stringify({ file: join(folder, "exports", "b-master.mp4"), head: "v2", verdict: "delivered" }), finished_at: "2026-11-09T10:05:00Z" },
+    { id: 3, kind: "render", status: "done", dispatch: join(folder, "elsewhere.mp4"), project_version: "v2", request: "{}" },
+    { id: 4, kind: "render", status: "done", dispatch: join(folder, "exports", "gone.mp4"), project_version: "v2", request: "{}" },
+    { id: 5, kind: "index", status: "done", dispatch: "{}" },
+    { id: 6, kind: "render", status: "done", dispatch: join(folder, "exports", "a-draft.mp4"), project_version: "v2", request: JSON.stringify({ quality: "draft" }), finished_at: "2026-11-09T10:09:00Z" },
+  ]
+  const state = { id: "p", folder, log: { head: "v2" }, journal: { jobs: (status) => rows.filter((r) => !status || r.status === status) } }
+  const jobs = createJobs({ projects: {}, emit() {}, log() {} })
+  assert.deepEqual(jobs.renders(state).map((r) => [r.job, r.quality, r.name, r.current, r.verdict]), [
+    [6, "draft", "a-draft.mp4", true, null],
+    [2, "master", "b-master.mp4", true, "delivered"],
+  ], "outside exports or deleted: not listed; one file twice: once, its newest job")
+  assert.equal(jobs.renderFile(state, 2), join(folder, "exports", "b-master.mp4"))
+  assert.equal(jobs.renderFile(state, 3), null)
+})

@@ -277,7 +277,8 @@ async function workspace(id) {
   })
   const timeline = createTimeline({ root: timelineEl, onSeek: (t) => (showProgram(), monitor.seek(t)) })
   const strip = createTimeline({ root: stripEl, compact: true, onSeek: (t) => (showProgram(), monitor.seek(t)) })
-  const finish = createFinish({ root: finishEl, pixels: () => monitor.pixels(), project: () => project })
+  const finalEl = h("div", { class: "area-final" })
+  const finish = createFinish({ root: finishEl, finalRoot: finalEl, pixels: () => monitor.pixels(), project: () => project, onAdjust: () => setMode("edit") })
 
   function showProgram() {
     if (!source) return
@@ -883,6 +884,7 @@ async function workspace(id) {
     if (job.status !== "done") return (say.textContent = job.error ?? "The reel stopped.")
     const result = JSON.parse(job.output)
     say.textContent = `${verdictWords[result.verdict] ?? result.verdict}. ${result.notes.join(" ")}`
+    if (result.file) did.prepend(h("li", { class: "watch" }, h("button", { type: "button", class: "btn primary", onclick: () => setMode("finish") }, "Watch the final cut")))
     for (const change of [...result.changes].reverse()) did.prepend(h("li", {}, change))
   }
 
@@ -994,6 +996,7 @@ async function workspace(id) {
       h("div", { class: "area-strip" }, stripEl),
       h("section", { class: "area-timeline panel", "aria-label": "Timeline" }, timelineEl),
       h("div", { class: "area-finish" }, finishEl),
+      finalEl,
     ),
   )
   clear(app).append(root)

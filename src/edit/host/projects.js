@@ -507,6 +507,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       return {
         verdict: gates?.verdict ?? "not_checked",
         file: result.best.file ?? null,
+        head: state.log.head, // the version this file shows, so the Studio can say when it's out of date
         receipt: delivery?.receipt ?? null,
         report: delivery?.report ?? null,
         planHash,
@@ -559,7 +560,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const { version } = await tools()
       const mentions = gates.gates.filter((g) => g.status === "not_checked" || (g.status === "failed" && g.severity === "note")).map((g) => g.id)
       const delivery = await writeDelivery({ file, title: project.name, project, parent, plan, sourcePath, tools: { engine: ENGINE_VERSION, ffmpeg: version, runtime: runtime?.version ?? null }, gates: gates.gates, verdict: gates.verdict, calls: state.journal.calls(job), changes: [], notes: mentions, repairs: [], beforeFrom: null, run, work })
-      return { verdict: gates.verdict, file, receipt: delivery?.receipt ?? null, report: delivery?.report ?? null, planHash: sha256(canonical(plan)), gates: gates.gates, notes: mentions, applied, skipped }
+      return { verdict: gates.verdict, file, head: state.log.head, receipt: delivery?.receipt ?? null, report: delivery?.report ?? null, planHash: sha256(canonical(plan)), gates: gates.gates, notes: mentions, applied, skipped }
     },
 
     /** `kriya edit replay`: a make job again from its recording; it compares, and lands nothing. */

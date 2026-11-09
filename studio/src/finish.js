@@ -24,7 +24,69 @@ export function scopesOf(image, columns = 128) {
 /**
  * @param {{ root: HTMLElement, pixels: () => ImageData | null, project: () => object }} options
  */
-export function createFinish({ root, pixels, project }) {
+const VERDICT = { delivered: "Checked", delivered_with_notes: "Checked, with notes", blocked: "Needs you: a check failed", not_checked: "Not checked" }
+
+/**
+ * The final cut (2026-11-09, from use): the real rendered film, captions, look, music and sound
+ * included, watched here before downloading. The preview monitor shows only the picture.
+ * @param {{ root: HTMLElement, finalRoot: HTMLElement, pixels: () => ImageData | null, project: () => object, onAdjust: () => void }} options
+ */
+export function createFinish({ root, finalRoot, pixels, project, onAdjust = () => {} }) {
+  const film = h("video", { class: "final-film", controls: true, preload: "metadata", playsinline: true, "aria-label": "The final cut" })
+  const filmNote = h("p", { class: "note", role: "status" })
+  const filmPick = h("select", { id: "final-pick", class: "field select", "aria-label": "Which film", onchange: () => showFilm() })
+  const download = h("a", { class: "btn primary", href: "#", download: "", hidden: true }, "Download")
+  let films = []
+  const urlOf = (r) => `/projects/${project().id}/renders/${r.job}`
+  const when = (at) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "")
+  function showFilm() {
+    const chosen = films.find((r) => String(r.job) === filmPick.value) ?? films[0]
+    if (!chosen) {
+      film.removeAttribute("src")
+      film.hidden = true
+      download.hidden = true
+      filmPick.hidden = true
+      filmNote.textContent = "No film yet. Render a draft and the finished cut plays here, captions, look, music and sound included."
+      return
+    }
+    film.hidden = false
+    filmPick.hidden = films.length < 2
+    const url = urlOf(chosen)
+    if (film.getAttribute("src") !== url) film.src = url
+    download.hidden = false
+    download.href = `${url}?download=1`
+    download.setAttribute("download", chosen.name)
+    const state = chosen.current ? "This is your edit as it is now." : "Made before your latest changes: render a draft to see them."
+    filmNote.textContent = `${state}${chosen.verdict ? ` ${VERDICT[chosen.verdict] ?? chosen.verdict}.` : ""}`
+    filmNote.classList.toggle("stale", !chosen.current)
+  }
+  let asked = 0
+  let seenNewest = 0
+  async function refreshFilms() {
+    // Job events come fast: only the latest answer is shown (found in use: a slower, older one won)
+    const mine = ++asked
+    const list = (await api("GET", `/projects/${project().id}/renders`)).renders
+    if (mine !== asked) return
+    const was = filmPick.value
+    films = list
+    const newest = films[0]?.job ?? 0
+    clear(filmPick).append(...films.map((r) => h("option", { value: String(r.job) }, `${r.quality === "draft" ? "Draft" : "Master"} · ${when(r.at)}${r.current ? " · current" : ""} · ${r.name}`)))
+    // A newer film comes to the front; otherwise the one the person was watching stays
+    filmPick.value = String(newest > seenNewest || !films.some((r) => String(r.job) === was) ? newest : was)
+    seenNewest = Math.max(seenNewest, newest)
+    showFilm()
+  }
+  finalRoot.append(
+    h(
+      "section",
+      { class: "panel final", "aria-label": "Final cut" },
+      h("h2", {}, "Final cut"),
+      film,
+      filmNote,
+      h("div", { class: "row" }, filmPick, download, h("button", { type: "button", class: "btn", onclick: () => start("draft") }, "Render again"), h("button", { type: "button", class: "btn", onclick: onAdjust }, "Adjust in Edit")),
+    ),
+  )
+
   const histogram = h("canvas", { class: "scope", width: 256, height: 100, role: "img", "aria-label": "Luma histogram" })
   const waveform = h("canvas", { class: "scope", width: 256, height: 100, role: "img", "aria-label": "Luma waveform" })
   const jobs = h("ul", { class: "jobs", "aria-live": "polite" })
@@ -102,6 +164,7 @@ export function createFinish({ root, pixels, project }) {
   }
 
   async function refresh() {
+    refreshFilms().catch((error) => (filmNote.textContent = error.message))
     const { jobs: all } = await api("GET", "/jobs")
     clear(jobs)
     for (const job of all.filter((j) => j.project === project().id && j.kind === "render").reverse().slice(0, 8)) {
