@@ -37,6 +37,12 @@ function prefixOf(short, long) {
   return a.length >= 3 && a.length < b.length && a.every((token, i) => token === b[i])
 }
 
+/**
+ * "4.5" heard as "5" then ".5" (found in use: "Opus 4.5"): the same digits after punctuation are
+ * one number split in two, not a stutter, and cutting the first half cuts inside the word (QG-05).
+ */
+export const decimalSplit = (word, next) => /^\d+$/.test(bare(word.text)) && /^[.,:]\d/.test(String(next?.text ?? "").trim())
+
 /** Word flags: filler, stutter, low_confidence. Times decide a soft filler, not the word alone. */
 export function flagWords(words, language = "en") {
   const soft = new Set(SOFT_FILLERS[language.split("-")[0]] ?? SOFT_FILLERS.en)
@@ -49,7 +55,7 @@ export function flagWords(words, language = "en") {
     const setApart = (before >= FILLER_PAUSE || ends(words[i - 1]?.text ?? ".") || /,$/.test(words[i - 1]?.text ?? "")) && (after >= FILLER_PAUSE || /[,.!?]$/.test(word.text))
     if (HESITATIONS.has(token) || (soft.has(token) && setApart)) flags.push("filler")
     const next = words[i + 1]
-    if (next && token && (bare(next.text) === token || (word.text.endsWith("-") && bare(next.text).startsWith(token)))) flags.push("stutter")
+    if (next && token && !decimalSplit(word, next) && (bare(next.text) === token || (word.text.endsWith("-") && bare(next.text).startsWith(token)))) flags.push("stutter")
     if (typeof word.conf === "number" && word.conf < LOW_CONFIDENCE) flags.push("low_confidence")
     return flags
   })

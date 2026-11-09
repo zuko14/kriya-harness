@@ -174,6 +174,8 @@ export function describe(op, index) {
       return op.peak.n > op.peak.d ? `Ramped ${op.clip} up to ${(op.peak.n / op.peak.d).toFixed(1)}× and back, from ${place(op.from)} to ${place(op.to)}` : `Slow motion in ${op.clip} (${(op.peak.n / op.peak.d).toFixed(2)}×), eased in and out, from ${place(op.from)} to ${place(op.to)}`
     case "freeze":
       return `Froze the frame at ${place(op.at)} for ${seconds(op.duration)}`
+    case "add_sfx":
+      return `Added a sound effect at ${place(op.peak_at)}`
     case "place_broll":
       return `Laid B-roll ${op.asset} over ${place(op.at)}${op.duration ? ` for ${seconds(op.duration)}` : ""}`
     case "clean_voice":
