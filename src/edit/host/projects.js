@@ -28,7 +28,7 @@ import { createIndexer, layersFor } from "../index/index.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { editHome } from "./paths.js"
 import { createTaste } from "./taste.js"
-import { analyseReference } from "../engine/reference.js"
+import { ASPECTS, analyseReference, cleanRefs, takeFrom } from "../engine/reference.js"
 import { briefOf, planCut } from "../director/plan.js"
 import { MOODS, writeMusicBed } from "../engine/music-bed.js"
 import { SFX, writeSfx } from "../engine/sfx.js"
@@ -302,10 +302,17 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
 
     /** The Director's plan for the whole cut: proposed, never made until the person approves it. */
     async plan(state, { text, history = [], previous = null, choices = {}, job = 0, signal } = {}) {
+      // The references in use, each only for what the person took it for; with none named, every reference, whole
+      const named = cleanRefs(choices.references)
+      const chosen = named.length ? named : state.log.current.assets.filter((a) => a.kind === "reference").map((a) => ({ id: a.id, aspect: "all" }))
       const references = []
-      for (const ref of state.log.current.assets.filter((a) => a.kind === "reference")) {
-        const found = await this.referenceAnalysis(state, ref.id, { signal }).catch(() => null)
-        if (found) references.push({ name: ref.path.split(/[\\/]/).at(-1), lines: found.lines })
+      for (const { id, aspect } of chosen) {
+        const ref = state.log.current.assets.find((a) => a.id === id && a.kind === "reference")
+        const found = ref && (await this.referenceAnalysis(state, ref.id, { signal }).catch(() => null))
+        if (!found) continue
+        const taken = takeFrom(found, aspect)
+        const name = `${ref.path.split(/[\\/]/).at(-1)}${aspect === "all" ? "" : ` (only for: ${ASPECTS[aspect]})`}`
+        references.push({ name, lines: taken.lines.length ? taken.lines : [`nothing measured for ${ASPECTS[aspect].toLowerCase()}`] })
       }
       const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, signal })
       // The exact brief an approval makes, so the Studio sends back what was shown
@@ -317,7 +324,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const asset = state.log.current.assets.find((a) => a.id === assetId && a.kind === "reference")
       if (!asset) throw new EngineFailure("input", "unknown_asset", "There is no such reference in this project.")
       const dir = join(dirOf(state.id), "cache", "refs")
-      const file = join(dir, `${asset.fingerprint}.json`)
+      // .2: a video's soundtrack is measured too, and each line is kept under its aspect
+      const file = join(dir, `${asset.fingerprint}.2.json`)
       if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8"))
       const found = await analyseReference(sourcesOf(state)(assetId), asset.facts, { signal })
       mkdirSync(dir, { recursive: true })
@@ -350,29 +358,47 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       const styled = []
       let captionsFromReference = false
       const fromRefs = {}
-      const refIds = [...new Set([request.brief?.reference, ...(request.brief?.references ?? [])].filter(Boolean))]
-      for (const id of replay ? [] : refIds) {
+      // Each reference gives only what the person took it for (editing, sound, colour, graphics, or
+      // all); one taken for an aspect goes first, so it wins that aspect over one taken for everything
+      const refs = cleanRefs([request.brief?.reference, ...(request.brief?.references ?? [])].filter(Boolean)).sort((a, b) => (a.aspect === "all") - (b.aspect === "all"))
+      const aspectOf = new Map()
+      for (const { id, aspect } of replay ? [] : refs) {
         const ref = state.log.current.assets.find((a) => a.id === id && a.kind === "reference")
         if (!ref) continue
         const name = ref.path.split(/[\\/]/).at(-1)
         try {
-          const found = await this.referenceAnalysis(state, id, { signal })
+          const found = takeFrom(await this.referenceAnalysis(state, id, { signal }), aspect)
+          if (aspect !== "all" && !found.lines.length) styled.push(`${name} has nothing Kriya can measure for ${ASPECTS[aspect].toLowerCase()}, so it wasn't used.`)
           const seconds = (request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS
-          if (found.pace?.every) {
-            fromRefs.punches = Math.min(8, Math.max(1, Math.round(seconds / found.pace.every / 2)))
-            styled.push(`Took the pace of ${name}: its picture changes every ${found.pace.every.toFixed(1)} s, so ${fromRefs.punches} punch-ins`)
+          // The first reference to give an aspect sets it. One the person took for that aspect
+          // is their explicit choice, so it outranks the brief's own setting there; one taken
+          // for everything sits under the brief, as before
+          const claim = (key) => !aspectOf.has(key) && (aspectOf.set(key, aspect), true)
+          const explicit = aspect !== "all"
+          if (found.pace?.every && claim("pace")) {
+            const punches = Math.min(8, Math.max(1, Math.round(seconds / found.pace.every / 2)))
+            if (explicit) request = { ...request, brief: { ...request.brief, punches } }
+            else fromRefs.punches = punches
+            styled.push(`Took the pace of ${name}: its picture changes every ${found.pace.every.toFixed(1)} s, so ${punches} punch-ins`)
           }
-          if (found.captions && !request.brief.captions && !state.engine.motion().missing) {
+          if (found.captions && !request.brief.captions && !state.engine.motion().missing && claim("captions")) {
             fromRefs.captions = "clean"
             captionsFromReference = true
             styled.push(`${name} has captions, so this cut has them too`)
           }
-          // An image says the most about colour, so it wins over a video's
-          if (found.colour && !request.brief.grade && (found.kind === "image" || !fromRefs.customGrade)) {
+          // An image says the most about colour, so it wins over a video's taken the same way
+          const colourBy = aspectOf.get("colour")
+          const colourFree = explicit ? colourBy === undefined || (colourBy !== "all" && found.kind === "image" && fromRefs.colourKind !== "image") : !request.brief.grade && (colourBy === undefined || (colourBy === "all" && found.kind === "image" && fromRefs.colourKind !== "image"))
+          if (found.colour && colourFree) {
+            aspectOf.set("colour", aspect)
             fromRefs.customGrade = found.colour.grade
+            fromRefs.colourKind = found.kind
+            if (explicit && request.brief.grade) request = { ...request, brief: { ...request.brief, grade: undefined } }
             styled.push(`Took the colour of ${name}: ${found.colour.words.join(", ")}`)
           }
-          if (found.music && !request.brief.music) {
+          // A song the person chose stays; a reference taken for its sound replaces a generated bed
+          const musicFree = explicit ? !request.brief.music || /^generated:/.test(request.brief.music) : !request.brief.music
+          if (found.music && musicFree && claim("music")) {
             request = { ...request, brief: { ...request.brief, music: `generated:${found.music.mood}`, musicBpm: found.music.bpm ?? undefined } }
             styled.push(`Music follows ${name}: ${/^[aeiou]/.test(found.music.mood) ? "an" : "a"} ${found.music.mood} bed${found.music.bpm ? ` at ${found.music.bpm} bpm` : ""}`)
           }
@@ -419,7 +445,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null 
       // replay uses what the job really used. Captions only where they can render
       const recorded = replay?.answers.find((a) => a.task === "brief_extra")
       const extra = recorded ? JSON.parse(recorded.value) : { ...taste.defaults(), ...(picks && { picks }) }
-      Object.assign(extra, fromRefs)
+      const { colourKind: _kind, ...fromRefBrief } = fromRefs
+      Object.assign(extra, fromRefBrief)
       // Captions only where they can render: a missing runtime or Chrome drops them with a note,
       // rather than failing the whole cut at render (found in use: every render failed)
       const motionMissing = state.engine.motion().missing

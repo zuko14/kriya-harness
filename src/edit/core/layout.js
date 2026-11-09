@@ -20,6 +20,8 @@ export function safeZoneFor(project) {
   const { width, height } = project.canvas
   const zone = {}
   for (const deliverable of project.deliverables ?? []) {
+    // Only exports in this frame's shape: an earlier 9:16 export's margins don't squeeze a 16:9 cut (found in use)
+    if (deliverable.size && deliverable.size.width * height !== deliverable.size.height * width) continue
     const share = SAFE_ZONES[deliverable.preset]
     if (!share) continue
     for (const [side, value] of Object.entries(share)) zone[side] = Math.max(zone[side] ?? 0, Math.ceil(value * (side === "top" || side === "bottom" ? height : width)))

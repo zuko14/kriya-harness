@@ -11,6 +11,7 @@ import { compile } from "../core/plan.js"
 import { solve } from "../core/solver.js"
 import { LOOKS } from "../engine/captions.js"
 import { ENGINE_VERSION, guardPath } from "../engine/index.js"
+import { cleanRefs } from "../engine/reference.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
@@ -356,7 +357,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (brief.cleanVoice === true) clean.cleanVoice = true
           // From the Director's approved plan: checked again in the recipe against the index
           const safeId = (v) => typeof v === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(v)
-          if (Array.isArray(brief.references)) clean.references = brief.references.filter(safeId).slice(0, 6)
+          // Each as an id (everything it shows) or { id, aspect }: editing, sound, colour or graphics only
+          if (Array.isArray(brief.references)) clean.references = cleanRefs(brief.references)
           if (safeId(brief.hook)) clean.hook = brief.hook
           if (brief.coldOpen && safeId(brief.coldOpen.from) && safeId(brief.coldOpen.to)) clean.coldOpen = { from: brief.coldOpen.from, to: brief.coldOpen.to, mono: brief.coldOpen.mono !== false }
           if (["whoosh", "pop"].includes(brief.cutSound)) clean.cutSound = brief.cutSound

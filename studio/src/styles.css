@@ -107,10 +107,14 @@ a { color: var(--teal); }
 .projects { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 
 .workspace { display: flex; flex-direction: column; min-height: 100%; }
-.grid { flex: 1; display: grid; gap: 12px; padding: 12px; min-height: 0; grid-template-columns: minmax(0, 1fr) 320px; grid-template-areas: "monitor kriya" "transcript transcript" "strip strip"; align-content: start; }
+/* --side: the Kriya panel's width; it fits the window unless the person drags it (main.js) */
+.grid { flex: 1; display: grid; gap: 12px; padding: 12px; min-height: 0; grid-template-columns: minmax(0, 1fr) min(var(--side, clamp(340px, 32vw, 560px)), 62vw); grid-template-areas: "monitor kriya" "transcript transcript" "strip strip"; align-content: start; }
 .area-bin { grid-area: bin; }
 .area-monitor { grid-area: monitor; background: var(--surround); color: #eee; }
-.area-kriya { grid-area: kriya; }
+.area-kriya { grid-area: kriya; position: relative; }
+.side-handle { position: absolute; left: -12px; top: 0; bottom: 0; width: 12px; cursor: col-resize; touch-action: none; border-radius: 6px; }
+.side-handle::after { content: ""; position: absolute; left: 4px; top: 50%; width: 4px; height: 48px; margin-top: -24px; border-radius: 999px; background: var(--edge); }
+.side-handle:hover::after, .side-handle:focus-visible::after { background: var(--teal); }
 .area-transcript { grid-area: transcript; }
 .area-strip { grid-area: strip; }
 .area-timeline { grid-area: timeline; }
@@ -185,6 +189,7 @@ a { color: var(--teal); }
   .workspace[data-mode] :is(.area-bin, .area-timeline, .area-strip) { display: none; }
   .workspace[data-mode="edit"] .area-kriya { display: block; }
   .modes { margin-left: 0; width: 100%; }
+  .side-handle { display: none; }
   .modes .btn { flex: 1; }
   .monitor { max-height: 50vh; }
 }
@@ -200,7 +205,7 @@ a { color: var(--teal); }
 .row.end { justify-content: flex-end; }
 
 /* Chat with Kriya */
-.chat { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 8px; max-height: 42vh; overflow: auto; }
+.chat { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 8px; max-height: 58vh; overflow: auto; }
 .chat:empty { display: none; }
 .msg { padding: 8px 10px; border-radius: 10px; background: var(--hover); }
 .msg.you { background: color-mix(in srgb, var(--teal) 14%, transparent); }
@@ -214,6 +219,8 @@ a { color: var(--teal); }
 .send { display: grid; gap: 6px; }
 .extras { display: flex; flex-wrap: wrap; gap: 0 14px; }
 .plan .steps { margin: 4px 0; padding-left: 20px; display: grid; gap: 4px; }
+.refs-direct { margin: 0; }
+.refs-direct:empty { display: none; }
 .ref .ref-lines { list-style: none; padding: 0; margin: 2px 0; font-size: 13px; color: var(--ink-2); display: grid; gap: 2px; }
 .area-monitor .marks .btn { background: #2a2a2a; color: #eee; }
 
