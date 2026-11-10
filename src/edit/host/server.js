@@ -13,6 +13,8 @@ import { LOOKS } from "../engine/captions.js"
 import { ENGINE_VERSION, guardPath } from "../engine/index.js"
 import { cleanRefs } from "../engine/reference.js"
 import { cleanScene } from "../engine/scenes.js"
+import { cleanGraphic } from "../engine/graphics.js"
+import { TRANSITIONS } from "../core/transitions.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
@@ -77,6 +79,8 @@ function page(res, type, body) {
 }
 
 const refuse = (res, status, message) => json(res, status, { error: status, message })
+/** A plan as the Studio sends it back (one being revised, or the one just approved): bounded text and a settings object the Director re-checks. */
+const cleanPlan = (plan) => (plan && typeof plan === "object" ? { say: String(plan.say ?? "").slice(0, 900), steps: Array.isArray(plan.steps) ? plan.steps.slice(0, 10).map((s) => String(s).slice(0, 240)) : [], settings: plan.settings && typeof plan.settings === "object" && !Array.isArray(plan.settings) && JSON.stringify(plan.settings).length <= 20_000 ? plan.settings : {} } : null)
 
 async function readJson(req) {
   const chunks = []
@@ -353,7 +357,7 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         return say(200, { ...result, ...projectView(state) })
       }
       if (parts[2] === "make" && parts.length === 3 && method === "POST") {
-        const { asset, brief } = await readJson(req)
+        const { asset, brief, plan } = await readJson(req)
         const clean = {}
         if (brief && typeof brief === "object") {
           if (Number.isFinite(brief.seconds) && brief.seconds >= 5 && brief.seconds <= 600) clean.targetDuration = Math.round(brief.seconds * 705_600_000)
@@ -393,6 +397,13 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
             if (Array.isArray(brief.pictures)) clean.pictures = brief.pictures.filter((p) => p && foundId(p.id) && safeId(p.from) && safeId(p.to)).slice(0, 8).map(({ id, from, to }) => ({ id, from, to }))
             if (Array.isArray(brief.terms)) clean.terms = brief.terms.filter((t) => t && foundId(t.id) && safeId(t.at)).slice(0, 4).map(({ id, at }) => ({ id, at }))
           }
+          // A transition from an approved plan: a kind from the fixed list, under the same switch
+          if (allowed.motion && Object.hasOwn(TRANSITIONS, brief.transition ?? "")) {
+            clean.transition = brief.transition
+            if (brief.transitionAll === true) clean.transitionAll = true
+          }
+          // Motion graphics from an approved plan, only while the server's switch is on; each cleaned to the kit's shape
+          if (Array.isArray(brief.graphics) && brief.graphics.length && allowed.motion) clean.graphics = brief.graphics.slice(0, 12).map(cleanGraphic).filter(Boolean)
           // Animated scenes from an approved plan, only while the server's switch is on; the recipe checks each again against the speech
           if (Array.isArray(brief.scenes) && brief.scenes.length && (await projects.features()).visuals) {
             clean.scenes = brief.scenes.slice(0, 12).map(cleanScene).filter(Boolean)
@@ -400,7 +411,12 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           }
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
-        return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean }))
+        if (brief?.fresh === true) clean.fresh = true
+        // The last make's story, set here by the Host (never taken from the browser) so a replay of this job has it too
+        const story = projects.keptStory(state, clean)
+        if (story) clean.story = story
+        const approved = cleanPlan(plan)
+        return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean, ...(approved ? { plan: approved } : {}) }))
       }
       // The person fixes a word the recogniser misheard (UX_SPEC §5)
       if (parts[2] === "words" && parts.length === 4 && method === "POST") {
@@ -427,12 +443,25 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'; sandbox allow-scripts" })
         return res.end(html)
       }
+      // One motion graphic on the Plan Card, as the render will draw it: its own sandboxed document, no network
+      if (parts[2] === "graphic-preview" && parts.length === 3 && method === "GET") {
+        if (!(await projects.features()).motion) return refuse(res, 404, "Motion graphics aren't on.")
+        let graphic = null
+        try {
+          graphic = JSON.parse(url.searchParams.get("graphic") ?? "null")
+        } catch {
+          return refuse(res, 400, "That isn't a graphic.")
+        }
+        const html = projects.graphicPreview(state, graphic, url.searchParams.get("format"))
+        res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'; sandbox allow-scripts" })
+        return res.end(html)
+      }
       // The Director's plan: proposed in words with its settings; nothing is made here
       if (parts[2] === "plan" && parts.length === 3 && method === "POST") {
         const { text, history, previous, choices } = await readJson(req)
         if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want, in up to 2,000 characters.")
         const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
-        const prior = previous && typeof previous === "object" ? { say: String(previous.say ?? "").slice(0, 900), steps: Array.isArray(previous.steps) ? previous.steps.slice(0, 10).map((s) => String(s).slice(0, 240)) : [], settings: previous.settings && typeof previous.settings === "object" ? previous.settings : {} } : null
+        const prior = cleanPlan(previous)
         return say(200, await projects.plan(state, { text, history: turns, previous: prior, choices: choices && typeof choices === "object" ? choices : {} }))
       }
       // A reference's classified analysis, measured once and kept

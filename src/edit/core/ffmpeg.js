@@ -2,6 +2,7 @@
 // for spawn, never a shell string. Text passes through one tested escape.
 
 import { secondsArg } from "./time.js"
+import { TRANSITIONS } from "./transitions.js"
 
 const BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 // On the frames too: FFmpeg can drop the output flags alone when it converts a format
@@ -145,7 +146,24 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
   const chains = []
 
   const labels = node.picture.map((item, i) => {
-    chains.push(`[${inputFor(input(item.asset), item.in)}:v]${pictureChain(item, width, height, plan, { input, toneMap })}[p${i}]`)
+    const chain = `[${inputFor(input(item.asset), item.in)}:v]${pictureChain(item, width, height, plan, { input, toneMap })}`
+    if (!item.enter) {
+      chains.push(`${chain}[p${i}]`)
+      return `[p${i}]`
+    }
+    // A transition in (transitions.js): the piece before, held on its last frame, under this
+    // piece's first moments; then the rest of the piece. Its length is the piece's own, so the cut doesn't move
+    const { kind, duration, from } = item.enter
+    if (!Object.hasOwn(TRANSITIONS, kind)) throw new RangeError(`this render can't do a "${kind}" transition`)
+    const length = secondsArg(duration)
+    // xfade needs both sides alike: one frame rate, one pixel format, one time base
+    const alike = `${filter("fps", { fps: `${plan.output.fps.n}/${plan.output.fps.d}` })},format=yuv420p,settb=AVTB`
+    chains.push(`${chain},${alike},split[ph${i}][pt${i}]`)
+    chains.push(`[${inputFor(input(from.asset), from.in)}:v]${pictureChain(from, width, height, plan, { input, toneMap })},${alike}[pf${i}]`)
+    chains.push(`[ph${i}]${filter("trim", { end: length })},setpts=PTS-STARTPTS[pa${i}]`)
+    chains.push(`[pf${i}][pa${i}]${filter("xfade", { transition: TRANSITIONS[kind], duration: length, offset: 0 })}[px${i}]`)
+    chains.push(`[pt${i}]${filter("trim", { start: length })},setpts=PTS-STARTPTS[pb${i}]`)
+    chains.push(`[px${i}][pb${i}]concat=n=2:v=1:a=0,setsar=1,${TAG_BT709}[p${i}]`)
     return `[p${i}]`
   })
   let current = labels[0]

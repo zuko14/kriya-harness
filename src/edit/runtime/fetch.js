@@ -7,14 +7,15 @@ import { openManifest, RuntimeError, TRUSTED_KEYS } from "./manifest.js"
 /**
  * What this Kriya has switched on for editing (EH-01). Any failure, a server with no such
  * route among them, means off: the server ships first, and a client never assumes (track E rule 17).
- * @returns {Promise<{ visuals: boolean, playbooks: boolean, mediaSearch: boolean }>}
+ * @returns {Promise<{ visuals: boolean, playbooks: boolean, mediaSearch: boolean, motion: boolean, customMotion: boolean }>}
  */
 export async function fetchFeatures(device) {
   try {
     const found = await call(device.url, "GET", "/editing/features", { token: device.token })
-    return { visuals: found?.visuals === true, playbooks: found?.playbooks === true, mediaSearch: found?.mediaSearch === true }
+    // motion, customMotion: a server from before them says nothing, which is off
+    return { visuals: found?.visuals === true, playbooks: found?.playbooks === true, mediaSearch: found?.mediaSearch === true, motion: found?.motion === true, customMotion: found?.customMotion === true }
   } catch {
-    return { visuals: false, playbooks: false, mediaSearch: false }
+    return { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false }
   }
 }
 

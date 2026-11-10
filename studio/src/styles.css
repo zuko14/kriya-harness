@@ -232,12 +232,13 @@ a { color: var(--teal); }
 .scene-head .field { width: auto; }
 .scene-info .field { width: auto; flex: 1 1 140px; min-width: 0; }
 .scene-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
-.proposal .scene-row { display: flex; gap: 10px; align-items: flex-start; justify-content: flex-start; }
+/* A wide (16:9) preview and its controls don't fit side by side on a phone: the controls drop under it */
+.proposal .scene-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: flex-start; }
 .found-thumb { flex: none; width: 120px; height: 90px; object-fit: cover; border-radius: 6px; background: #000; }
 .scenes .row .field { width: auto; flex: 1 1 120px; min-width: 0; }
 .scene-picture { flex: none; overflow: hidden; border-radius: 6px; background: #000; }
 .scene-picture iframe { border: 0; display: block; transform-origin: 0 0; pointer-events: none; }
-.scene-info { min-width: 0; display: grid; gap: 4px; }
+.scene-info { min-width: 0; flex: 1 1 140px; display: grid; gap: 4px; }
 .scene-info p { margin: 0; overflow-wrap: anywhere; }
 .scene-info .row { flex-wrap: wrap; gap: 6px; }
 .scene-time { font-family: ui-monospace, "JetBrains Mono", monospace; color: var(--teal); }

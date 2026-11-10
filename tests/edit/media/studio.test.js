@@ -16,6 +16,7 @@ import { frameFlicks, snap } from "../../../studio/src/time.js"
 import { ROOT } from "../../helpers.js"
 import { startFakeKriya } from "../../fake-kriya.js"
 import { barcodeVideo, BITS, H, W } from "./barcode.js"
+import { chromeSkip, linkMotion } from "./motion-runtime.js"
 
 // The Studio in the installed Chrome, headless, against a real Host and the real
 // FFmpeg on frame-barcoded footage; then the harness's own Web UI with the row on
@@ -489,5 +490,134 @@ test("ET-TST-01 in Chrome: the Taste screen asks, a yes applies, and it's remova
   } finally {
     await browser.close()
     await stopHost(w.home)
+  }
+})
+
+test("ET-REV-UI: after a make, a whole-video request shows as a change to the current cut; 360 and 1280 px, light and dark, clean console", { skip, timeout: 280_000 }, async () => {
+  const settings = { seconds: 10, captions: "none", music: "none", cutSound: "none" }
+  let plans = 0
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    features: { visuals: false, playbooks: false, mediaSearch: false },
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "console") return { content: JSON.stringify({ ops: [], direct: {}, say: "That's about the whole video." }) }
+      if (task === "plan") return { content: JSON.stringify(plans++ ? { say: "The same cut with a warmer look.", steps: ["Warm the colour"], settings: { ...settings, grade: "warm" } } : { say: "A plain cut.", steps: ["Cut the fillers"], settings }) }
+      if (task === "story") return { content: JSON.stringify({ hook: null, drop: [] }) }
+      if (task === "emphasis") return { content: JSON.stringify({ emphasis: [] }) }
+      return { content: "{}" }
+    },
+  })
+  const w = await studioWorld({ fake })
+  const browser = await launchBrowser()
+  const problems = []
+  const shots = process.env.KRIYA_SHOTS
+  try {
+    // The cut is made first, from an approved plan, as the Studio sends it
+    const first = await w.call("POST", `/projects/${w.id}/plan`, { text: "Edit this", history: [], choices: {} })
+    const job = await w.call("POST", `/projects/${w.id}/make`, { asset: w.asset.id, brief: first.brief, plan: { say: first.say, steps: first.steps, settings: first.settings } })
+    const done = await until(async () => (await w.call("GET", "/jobs")).jobs.find((j) => j.id === job.id && ["done", "failed"].includes(j.status)), 200_000, "the make")
+    assert.equal(done.status, "done", done.error)
+
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 } })
+    page.on("pageerror", (error) => problems.push(String(error)))
+    page.on("console", (message) => message.type() === "error" && problems.push(message.text()))
+    const { url } = await w.call("POST", "/internal/launch")
+    await page.goto(url)
+    await page.getByRole("link", { name: "Film" }).click()
+    await page.waitForFunction(() => window.__studio)
+    await page.locator("#prompt").fill("make the whole video warmer")
+    await page.getByRole("button", { name: "Send", exact: true }).click()
+    await page.getByText("A change to your current cut, not made yet").waitFor({ timeout: 30_000 })
+    assert.ok(await page.getByText("What changes: Colour look: none → warm. The story and your own edits stay.", { exact: false }).isVisible(), "what changes, said by code")
+    assert.equal(await page.getByText("The Director's plan, not made yet").count(), 0)
+    for (const [width, height] of [[1280, 860], [360, 800]]) {
+      await page.setViewportSize({ width, height })
+      for (const colorScheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme })
+        const card = page.locator(".proposal.plan")
+        await card.scrollIntoViewIfNeeded()
+        assert.ok(await card.isVisible(), `${width} ${colorScheme}: the card shows`)
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}: no sideways scroll`)
+        for (const button of await card.getByRole("button").all()) assert.ok((await button.boundingBox()).height >= 44, `${width}: a ${Math.round((await button.boundingBox()).height)} px button`)
+        if (shots) await page.screenshot({ path: join(shots, `revision-card-${width}-${colorScheme}.png`) })
+      }
+    }
+    assert.deepEqual(problems, [], "console clean")
+  } finally {
+    await browser.close()
+    await stopHost(w.home)
+    await fake.close()
+  }
+})
+
+test("ET-MG-UI: the Plan Card shows the plan's motion graphics playing, restyles and removes them; 360 and 1280 px, light and dark, clean console", { skip: skip || chromeSkip(), timeout: 280_000 }, async () => {
+  const graphics = [
+    { kind: "intro", text: "Hello there friends" },
+    { kind: "title", style: "slam", text: "built this", at: "a1:w15" },
+    { kind: "title", text: "An invented claim", at: "a1:w16" },
+  ]
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    features: { visuals: false, playbooks: false, mediaSearch: false, motion: true, customMotion: false },
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "plan") return { content: JSON.stringify({ say: "A clean cut with a title.", steps: ["Cut the fillers"], settings: { seconds: 10, captions: "none", music: "none", cutSound: "none" } }) }
+      if (task === "graphics") return { content: JSON.stringify({ graphics }) }
+      return { content: "{}" }
+    },
+  })
+  const w = await studioWorld({ fake })
+  linkMotion(w.home, { hyperframes: false }) // graphics need the runtime's Chrome to be made, so the plan offers them only with it
+  const browser = await launchBrowser()
+  const problems = []
+  const shots = process.env.KRIYA_SHOTS
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 } })
+    page.on("pageerror", (error) => problems.push(String(error)))
+    page.on("console", (message) => message.type() === "error" && problems.push(message.text()))
+    const { url } = await w.call("POST", "/internal/launch")
+    await page.goto(url)
+    await page.getByRole("link", { name: "Film" }).click()
+    await page.waitForFunction(() => window.__studio)
+    await page.locator("#prompt").fill("edit this with motion graphics")
+    await page.getByRole("button", { name: "Plan", exact: true }).click()
+    const card = page.locator(".proposal.plan")
+    await card.getByText("Motion graphics", { exact: true }).waitFor({ timeout: 30_000 })
+    assert.equal(await card.locator(".graphic-picture").count(), 2, "the graphic the speaker never said isn't offered")
+    assert.ok(await card.getByText("2 motion graphics", { exact: false }).first().isVisible())
+    // Each preview is the kit's own document, playing in a sandboxed frame
+    const frame = card.locator(".graphic-picture iframe").first()
+    assert.equal(await frame.getAttribute("sandbox"), "allow-scripts")
+    await page.frameLocator(".graphic-picture iframe >> nth=0").getByText("Hello there friends").waitFor({ timeout: 20_000 })
+    // Restyle the second, recolour them all, then remove the first
+    await card.getByLabel("Style of the title").selectOption("words")
+    await card.getByLabel("Colour", { exact: true }).selectOption("yellow")
+    await page.waitForFunction(() => [...document.querySelectorAll(".graphic-picture iframe")].every((f) => /yellow/.test(decodeURIComponent(f.src))))
+    assert.match(decodeURIComponent(await card.locator(".graphic-picture iframe").nth(1).getAttribute("src")), /"style":"words"/)
+    for (const [width, height] of [[1280, 860], [360, 800]]) {
+      await page.setViewportSize({ width, height })
+      for (const colorScheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme })
+        await card.scrollIntoViewIfNeeded()
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}: no sideways scroll`)
+        const edge = await card.boundingBox()
+        assert.ok(edge.x >= 0 && edge.x + edge.width <= width + 1, `${width}: the card is ${Math.round(edge.width)} px wide at ${Math.round(edge.x)}`)
+        for (const control of await card.locator("button, select").all()) {
+          const box = await control.boundingBox()
+          assert.ok(box.height >= 44, `${width}: a ${Math.round(box.height)} px control`)
+          assert.ok(box.x + box.width <= edge.x + edge.width + 1, `${width}: a control runs off the card`)
+        }
+        if (shots) await card.screenshot({ path: join(shots, `graphics-card-${width}-${colorScheme}.png`) })
+      }
+    }
+    await card.getByRole("button", { name: "Remove" }).first().click()
+    assert.equal(await card.locator(".graphic-picture").count(), 1)
+    assert.ok(await card.getByText("1 motion graphic", { exact: false }).first().isVisible())
+    assert.deepEqual(problems, [], "console clean")
+  } finally {
+    await browser.close()
+    await stopHost(w.home)
+    await fake.close()
   }
 })

@@ -802,9 +802,15 @@
           },
           "mediaSearch": {
             "type": "boolean"
+          },
+          "motion": {
+            "type": "boolean"
+          },
+          "customMotion": {
+            "type": "boolean"
           }
         },
-        "required": ["visuals", "playbooks", "mediaSearch"],
+        "required": ["visuals", "playbooks", "mediaSearch", "motion", "customMotion"],
         "additionalProperties": false
       }
     },

@@ -309,8 +309,11 @@ async function qg07({ file, plan, run, thresholds }) {
   const picture = wholeSegment(plan).node.picture.sort((a, b) => a.at - b.at)
   // A freeze the plan asks for; and a scene may rest on a finished diagram while the voice explains it
   const holds = [...picture.filter((p) => p.hold), ...plan.tiles.filter((tile) => isSceneBlock(tile.node))].map(({ at, end }) => ({ at, end }))
+  // A transition the plan asks for holds the last frame under the next clip, and a dip passes through black
+  const transitions = picture.filter((p) => p.enter).map((p) => ({ at: p.at, end: p.at + p.enter.duration }))
+  holds.push(...transitions)
   const cuts = picture.slice(1).map((p, i) => ({ t: p.at, same: p.asset === picture[i].asset && !p.hold && !picture[i].hold }))
-  return outcome("QG-07", judgeHealth(health, { duration: plan.duration, fps: plan.output.fps, holds, cuts }, thresholds))
+  return outcome("QG-07", judgeHealth(health, { duration: plan.duration, fps: plan.output.fps, holds, cuts, transitions }, thresholds))
 }
 
 const textTiles = (plan) => plan.tiles.filter((t) => t.kind === "caption" || t.kind === "block")

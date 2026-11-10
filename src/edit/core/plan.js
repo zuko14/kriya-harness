@@ -7,11 +7,12 @@ import { outputFaces, unionBox } from "./faces.js"
 import { canonical, sha256 } from "./project.js"
 import { solveReframe } from "./reframe.js"
 import { solve } from "./solver.js"
-import { flicksToFrames, FLICKS, framesToFlicks, scaleFlicks, snapToFrame } from "./time.js"
+import { flicksToFrames, FLICKS, frameFlicks, framesToFlicks, scaleFlicks, snapToFrame } from "./time.js"
 
 const MAX_SEGMENT = 6 * FLICKS
 const DRAFT_SHORT_SIDE = 720
-const PICTURE_EFFECTS = new Set(["reframe", "grade", "lut", "stabilize", "transition", "fade"])
+// A transition isn't an effect on the piece's own frames: it becomes the piece's `enter` below
+const PICTURE_EFFECTS = new Set(["reframe", "grade", "lut", "stabilize", "fade"])
 const AUDIO_EFFECTS = new Set(["level", "eq", "duck", "fade", "fit"])
 
 const even = (value) => Math.round(value / 2) * 2
@@ -70,6 +71,14 @@ function zoomNode(zoom, start) {
   if (zoom.x !== undefined) Object.assign(node, { x: zoom.x, y: zoom.y })
   if (zoom.ease === "smooth") Object.assign(node, { since: start - zoom.at, length: zoom.end - zoom.at })
   return node
+}
+
+// The crop's x at one moment of a path: the same straight lines ffmpeg.js draws between its points
+function cropAt(path, t) {
+  const after = path.findIndex((point) => point.t >= t)
+  if (after <= 0) return path[after === 0 ? 0 : path.length - 1].x
+  const [a, b] = [path[after - 1], path[after]]
+  return Math.round(a.x + ((b.x - a.x) * (t - a.t)) / (b.t - a.t))
 }
 
 function boundaries(timeline, rawIndex, fps) {
@@ -207,6 +216,26 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
   const hidden = (tile) => tile.node.behind === true && mattes.some((m) => m.at <= tile.at && tile.end <= m.end)
   for (const tile of tiles) if (tile.node.behind && !hidden(tile)) tile.front = true
 
+  // A transition into a piece (transitions.js): the piece before it, frozen on its last frame and
+  // dressed as it was, for the incoming piece to arrive over. Only in the segment the piece starts
+  // in, never longer than half the piece or than that segment less two frames, so the cut stays put
+  const frame = frameFlicks(project.canvas.fps)
+  const enterOf = (piece, start, end) => {
+    const asked = piece.effects.find((e) => e.type === "transition")
+    if (!asked || piece.hold || piece.at !== start) return null
+    const before = timeline.picture.find((p) => p !== piece && p.end === piece.at)
+    if (!before) return null
+    const duration = snapToFrame(Math.min(asked.duration, Math.floor((piece.end - piece.at) / 2), end - start - 2 * frame), project.canvas.fps, "floor")
+    if (duration < 2 * frame) return null
+    const last = before.hold ? before.in : Math.max(before.in, before.out - scaleFlicks(frame, before.speed))
+    const path = crops.get(before.clip)
+    const color = sourceColor(before.asset)
+    // shortcut: a punch-in still on at the cut is kept only when it's a plain centred one; an eased or focused zoom is left off the held frame
+    const zoom = timeline.zooms.find((z) => z.at < piece.at && piece.at <= z.end && z.x === undefined && z.ease !== "smooth")
+    const from = { asset: before.asset, in: last, out: before.out, at: 0, end: duration, speed: { n: 1, d: 1 }, hold: true, effects: only(resolved(before), PICTURE_EFFECTS), ...(path ? { crop: [{ t: last, x: cropAt(path, last) }] } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}) }
+    return { kind: asked.kind, duration, from }
+  }
+
   const segments = boundaries(timeline, rawIndex, project.canvas.fps).map(([start, end], i) => {
     const picture = timeline.picture.filter(during(start, end)).map((piece) => {
       const part = clipped(piece, start, end)
@@ -214,7 +243,8 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
       const path = crops.get(piece.clip)
       const crop = path ? cropFor(path, part, (rawIndex.shots ?? []).filter((s) => s.asset === piece.asset).map((s) => s.start)) : undefined
       const zoom = timeline.zooms.find(during(start, end))
-      return { ...part, ...(piece.hold ? { hold: true } : {}), effects: only(resolved(piece), PICTURE_EFFECTS), ...(crop ? { crop } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}) }
+      const enter = enterOf(piece, start, end)
+      return { ...part, ...(piece.hold ? { hold: true } : {}), effects: only(resolved(piece), PICTURE_EFFECTS), ...(crop ? { crop } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}), ...(enter ? { enter } : {}) }
     })
     const overlays = footage.filter(during(start, end)).map((overlay) => ({ ...clipped(overlay, start, end), effects: only(overlay.effects, PICTURE_EFFECTS) }))
     const node = {
@@ -224,7 +254,7 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
       ...(mattes.some(during(start, end)) ? { mattes: mattes.filter(during(start, end)).map((m) => ({ at: m.at - start, end: m.end - start, box: m.box })) } : {}),
     }
     const luts = picture.flatMap((item) => item.effects.filter((e) => e.type === "lut").map((e) => e.asset))
-    return { id: `s${i}`, start, end, key: key(node, [...picture.map((item) => item.asset), ...overlays.map((item) => item.asset), ...luts]), node }
+    return { id: `s${i}`, start, end, key: key(node, [...picture.flatMap((item) => [item.asset, ...(item.enter ? [item.enter.from.asset] : [])]), ...overlays.map((item) => item.asset), ...luts]), node }
   })
 
   issues.push(...crowdedEffects(timeline.audio))

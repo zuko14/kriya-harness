@@ -11,9 +11,11 @@ import { LOOKS } from "../engine/captions.js"
 import { SFX } from "../engine/sfx.js"
 import { paperEdit, shotDigest } from "../index/views.js"
 import { planScenes, visualsIn } from "./beats.js"
+import { graphicLine, graphicsIn, planGraphics } from "./graphics.js"
 import { picturesRefused, planLookups } from "./lookups.js"
 import { applyPlaybook, footageFacts, GENRES, PLAYBOOKS, playbookPrompt } from "./playbooks.js"
 import { timesIn } from "./revise.js"
+import { TRANSITIONS } from "../core/transitions.js"
 
 const FLICKS = 705_600_000
 // The highlight colours a plan may choose; hex stays in code
@@ -51,6 +53,26 @@ export const PLAN_SCHEMA = {
   additionalProperties: false,
 }
 
+// Transitions in the person's words: a kind, "no transitions", and whether every cut gets one
+const TRANSITION_CUES = [
+  ["slide", /\b(?:slide|push)\b/i],
+  ["wipe", /\bwipe\b/i],
+  ["zoom", /\bzoom\b/i],
+  ["flash", /\bflash\b/i],
+  ["dip", /\bdip\b|\bto black\b/i],
+  ["fade", /\b(?:cross ?fade|dissolve|fade)\b/i],
+]
+/** @returns {{ transition?: string, transitionAll?: boolean }} empty when the words say nothing of transitions */
+export function transitionIn(text) {
+  const said = String(text ?? "")
+  // The clause that speaks of transitions, so "zoom in on the price" elsewhere doesn't choose a zoom
+  const clause = said.split(/[.;!?\n]+/).find((part) => /\btransitions?\b|\bcross ?fade|\bdissolve/i.test(part))
+  if (!clause) return {}
+  if (/\b(?:no|without|skip|remove(?: the| all)?|drop the)\s+(?:any\s+)?transitions?\b/i.test(clause)) return { transition: "none" }
+  const kind = TRANSITION_CUES.find(([, cue]) => cue.test(clause))?.[0] ?? "fade"
+  return { transition: kind, ...(/\b(?:every|each|all)\s+(?:the\s+|of the\s+)?cuts?\b|\beverywhere\b/i.test(clause) ? { transitionAll: true } : {}) }
+}
+
 /** What the plan's settings ask of a make job, as the make route takes them. */
 export function briefOf(settings = {}) {
   return {
@@ -78,6 +100,8 @@ export function briefOf(settings = {}) {
     ...(settings.terms?.length ? { terms: settings.terms.map(({ at, id, term }) => ({ at, id, term })) } : {}),
     ...(Number.isInteger(settings.soundEvery) && settings.soundEvery > 1 ? { soundEvery: settings.soundEvery } : {}),
     ...(Array.isArray(settings.scenes) && settings.scenes.length ? { scenes: settings.scenes, sceneSound: settings.sceneSound !== false } : {}),
+    ...(Array.isArray(settings.graphics) && settings.graphics.length ? { graphics: settings.graphics } : {}),
+    ...(Object.hasOwn(TRANSITIONS, settings.transition ?? "") ? { transition: settings.transition, ...(settings.transitionAll ? { transitionAll: true } : {}) } : {}),
   }
 }
 
@@ -255,11 +279,11 @@ export function planProblems(settings, index) {
 
 /**
  * @param {{ ask: Function, project: object, index: object, text: string, history?: object[], previous?: object, references?: { name: string, lines: string[] }[], choices?: object, visuals?: boolean, playbooks?: boolean, signal?: AbortSignal }} input
- *   visuals, playbooks: the server's editing.visuals and editing.playbooks; off, this plan is what it always was
+ *   visuals, playbooks, motion: the server's editing.visuals, editing.playbooks and editing.motion; off, this plan is what it always was
  *   lookups: { search, define, keep } with editing.mediaSearch on; null, no search word leaves the computer
  * @returns {Promise<{ say: string, steps: string[], settings: object, source: string, reason?: string }>}
  */
-export async function planCut({ ask, project, index, text, history = [], previous = null, references = [], choices = {}, visuals = false, playbooks = false, lookups = null, signal }) {
+export async function planCut({ ask, project, index, text, history = [], previous = null, references = [], choices = {}, visuals = false, playbooks = false, motion = false, lookups = null, signal }) {
   const assets = project.assets.filter((a) => a.kind === "video" || a.kind === "audio").map((a) => a.id)
   const refs = references.length ? `References the person added, measured by code:\n${references.map((r) => `- ${r.name}: ${r.lines.join("; ")}`).join("\n")}` : "No references added."
   const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`].join("\n\n")
@@ -273,7 +297,7 @@ export async function planCut({ ask, project, index, text, history = [], previou
   // The scenes first, so the pitch can speak for them; each is checked by code, and the person swaps them on the card
   const planned = visuals && take ? await planScenes({ ask, index, asset: take.id, text, history, previous, cuts, signal }) : null
   const scenes = planned?.scenes ?? []
-  const { scenes: _shownOnTheCard, ...previousSettings } = previous?.settings ?? {}
+  const { scenes: _shownOnTheCard, graphics: _alsoOnTheCard, ...previousSettings } = previous?.settings ?? {}
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
@@ -295,7 +319,9 @@ export async function planCut({ ask, project, index, text, history = [], previou
   })
   // With playbooks the answer also names the genre; off, the schema is the same object as before
   const schema = playbooks ? { ...PLAN_SCHEMA, properties: { ...PLAN_SCHEMA.properties, genre: { type: "string", enum: GENRES }, settings: { ...PLAN_SCHEMA.properties.settings, properties: { ...PLAN_SCHEMA.properties.settings.properties, captions: { type: "string", enum: ["none", ...Object.keys(LOOKS)] }, accent: { type: "string", enum: Object.keys(ACCENTS) }, song: { type: "string", maxLength: 64 } } } }, required: [...PLAN_SCHEMA.required, "genre"] } : PLAN_SCHEMA
-  const answer = await ask({ task: "plan", tier: "budget", schema, view, request, maxOutput: 2500, check, fallback, signal, priority: 0 })
+  // With editing.motion the Director may also choose a transition; off, the schema is the object it was
+  const asked_ = motion ? { ...schema, properties: { ...schema.properties, settings: { ...schema.properties.settings, properties: { ...schema.properties.settings.properties, transition: { type: "string", enum: ["none", ...Object.keys(TRANSITIONS)] } } } } } : schema
+  const answer = await ask({ task: "plan", tier: "budget", schema: asked_, view, request: motion ? `${request}\nYou may also set \`transition\` (${Object.keys(TRANSITIONS).join(", ")}): how the picture arrives where the story changes moment, such as out of a cold open or into a reordered line. Code puts it only at those joins, never on a filler cut. Choose none unless it suits the video.` : request, maxOutput: 2500, check, fallback, signal, priority: 0 })
   const clean = (value) => String(value ?? "").replace(/[\u0000-\u001f<>]/g, " ").trim()
   // The frame is always set, and set by what the person said, never left to a default
   // The fallback plan keeps the person's choices: no model read the speech, so no genre was found
@@ -360,6 +386,25 @@ export async function planCut({ ask, project, index, text, history = [], previou
     const why = planned.dropped[0]?.reason
     if (visualsIn(text)) steps.push(`No animated scene this time${why ? `: ${why}` : ": nothing in the speech can be drawn from the speaker's own words"}.`)
     delete settings.scenes
+  }
+  // Transitions: the person's words outrank the Director's choice; a revision that says nothing keeps what was approved
+  const transitionSaid = motion ? [...history.filter((h) => h.who === "you").map((h) => h.text), text].map(transitionIn).reduce((all, one) => ({ ...all, ...one }), {}) : {}
+  const kept_ = motion && previous?.settings?.transition && Object.hasOwn(TRANSITIONS, previous.settings.transition) ? { transition: previous.settings.transition, transitionAll: !!previous.settings.transitionAll } : {}
+  const chosen = { ...kept_, ...(Object.hasOwn(TRANSITIONS, settings.transition ?? "") ? { transition: settings.transition } : {}), ...transitionSaid }
+  delete settings.transition
+  delete settings.transitionAll
+  if (motion && Object.hasOwn(TRANSITIONS, chosen.transition ?? "")) {
+    settings.transition = chosen.transition
+    if (chosen.transitionAll) settings.transitionAll = true
+  }
+  // Motion graphics from the kit, after the scenes so none is planned under one; each is checked by code
+  delete settings.graphics
+  if (motion && take) {
+    const planned = await planGraphics({ ask, index, asset: take.id, text, history, previous, cuts, scenes: sceneList, signal })
+    if (planned.graphics.length) {
+      settings.graphics = planned.graphics
+      steps.unshift(`Add ${planned.graphics.length} motion graphic${planned.graphics.length === 1 ? "" : "s"}: ${planned.graphics.map(graphicLine).join("; ")}. You can restyle or remove each below.`.slice(0, 240))
+    } else if (graphicsIn(text) === "on") steps.push(`No motion graphics this time${planned.dropped[0] ? `: ${planned.dropped[0].reason}` : ": the words for one must be the speaker's or yours, so say what a title or name strap should read"}.`.slice(0, 240))
   }
   return { say: clean(answer.value.say).slice(0, 900), steps: steps.slice(0, 13), settings, source: answer.source, ...(genre ? { genreLabel: PLAYBOOKS[genre].label } : {}), ...(answer.reason ? { reason: answer.reason } : {}) }
 }

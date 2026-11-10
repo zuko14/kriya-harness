@@ -669,6 +669,8 @@ async function workspace(id) {
       settings.broll === "own" ? "B-roll from your clips" : null,
       settings.titles ? "title cards" : null,
       settings.scenes?.length ? `${settings.scenes.length} animated scene${settings.scenes.length === 1 ? "" : "s"}` : null,
+      settings.graphics?.length ? `${settings.graphics.length} motion graphic${settings.graphics.length === 1 ? "" : "s"}` : null,
+      settings.transition && settings.transition !== "none" ? `${settings.transition} transitions ${settings.transitionAll ? "on every cut" : "where the story changes moment"}` : null,
       settings.pictures?.length ? `${settings.pictures.length} licensed picture${settings.pictures.length === 1 ? "" : "s"}` : null,
       settings.terms?.length ? `${settings.terms.length} cited definition${settings.terms.length === 1 ? "" : "s"}` : null,
       settings.song ? "your song" : null,
@@ -747,6 +749,67 @@ async function workspace(id) {
     draw()
     return h("div", { class: "scenes" }, h("div", { class: "row scene-head" }, h("p", { class: "lead" }, "Animated scenes"), look), list)
   }
+  /**
+   * The plan's motion graphics: each playing as the render will draw it, restyled or removed
+   * here. The words are the speaker's or the person's own, so they aren't edited on the card.
+   */
+  function graphicCards(plan, changed) {
+    const choices = plan.graphicChoices ?? { kinds: {}, styles: {}, accents: [], tones: [], fonts: [] }
+    const format = plan.settings.format ?? makeFormat.value
+    const size = format === "16:9" ? { w: 1920, h: 1080, show: 200 } : format === "1:1" ? { w: 1080, h: 1080, show: 150 } : format === "4:5" ? { w: 1080, h: 1350, show: 136 } : { w: 1080, h: 1920, show: 120 }
+    let rows = [...plan.settings.graphics]
+    const list = h("ul", { class: "scene-list" })
+    const save = () => {
+      plan.settings.graphics = rows
+      if (rows.length) plan.brief.graphics = rows
+      else delete plan.brief.graphics
+      changed()
+    }
+    const source = (graphic) => `/projects/${id}/graphic-preview?format=${encodeURIComponent(format)}&graphic=${encodeURIComponent(JSON.stringify(graphic))}`
+    const when = (graphic) => {
+      const word = graphic.at && index.words?.find((w) => w.id === graphic.at)
+      return graphic.kind === "intro" ? "start" : graphic.kind === "end" ? "end" : word ? clockOf(word.start / 705_600_000) : ""
+    }
+    const draw = () => {
+      clear(list)
+      if (!rows.length) list.append(h("li", { class: "note small" }, "No motion graphics."))
+      rows.forEach((graphic, i) => {
+        const kind = choices.kinds[graphic.kind] ?? { label: graphic.kind, styles: [graphic.style] }
+        const frame = h("iframe", { title: `Preview of the ${kind.label.toLowerCase()} "${graphic.text}"`, sandbox: "allow-scripts", loading: "lazy", src: source(graphic) })
+        frame.style.width = `${size.w}px`
+        frame.style.height = `${size.h}px`
+        frame.style.transform = `scale(${size.show / size.w})`
+        const picture = h("div", { class: "scene-picture graphic-picture" }, frame)
+        picture.style.width = `${size.show}px`
+        picture.style.height = `${Math.round((size.show * size.h) / size.w)}px`
+        const style = kind.styles.length > 1 ? h("select", { class: "field select", "aria-label": `Style of the ${kind.label.toLowerCase()}`, onchange: () => ((rows[i] = { ...rows[i], style: style.value }), save(), (frame.src = source(rows[i]))) }, kind.styles.map((option) => h("option", { value: option }, choices.styles[option] ?? option))) : null
+        if (style) style.value = graphic.style
+        list.append(
+          h(
+            "li",
+            { class: "scene-row" },
+            picture,
+            h(
+              "div",
+              { class: "scene-info" },
+              h("p", { class: "small" }, h("span", { class: "scene-time" }, when(graphic)), ` ${kind.label}`),
+              h("p", { class: "note small" }, [graphic.text, graphic.subtitle].filter(Boolean).join(" · ")),
+              h("div", { class: "row" }, style, h("button", { type: "button", class: "btn", onclick: () => (frame.src = source(rows[i])) }, "Play again"), h("button", { type: "button", class: "btn", onclick: () => ((rows = rows.filter((_, n) => n !== i)), save(), draw()) }, "Remove")),
+            ),
+          ),
+        )
+      })
+    }
+    // The brand kit: one colour, plate and font for every graphic in the cut
+    const brand = (key, options, label) => {
+      const select = h("select", { class: "field select", "aria-label": label, onchange: () => ((rows = rows.map((graphic) => ({ ...graphic, [key]: select.value }))), save(), draw()) }, options.map((value) => h("option", { value }, `${label}: ${value}`)))
+      select.value = rows[0][key]
+      return select
+    }
+    const kit = h("div", { class: "row" }, brand("accent", choices.accents, "Colour"), brand("tone", choices.tones, "Plate"), brand("font", choices.fonts, "Font"))
+    draw()
+    return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Motion graphics"), kit, list)
+  }
   /** Real pictures found for what's named: each with its licence and credit, swappable, removable. Nothing downloads until approval. */
   function pictureCards(plan, changed) {
     const list = h("ul", { class: "scene-list" })
@@ -823,17 +886,20 @@ async function workspace(id) {
     const box = h(
       "div",
       { class: "proposal plan" },
-      h("p", { class: "lead" }, "The Director's plan, not made yet"),
+      h("p", { class: "lead" }, plan.revises ? "A change to your current cut, not made yet" : "The Director's plan, not made yet"),
+      // Worked out by Kriya's code from the plan your cut was made with and this one
+      plan.revises ? h("p", { class: "note small" }, `${plan.differs?.length ? `What changes: ${plan.differs.join(" · ")}. ` : ""}${plan.keepsStory ? "The story and your own edits stay." : "The length or the trims change, so the lines are chosen again; your own edits are kept where they still fit."} Say "start over" for a new cut from the footage.`) : null,
       plan.steps.length ? h("ol", { class: "steps" }, plan.steps.map((step) => h("li", {}, ...withTimes(step)))) : null,
       line,
       plan.settings.scenes?.length ? sceneCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
+      plan.settings.graphics?.length ? graphicCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       plan.settings.pictures?.length ? pictureCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       plan.settings.terms?.length ? termCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       plan.brief.captions ? captionChoice(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       h(
         "div",
         { class: "row" },
-        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), showPlanInPanel(plan.brief), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Direct.`)), make(plan.brief, { exact: true })) }, "Approve and make it"),
+        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), showPlanInPanel(plan.brief), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Direct.`)), make(plan.brief, { exact: true, plan })) }, "Approve and make it"),
         h("button", { type: "button", class: "btn", onclick: () => ((pendingPlan = plan), prompt.focus(), (prompt.placeholder = "Say what to change in the plan…")) }, "Change…"),
       ),
     )
@@ -980,10 +1046,10 @@ async function workspace(id) {
     ...extra,
   })
   /** exact: the brief as given (an approved plan) plus the references in use; else the panel's choices under it */
-  async function make(extra, { exact = false } = {}) {
+  async function make(extra, { exact = false, plan = null } = {}) {
     try {
       const refs = briefNow().references
-      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}) } : briefNow(extra) })
+      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}) } : briefNow(extra), ...(plan ? { plan: { say: plan.say, steps: plan.steps, settings: plan.settings } } : {}) })
       makeJob = job.id
       jobsNow.set(job.id, job)
       say.textContent = "Directing your reel: reading the footage, choosing the story, cutting and checking it. You can keep working."

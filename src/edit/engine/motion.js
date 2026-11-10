@@ -10,6 +10,7 @@ import { join } from "node:path"
 import { childEnv } from "../runtime/setup.js"
 import { confine, confinement, installOf } from "./confine.js"
 import { buildScene, SCENE_VERSION } from "./scenes.js"
+import { buildGraphic, GRAPHIC_VERSION } from "./graphics.js"
 import { EngineFailure, runTool } from "./tool.js"
 
 const FLICKS = 705_600_000
@@ -66,9 +67,10 @@ export function tileSeconds(flicks, fps) {
  * tile, Kriya's own animations. Non-GSAP, so `data-no-timeline` (EX-01).
  * @param {{ width: number, height: number, duration: number, css: string, body: string, animations: { id: string, keyframes: object[], options: object }[], fit?: { id: string, within: string, min: number } }} parts duration in flicks;
  *   fit: shrink an element's font, a pixel at a time, until it fits its box (no clock, so every render agrees)
+ *   fit.box: the element measured against the box, when it isn't the one whose font shrinks (a plate around the text)
  */
 export function tileDocument({ width, height, duration, css, body, animations, fit }) {
-  const fitting = fit ? `{const t=document.getElementById(${scriptJson(fit.id)}),a=document.getElementById(${scriptJson(fit.within)});let s=parseFloat(getComputedStyle(t).fontSize);while((t.offsetHeight>a.clientHeight||t.scrollWidth>a.clientWidth)&&s>${Number(fit.min)}){s-=1;t.style.fontSize=s+"px"}}` : ""
+  const fitting = fit ? `{const t=document.getElementById(${scriptJson(fit.id)}),a=document.getElementById(${scriptJson(fit.within)}),b=document.getElementById(${scriptJson(fit.box ?? fit.id)});let s=parseFloat(getComputedStyle(t).fontSize);while((b.offsetHeight>a.clientHeight||b.scrollWidth>a.clientWidth)&&s>${Number(fit.min)}){s-=1;t.style.fontSize=s+"px"}}` : ""
   const seconds = (duration / FLICKS).toFixed(6)
   return [
     "<!doctype html>",
@@ -135,6 +137,8 @@ export const BLOCKS = {
   },
   // An explainer scene (VISUAL_SCENES.md): an opaque cutaway; `placement` is its content box
   scene: { version: SCENE_VERSION, build: (parts) => buildScene(parts, springKeyframes) },
+  // The motion kit (MOTION_GRAPHICS.md): a title, strap or card in the box the layout gives it
+  graphic: { version: GRAPHIC_VERSION, build: (parts) => buildGraphic(parts, springKeyframes) },
 }
 
 /** A block tile's composition. An unknown block or version is refused, never drawn as something else. */
