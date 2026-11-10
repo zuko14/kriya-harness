@@ -5,7 +5,10 @@
 
 import { apply } from "../core/ops.js"
 import { solve } from "../core/solver.js"
+import { cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_KINDS, GRAPHIC_VERSION, graphicLength, SUBTITLE_MAX, TEXT_MAX } from "../engine/graphics.js"
 import { paperEdit, shotDigest } from "../index/views.js"
+import { TRANSITION_LABELS, transitionLength, TRANSITIONS } from "../core/transitions.js"
+import { brandIn, graphicProblems } from "./graphics.js"
 
 const FLICKS = 705_600_000
 
@@ -97,6 +100,36 @@ export const OPS_SCHEMA = {
   additionalProperties: false,
 }
 
+// With editing.motion on, chat can also put a kit graphic on screen (MOTION_GRAPHICS.md). Off,
+// the console's schema is the same object as before
+const ITEMS = OPS_SCHEMA.properties.ops.items
+const MOTION_SCHEMA = { ...OPS_SCHEMA, properties: { ...OPS_SCHEMA.properties, ops: { ...OPS_SCHEMA.properties.ops, items: { ...ITEMS, properties: { ...ITEMS.properties, op: { type: "string", enum: [...CONSOLE_OPS, "add_graphic", "transition"] }, kind: { type: "string", enum: [...Object.keys(GRAPHIC_KINDS), ...Object.keys(TRANSITIONS)] }, style: { type: "string", maxLength: 16 }, subtitle: { type: "string", maxLength: SUBTITLE_MAX } } } } } }
+export const consoleSchema = (motion) => (motion ? MOTION_SCHEMA : OPS_SCHEMA)
+
+/**
+ * `add_graphic` as the engine's own operation: the graphic cleaned, its words held to the
+ * speaker's and the person's, its length set by code. Every other operation passes through.
+ * @param {object[]} ops
+ * @param {{ index: object, person: string }} context person: the person's own messages
+ * @returns {{ ops: object[], problems: string[] }}
+ */
+export function expandGraphics(ops, { index, person }) {
+  const problems = []
+  const spoken = (index.words ?? []).map((w) => w.text).join(" ")
+  const out = ops.map((op, i) => {
+    // A transition's length is code's: the default, or what was asked, inside the allowed range
+    if (op?.op === "transition") return Object.hasOwn(TRANSITIONS, op.kind ?? "") ? { op: "transition", clip: op.clip, kind: op.kind, duration: transitionLength(op.duration) } : (problems.push(`operation ${i + 1}: a transition's kind is one of ${Object.keys(TRANSITIONS).join(", ")}`), op)
+    if (op?.op !== "add_graphic") return op
+    const graphic = cleanGraphic({ ...op, ...brandIn(person), at: undefined })
+    if (!graphic) return problems.push(`operation ${i + 1}: that isn't a graphic the kit draws (a "stat" is digits; text is up to ${TEXT_MAX} characters)`), op
+    if (op.at === undefined) return problems.push(`operation ${i + 1}: add_graphic needs \`at\`, a word anchor or a clip edge`), op
+    const said = graphicProblems(graphic, { spoken, near: spoken, person })
+    if (said.length) return problems.push(`operation ${i + 1}: ${said[0]}; a graphic's words are the speaker's or the person's own`), op
+    return { op: "add_motion", block: GRAPHIC_BLOCK, version: GRAPHIC_VERSION, variables: graphic, at: op.at, duration: Number.isInteger(op.duration) ? Math.min(op.duration, 8 * FLICKS) : graphicLength(graphic) }
+  })
+  return { ops: out, problems }
+}
+
 /**
  * What models often send that means nothing: every optional field present as null,
  * and empty lists or no `ops` at all. Tidied before the schema, never invented.
@@ -166,9 +199,12 @@ export function describe(op, index) {
       return `Changed caption ${op.caption} to "${op.text}"`
     case "caption_emphasis":
       return `Emphasised "${words.get(op.word)?.text ?? op.word}" in caption ${op.caption}`
+    case "transition":
+      return `Added a ${(TRANSITION_LABELS[op.kind] ?? op.kind).toLowerCase()} transition into ${op.clip}`
     case "add_title":
       return `Added the title "${op.text}" at ${place(op.at)}`
     case "add_motion":
+      if (op.block === GRAPHIC_BLOCK) return `Added ${/^[aeiou]/i.test(GRAPHIC_KINDS[op.variables?.kind]?.label ?? "g") ? "an" : "a"} ${(GRAPHIC_KINDS[op.variables?.kind]?.label ?? "graphic").toLowerCase()} "${op.variables?.text ?? ""}"${op.variables?.subtitle ? `, "${op.variables.subtitle}"` : ""} at ${place(op.at)}`
       return op.block === "scene" ? `Added an animated ${op.variables?.kind ?? ""} scene, "${op.variables?.text ?? ""}", at ${place(op.at)}` : op.op
     case "grade":
       return `Graded ${op.clip}${op.saturation !== undefined ? `, saturation ${op.saturation}` : ""}${op.gain !== undefined ? `, contrast ${op.gain}` : ""}${op.gamma !== undefined ? `, gamma ${op.gamma}` : ""}${op.lift !== undefined ? `, lift ${op.lift}` : ""}`
@@ -337,7 +373,7 @@ export function timesView(text, project, index) {
  * @param {{ ask: ReturnType<import("./ask.js").createAsk>, project: object, index: object, text: string, selection?: object, signal?: AbortSignal }} input
  * @returns {Promise<{ ops: object[], changes: string[], project: object | null, source: string, reason?: string, calls: number }>}
  */
-export async function revise({ ask, project, index, text, selection, history = [], signal }) {
+export async function revise({ ask, project, index, text, selection, history = [], motion = false, signal }) {
   const assets = project.assets.map((a) => a.id)
   // A marked range reads like a typed one: code says what it points at
   const marked = Number.isInteger(selection?.from) && Number.isInteger(selection?.to) ? ` from ${clock(selection.from)} to ${clock(selection.to)}` : ""
@@ -351,6 +387,7 @@ export async function revise({ ask, project, index, text, selection, history = [
     `${earlier}The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
     "Answer with JSON only. Put in `ops` the operations that do exactly what they ask, and nothing else.",
     "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch the person names by time, use the exact remove_range given for it above, unchanged; for a stretch named by words, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor; to take background noise out of the voice, clean_voice on each picture clip; to warm or cool the picture, grade with temperature (lower is warmer, 6500 neutral), vibrance or vignette; for a speed ramp or slow motion, speed_ramp on the clip with from and to (source flicks from the lines above, or word anchors) and peak {n, d} (2/1 speeds up and back, 1/2 is eased slow motion); for a constant speed, speed; to lay other footage over a moment, place_broll with a video asset id from the project, at a word anchor or clip edge, and duration in flicks.",
+    ...(motion ? [`To put a motion graphic on screen, add_graphic with kind (${Object.entries(GRAPHIC_KINDS).map(([id, kind]) => `${id}: ${kind.label.toLowerCase()}`).join("; ")}), text, subtitle where the kind has a second line, and at (a word anchor). Its words must be the speaker's or the person's own from their request, never yours; a stat's text is digits the speaker says.`, `To dress a cut, transition with the clip the picture arrives in (never the first clip) and kind (${Object.keys(TRANSITIONS).join(", ")}); the cut itself doesn't move.`] : []),
     "Put one plain sentence in `say`: what you changed, or the answer if they asked a question.",
     "If they ask to fix or correct the transcript (names, misheard words), put each wrong word in `corrections` as {word: its id, text: the right word}, only where you are confident from the context.",
     "If they ask for the whole video to be made, directed, edited or improved (not one part of it), set `direct` to an object (with `seconds` and a caption look if they say so) and leave `ops` empty: the Director makes the whole cut.",
@@ -358,13 +395,18 @@ export async function revise({ ask, project, index, text, selection, history = [
   ].join("\n")
   const words = new Map((index.words ?? []).map((w) => [w.id, w]))
   // Operations must apply; a correction on an unknown word is only dropped, never worth a second call
-  const check = ({ ops }) => {
-    if (!ops.length) return []
+  const person = [...history.filter((h) => h.who === "you").map((h) => h.text), text].join("\n")
+  const expand = (ops) => (motion ? expandGraphics(ops, { index, person }) : { ops, problems: [] })
+  const check = ({ ops: asked }) => {
+    if (!asked.length) return []
+    const { ops, problems } = expand(asked)
+    if (problems.length) return problems
     const tried = apply(project, ops, { index, author: "agent" })
     return tried.applied ? [] : tried.diagnostics.map((d) => `operation ${d.op + 1}: ${d.message}`)
   }
-  const answer = await ask({ task: "console", tier: "budget", schema: OPS_SCHEMA, view, request, maxOutput: 2000, check, clean: tidyConsole, fallback: () => ({ ops: [] }), signal, priority: 0 })
-  const ops = answer.value.ops
+  const answer = await ask({ task: "console", tier: "budget", schema: consoleSchema(motion), view, request, maxOutput: 2000, check, clean: tidyConsole, fallback: () => ({ ops: [] }), signal, priority: 0 })
+  const expanded = expand(answer.value.ops)
+  const ops = expanded.problems.length ? [] : expanded.ops
   const tried = ops.length ? apply(project, ops, { index, author: "agent" }) : null
   // A correction that changes nothing, or isn't a known word, isn't offered
   const corrections = (answer.value.corrections ?? []).map((c) => ({ word: c.word, text: cleanWord(c.text) })).filter((c) => words.has(c.word) && c.text && c.text !== words.get(c.word).text)

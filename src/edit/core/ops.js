@@ -3,6 +3,7 @@
 // no inverse per operation: history moves HEAD and replays (history.js).
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
+import { TRANSITION_MAX, TRANSITION_MIN, TRANSITIONS } from "./transitions.js"
 import { check, EFFECTS, SHAPES, validateProject } from "./project.js"
 import { snapToFrame } from "./time.js"
 
@@ -366,7 +367,11 @@ const OPS = {
   transition: {
     fields: { clip: "id", kind: "str", duration: "flicks" },
     run(op, s) {
-      setEffect(writable(s, op.clip), { type: "transition", kind: op.kind, duration: op.duration })
+      if (!Object.hasOwn(TRANSITIONS, op.kind)) refuse("unknown_transition", `there is no "${op.kind}" transition: ${Object.keys(TRANSITIONS).join(", ")}`)
+      if (op.duration < TRANSITION_MIN || op.duration > TRANSITION_MAX) refuse("bad_duration", "a transition lasts 0.2 to 0.8 seconds")
+      const clip = writable(s, op.clip)
+      if (!clip.source) refuse("not_footage", `clip "${op.clip}" isn't footage, so nothing can transition into it`)
+      setEffect(clip, { type: "transition", kind: op.kind, duration: op.duration })
     },
   },
   stabilize: {

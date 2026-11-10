@@ -5,6 +5,8 @@
 // the lines to drop; the emphasis words), each with a default that needs no model.
 
 import { isSceneBlock } from "../core/layout.js"
+import { graphicOps, isPlanGraphic } from "./graphic-clips.js"
+import { TRANSITION_DEFAULT, TRANSITIONS } from "../core/transitions.js"
 import { apply } from "../core/ops.js"
 import { solve } from "../core/solver.js"
 import { LOOKS, pages, readablePages } from "../engine/captions.js"
@@ -168,7 +170,10 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const scoped = { ...index, sentences: lines, words: lines.flatMap((l) => l.words), takes: [] }
 
   // Story: the hook, and the lines that add nothing (sentence ids only)
-  const story = await ask({
+  // A change to a cut that's already made keeps its story (continuity.js): the Host passes the
+  // last make's choice, checked here against this footage, and no model is asked
+  const keptStory = brief.story && typeof brief.story === "object" ? { hook: ids.has(brief.story.hook) ? brief.story.hook : null, drop: (Array.isArray(brief.story.drop) ? brief.story.drop : []).filter((id) => ids.has(id)) } : null
+  const story = keptStory ? { value: keptStory, source: "kept", calls: 0 } : await ask({
     task: "story",
     schema: STORY_SCHEMA,
     recipe: recipe.notes,
@@ -217,7 +222,7 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const rebuilt = new Set(sequence.tracks.filter((t) => ["base", "caption", "music"].includes(t.role)).map((t) => t.id))
   const ops = [
     // Scenes too: an earlier make's scenes hang on the words of that cut
-    ...sequence.clips.filter((c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
+    ...sequence.clips.filter((c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e) || isPlanGraphic(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
     { op: "set_brief", format: recipe.id, targetDuration: target, mustKeep: brief.mustKeep ?? [], mustCut: brief.mustCut ?? [], effort: brief.effort ?? "best", ...(brief.language ? { language: brief.language } : {}) },
     { op: "set_format", width: recipe.canvas.width, height: recipe.canvas.height, fps: recipe.deliverable.fps },
     ...(project.deliverables.some((d) => d.preset === recipe.deliverable.preset) ? [] : [{ op: "add_deliverable", ...deliverableFor(brief) }]),
@@ -242,9 +247,16 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   // The approved plan's scenes, on the cut as solved. A zoom or title under one would never be seen
   const scenes = brief.scenes?.length || brief.pictures?.length || brief.terms?.length ? sceneOps({ scenes: brief.scenes ?? [], pictures: brief.pictures ?? [], terms: brief.terms ?? [], project: step.project, index, asset, kept, captions: !!LOOKS[brief.captions], sound: { scene: brief.sfx?.scene, reveal: brief.sfx?.reveal } }) : { ops: [], covered: new Set(), notes: [] }
   notes.push(...scenes.notes)
+  // The approved plan's motion graphics (MOTION_GRAPHICS.md), placed on the cut with its scenes in, so none lands on one
+  const withScenes = scenes.ops.length ? apply(step.project, scenes.ops, { index, author: "agent" }) : null
+  const graphics = brief.graphics?.length ? graphicOps({ graphics: brief.graphics, project: withScenes?.applied ? withScenes.project : step.project, index, asset, kept }) : { ops: [], notes: [] }
+  notes.push(...graphics.notes)
   const visible = kept.filter((w) => !scenes.covered.has(w.id))
   const keptIds = new Set(visible.map((w) => w.id))
-  const emphasis = await ask({
+  // The same words stay punched in while the plan asks for as many as before
+  const was = keptStory && brief.story.emphasis
+  const keptWords = was && was.most === most && Array.isArray(was.ids) ? was.ids.filter((id) => keptIds.has(id)) : null
+  const emphasis = keptWords ? { value: { emphasis: keptWords }, source: "kept", calls: 0 } : await ask({
     task: "emphasis",
     schema: EMPHASIS_SCHEMA,
     recipe: recipe.notes,
@@ -325,8 +337,27 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const music = song ? [{ op: "set_music", asset: song.id }, { op: "music_shape", fit: true, fadeIn: Math.round(FLICKS * 0.3) }, { op: "duck" }] : []
   const captionLook = { ...(brief.captionStyle ?? {}), ...(brief.holdCaptions ? { hold: true } : {}) }
   const style = LOOKS[brief.captions] && Object.keys(captionLook).length ? [{ op: "set_look", caption: captionLook }] : []
-  const all = [...ops, ...style, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...scenes.ops, ...captions, ...music, ...sounds, ...ramps]
+  // Transitions (transitions.js): where the story changes moment (out of the cold open, a line moved
+  // up, a jump of seconds in the take), or on every cut when the person asked. A filler cut stays a cut
+  const joins = []
+  if (Object.hasOwn(TRANSITIONS, brief.transition ?? "")) {
+    const SECTION = 3 * FLICKS
+    // The story as it plays: each clip's stretch of the take, in order (a clip's own source is word anchors)
+    const played = []
+    for (const p of solve(step.project, index).picture) {
+      if (p.hold) continue
+      if (played.at(-1)?.clip === p.clip) played.at(-1).out = p.out
+      else played.push({ clip: p.clip, asset: p.asset, in: p.in, out: p.out, echo: !!p.echo })
+    }
+    for (let i = 1; i < played.length; i++) {
+      const [a, b] = [played[i - 1], played[i]]
+      const moment = a.echo !== b.echo || a.asset !== b.asset || b.in < a.out || b.in - a.out > SECTION
+      if (brief.transitionAll || moment) joins.push({ op: "transition", clip: b.clip, kind: brief.transition, duration: TRANSITION_DEFAULT })
+    }
+    if (!joins.length) notes.push(`No ${brief.transition} transition: this cut runs straight through, with no change of moment to dress.`)
+  }
+  const all = [...ops, ...style, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...scenes.ops, ...graphics.ops, ...captions, ...music, ...sounds, ...ramps, ...joins]
   step = apply(project, all, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
-  return { ops: all, project: step.project, notes, calls, slots }
+  return { ops: all, project: step.project, notes, calls, slots, story: { hook: story.value.hook ?? null, drop: story.value.drop ?? [], emphasis: { most, ids: [...new Set(emphasis.value.emphasis)].slice(0, most) } } }
 }

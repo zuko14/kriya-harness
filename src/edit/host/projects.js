@@ -40,8 +40,13 @@ import { editHome } from "./paths.js"
 import { createTaste } from "./taste.js"
 import { ASPECTS, analyseReference, cleanRefs, takeFrom } from "../engine/reference.js"
 import { briefOf, planCut } from "../director/plan.js"
+import { editsSince, planDiff, storyFor } from "../director/continuity.js"
+import { cleanGraphic, GRAPHIC_ACCENTS, GRAPHIC_BLOCK, GRAPHIC_FONTS, GRAPHIC_KINDS, GRAPHIC_TONES, GRAPHIC_VERSION, graphicLength, STYLE_LABELS } from "../engine/graphics.js"
 import { MOODS, writeMusicBed } from "../engine/music-bed.js"
 import { SFX, writeSfx } from "../engine/sfx.js"
+
+// "start over", "from scratch": the one way a request after a make isn't a change to that cut
+const STARTS_OVER = /\b(?:start (?:over|again|afresh)|from scratch|fresh (?:cut|edit|start)|brand[- ]new (?:cut|edit))\b/i
 
 function atomicWrite(file, text) {
   const part = `${file}.${process.pid}.tmp`
@@ -289,7 +294,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     /** The console: words → a proposal, applied to a copy, nothing landing yet (UX_SPEC §4, §5). */
     async ask(state, { text, selection, history = [], job = 0 }) {
       const chosen = cleanSelection(selection, state.log.current, state.index)
-      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history })
+      const { motion } = await this.features()
+      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history, motion: motion && !state.engine.motion().missing })
       // A request about the whole video goes to the Director's make job; the Studio offers it
       const direct = result.direct ? { brief: { ...(result.direct.seconds ? { seconds: result.direct.seconds } : {}), ...(result.direct.captions ? { captions: result.direct.captions } : {}) } } : null
       if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, say: result.say, source: result.source, reason: direct || result.say ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way.") }
@@ -322,7 +328,21 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     /** What this Kriya allows now. A failed question means off. */
     async features() {
       if (!known || Date.now() - known.at > FEATURES_MS) known = { at: Date.now(), value: await features().catch(() => ({ visuals: false, playbooks: false, mediaSearch: false })) }
-      return known.value
+      // A server from before editing.motion says nothing of it: off
+      return { motion: false, customMotion: false, ...known.value }
+    },
+
+    /** One motion graphic as the render will draw it, for the Plan Card. @returns {string} a complete document */
+    graphicPreview(state, raw, format) {
+      const graphic = cleanGraphic(raw)
+      if (!graphic) throw new EngineFailure("input", "bad_graphic", "That isn't a graphic from this project's plan.")
+      const shape = FORMATS[format] ?? FORMATS["9:16"]
+      const canvas = { width: shape.width, height: shape.height }
+      // Where a strap or a title usually lands; the make places each clear of the face and the captions
+      const low = graphic.kind === "lower" || graphic.kind === "end"
+      const placement = { x: Math.round(canvas.width * 0.1), y: Math.round(canvas.height * (low ? 0.66 : 0.42)), w: Math.floor((canvas.width * DEFAULT_RULES.boxWidth) / 100), h: Math.floor((canvas.height * DEFAULT_RULES.boxHeight) / 100) }
+      // A graphic sits over footage; the card shows it on a plain backdrop so a light or dark plate both read
+      return blockComposition({ blockId: GRAPHIC_BLOCK, version: GRAPHIC_VERSION, variables: graphic, placement, duration: graphicLength(graphic) }, { output: canvas, canvas }).replace("html,body{margin:0;background:transparent", "html,body{margin:0;background:linear-gradient(160deg,#6b7b80,#2a3437)")
     },
 
     /**
@@ -417,8 +437,31 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       return { pictures, terms }
     },
 
+    /**
+     * The last make this cut still descends from: its brief, story, approved plan and the
+     * person's edits it carried (continuity.js). Null once that make is undone or none was run.
+     */
+    lastMake(state) {
+      try {
+        const last = JSON.parse(readFileSync(join(dirOf(state.id), "last-make.json"), "utf8"))
+        const since = editsSince(state.log, last.head)
+        return since ? { ...last, edits: [...(Array.isArray(last.carried) ? last.carried : []), ...since] } : null
+      } catch {
+        return null
+      }
+    },
+
+    /** The story a make of this brief keeps from the last one; null when it's chosen again. */
+    keptStory(state, brief) {
+      return brief.fresh ? null : storyFor(this.lastMake(state), brief)
+    },
+
     /** The Director's plan for the whole cut: proposed, never made until the person approves it. */
     async plan(state, { text, history = [], previous = null, choices = {}, job = 0, signal } = {}) {
+      // With a cut already made, a request changes that cut: the plan it was made from is the one revised
+      const fresh = STARTS_OVER.test(text)
+      const last = fresh ? null : this.lastMake(state)
+      previous ??= last?.plan ?? null
       // The references in use, each only for what the person took it for; with none named, every reference, whole
       const named = cleanRefs(choices.references)
       const chosen = named.length ? named : state.log.current.assets.filter((a) => a.kind === "reference").map((a) => ({ id: a.id, aspect: "all" }))
@@ -431,16 +474,22 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         const name = `${ref.path.split(/[\\/]/).at(-1)}${aspect === "all" ? "" : ` (only for: ${ASPECTS[aspect]})`}`
         references.push({ name, lines: taken.lines.length ? taken.lines : [`nothing measured for ${ASPECTS[aspect].toLowerCase()}`] })
       }
-      const { visuals, playbooks, mediaSearch } = await this.features()
+      const { visuals, playbooks, mediaSearch, motion } = await this.features()
       const device = mediaSearch ? readDevice() : null
       // What was found is kept here, so an approval names an id and never carries a URL or a licence from the browser
       const lookups = device ? { search: (queries) => searchMedia(device, queries), define: (terms) => defineTerms(device, terms), keep: (found) => this.keepFound(state, found) } : null
-      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, signal })
+      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, motion: motion && !state.engine.motion().missing, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, signal })
       const scenes = plan.settings.scenes ?? []
+      const brief = briefOf(plan.settings)
       // The exact brief an approval makes, so the Studio sends back what was shown
       return {
         ...plan,
-        brief: briefOf(plan.settings),
+        brief: { ...brief, ...(fresh ? { fresh: true } : {}) },
+        // Said by code from the two briefs, so the card shows what an approval changes in the cut that's there,
+        // and whether its story stays (the same test the make route applies, in the make's own units)
+        ...(last ? { revises: true, differs: last.plan ? planDiff(briefOf(last.plan.settings ?? {}), brief) : [], keepsStory: !!storyFor(last, { ...(brief.seconds ? { targetDuration: Math.round(brief.seconds * FLICKS) } : {}), ...(brief.cuts ? { cuts: brief.cuts.map((c) => ({ from: Math.round(c.from * FLICKS), to: Math.round(c.to * FLICKS) })) } : {}) }) } : {}),
+        // What the card may restyle each graphic to: labels only, the colours and fonts stay in code
+        ...(plan.settings.graphics?.length ? { graphicChoices: { kinds: Object.fromEntries(Object.entries(GRAPHIC_KINDS).map(([id, kind]) => [id, { label: kind.label, styles: kind.styles }])), styles: STYLE_LABELS, accents: Object.keys(GRAPHIC_ACCENTS), tones: Object.keys(GRAPHIC_TONES), fonts: Object.keys(GRAPHIC_FONTS) } } : {}),
         // What the card may swap each scene to; code says, so it can't offer what won't draw
         ...(scenes.length ? { sceneChoices: { kinds: Object.fromEntries(Object.entries(SCENE_KINDS).map(([id, kind]) => [id, kind.label])), themes: Object.fromEntries(Object.entries(SCENE_THEMES).map(([id, theme]) => [id, theme.label])), swaps: scenes.map(swapsFor) } } : {}),
       }
@@ -621,7 +670,10 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       const runtime = activeRuntime(home)
       const ask = replay ? replayAsk(replay.answers) : this.askFor(state, job)
       const parent = state.log.head
+      // The person's edits to the last cut go onto this one, unless they asked to start over
+      const last = replay || request.brief?.fresh ? null : this.lastMake(state)
       const result = await makeReel({
+        edits: last?.edits ?? [],
         project: state.log.current,
         head: state.log.head,
         index: state.index,
@@ -651,11 +703,15 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       const planHash = result.best.plan ? sha256(canonical(result.best.plan)) : null
       const repairs = result.best.repairs ?? []
       const person = result.best.person ?? []
-      const notes = [...result.notes, ...person.map((p) => `${p.gate}: ${p.message} This is yours to decide.`)]
+      const carried = result.best.carried ?? []
+      const lost = result.best.dropped ?? []
+      const notes = [...result.notes, ...(carried.length ? [`Kept ${carried.length} of your own edit${carried.length === 1 ? "" : "s"} to the last cut.`] : []), ...(lost.length ? [`${lost.length} of your edits no longer fit this cut and ${lost.length === 1 ? "was" : "were"} left out: ${lost.map((d) => describe(d.op, state.index)).join("; ")}.`] : []), ...person.map((p) => `${p.gate}: ${p.message} This is yours to decide.`)]
       if (replay) return { replayOf: replay.of, verdict: gates?.verdict ?? "not_checked", gates: gates?.gates ?? [], planHash, notes, repairs, calls: result.calls, stop: result.outcome.stop }
       const { ops, dropped } = state.log.head === result.head ? { ops: result.best.ops, dropped: [] } : rebase(state.log.current, result.best.ops, state.index)
       const landed = change(state, { ops, author: "agent" })
       if (!landed.ok) throw new EngineFailure("plan", "refused", landed.diagnostics[0].message)
+      // What the next change to this cut starts from
+      atomicWrite(join(dirOf(state.id), "last-make.json"), JSON.stringify({ head: state.log.head, brief: request.brief ?? {}, story: result.best.story ?? null, carried, plan: request.plan ?? (request.brief?.fresh ? null : (last?.plan ?? null)) }))
       // A caption per spoken line is one change to a person: said once, with the count
       const captioned = ops.filter((op) => op.op === "caption_style" && op.words?.length)
       const changes = [...usedRules, ...ops.filter((op) => !["ripple_delete", "reframe", "caption_style"].includes(op.op) || (op.op === "caption_style" && !op.words?.length)).map((op) => describe(op, state.index)), ...(captioned.length ? [`Captioned ${captioned.length} line${captioned.length === 1 ? "" : "s"} (${captioned[0].look})`] : [])]
@@ -680,7 +736,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         slots: result.slots,
         stop: result.outcome.stop,
         attempts,
-        dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })),
+        dropped: [...dropped, ...lost].map((d) => ({ change: describe(d.op, state.index), reason: d.reason })),
       }
     },
 

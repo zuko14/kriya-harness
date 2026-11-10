@@ -69,16 +69,19 @@ export function readHealth(text) {
  * @param {{ black: object[], frozen: object[], luma: number[] }} health
  * @param {{ duration: number, fps: { n: number, d: number }, holds: { at: number, end: number }[], cuts: { t: number, same: boolean }[] }} plan holds: freezes the plan asks for; cuts: where pieces of one source meet
  */
-export function judgeHealth({ black, frozen, luma }, { duration, fps, holds, cuts }, { exposureJump }) {
+export function judgeHealth({ black, frozen, luma }, { duration, fps, holds, cuts, transitions = [] }, { exposureJump }) {
   const failures = []
   const close = (span) => ({ ...span, end: span.end ?? duration })
   const planned = (span) => holds.some((h) => h.at <= span.start + FLICKS / 10 && span.end - FLICKS / 10 <= h.end)
-  for (const span of black.map(close)) failures.push({ kind: "black", severity: "block", t: span.start, seconds: round((span.end - span.start) / FLICKS, 2) })
+  // Black is a fault except inside a transition the plan asked for (a dip to black)
+  const dipped = (span) => transitions.some((t) => t.at <= span.start + FLICKS / 10 && span.end - FLICKS / 10 <= t.end)
+  for (const span of black.map(close).filter((span) => !dipped(span))) failures.push({ kind: "black", severity: "block", t: span.start, seconds: round((span.end - span.start) / FLICKS, 2) })
   for (const span of frozen.map(close)) if (!planned(span)) failures.push({ kind: "frozen", severity: "block", t: span.start, seconds: round((span.end - span.start) / FLICKS, 2) })
   const frameAt = (t) => Math.min(luma.length - 1, Math.max(0, Math.floor((t * fps.n) / (FLICKS * fps.d))))
   let worst = 0
   for (const cut of cuts) {
-    if (!cut.same) continue
+    // A cut dressed with a transition isn't a hard cut: its brightness is meant to move
+    if (!cut.same || transitions.some((t) => t.at === cut.t)) continue
     const before = luma[frameAt(cut.t) - 1]
     const after = luma[frameAt(cut.t)]
     if (!Number.isFinite(before) || !Number.isFinite(after)) continue

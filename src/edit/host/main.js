@@ -12,7 +12,7 @@ import { createScheduler, DEFAULT_SLOTS } from "../graph/scheduler.js"
 import { createGovernor } from "../loop/governor.js"
 import { kriyaHome } from "../../paths.js"
 import { createJobs } from "./jobs.js"
-import { codeStamp, editHome, lockPath, portPath, socketPath } from "./paths.js"
+import { codeStamp, editHome, isPipe, lockPath, portPath, socketPath } from "./paths.js"
 import { createProjects } from "./projects.js"
 import { createHandler } from "./server.js"
 import { createTavi } from "./tavi.js"
@@ -91,7 +91,7 @@ function shutdown() {
     server.close()
     server.closeAllConnections()
   }
-  rmSync(socketPath(home), { force: true })
+  if (!isPipe(socketPath(home))) rmSync(socketPath(home), { force: true })
   tavi.close()
   watcher.close()
   projects.close()
@@ -123,9 +123,12 @@ function storedPort() {
 
 port = await listen(storedPort())
 writeFileSync(portPath(home), String(port))
-rmSync(socketPath(home), { force: true })
-await new Promise((done) => local.listen(socketPath(home), done))
-chmodSync(socketPath(home), 0o600)
+// A Unix socket is a file: a stale one is cleared first, and only its owner may open it.
+// A Windows named pipe is neither (paths.js): it goes when the Host does, and has no mode
+const socket = socketPath(home)
+if (!isPipe(socket)) rmSync(socket, { force: true })
+await new Promise((done) => local.listen(socket, done))
+if (!isPipe(socket)) chmodSync(socket, 0o600)
 log(`listening on 127.0.0.1:${port}`)
 
 void readTools()

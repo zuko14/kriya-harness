@@ -2,12 +2,25 @@
 
 import { createHash } from "node:crypto"
 import { readdirSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 import { kriyaHome } from "../../paths.js"
 
 export const editHome = (home = kriyaHome()) => join(home, "edit")
-export const socketPath = (home) => join(editHome(home), "host.sock")
+const PIPE = "\\\\.\\pipe\\"
+/** True for a Windows named pipe: it isn't a file, so it has no mode to set and nothing to remove. */
+export const isPipe = (path) => path.startsWith(PIPE)
+/**
+ * Where the Host listens for this computer's own commands. A Unix socket in the Host's folder;
+ * on Windows, which has none there, a named pipe, one per Kriya home (a hash of its path,
+ * which Windows compares without case).
+ * shortcut: a pipe gets Windows' default access rules, not the socket's owner-only mode; a pipe
+ * limited to the signed-in person needs a native call Node doesn't offer. Not yet run on Windows.
+ */
+export function socketPath(home = kriyaHome(), platform = process.platform) {
+  if (platform !== "win32") return join(editHome(home), "host.sock")
+  return `${PIPE}kriya-edit-host-${createHash("sha256").update(resolve(home).toLowerCase()).digest("hex").slice(0, 16)}`
+}
 export const lockPath = (home) => join(editHome(home), "host.lock")
 export const portPath = (home) => join(editHome(home), "port")
 export const logPath = (home) => join(editHome(home), "host.log")

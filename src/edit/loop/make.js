@@ -8,6 +8,7 @@
 import { apply } from "../core/ops.js"
 import { compile } from "../core/plan.js"
 import { runGates } from "../gates/index.js"
+import { remapIds, remapOp, replayable } from "../director/continuity.js"
 import { planReel, recipeFor } from "../recipes/reel.js"
 import { search } from "./loop.js"
 import { repairLadder } from "./repair.js"
@@ -39,7 +40,8 @@ export function planVerdict(project, index, recipe, { engineVersion = "f0", runt
  *   gateKit?: { tilePath?: Function, motion?: object, work?: string }, the Engine's tiles and Chrome, for QG-08 and QG-09
  * }} input
  */
-export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null }) {
+export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null, edits = [] }) {
+  // edits: what the person did to the last cut, replayed on each candidate before it is rendered and gated
   // planner: a recipe with no variants to try (a programme, a montage), instead of the reel
   const recipe = plannerRecipe ?? recipeFor(brief)
   let calls = 0
@@ -52,7 +54,7 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
     calls += made.calls
     Object.assign(slots, made.slots)
     for (const note of made.notes) if (!notes.includes(note)) notes.push(note)
-    return { ...made, variant }
+    return { ...carryEdits(made, edits, { before: project, index }), variant }
   }
 
   const evaluate = async (candidate) => {
@@ -92,6 +94,20 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
   })
   const best = outcome.best.candidate
   return { best: best.start ? null : best, outcome, notes, calls, slots, head }
+}
+
+/**
+ * The person's edits since the last make, replayed on a remade cut: each pointed at the clip
+ * that replaced its own, applied if it still fits and listed if it doesn't, never forced.
+ * @returns the candidate with those operations after its own, and `dropped`
+ */
+export function carryEdits(made, edits, { before, index }) {
+  const worth = replayable(edits, before)
+  if (!worth.length) return made
+  const ids = remapIds(before, made.project, index)
+  const { ops, dropped } = rebase(made.project, worth.map((op) => remapOp(op, ids)), index)
+  const landed = ops.length ? apply(made.project, ops, { index, author: "agent" }) : null
+  return { ...made, ops: [...made.ops, ...ops], project: landed?.applied ? landed.project : made.project, carried: landed?.applied ? ops : [], dropped }
 }
 
 /**
