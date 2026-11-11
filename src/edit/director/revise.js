@@ -9,6 +9,7 @@ import { cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_KINDS, GRAPHIC_VERSION, graphicLen
 import { paperEdit, shotDigest } from "../index/views.js"
 import { TRANSITION_LABELS, transitionLength, TRANSITIONS } from "../core/transitions.js"
 import { brandIn, graphicProblems } from "./graphics.js"
+import { withoutPlaces } from "./mentions.js"
 
 const FLICKS = 705_600_000
 
@@ -291,7 +292,8 @@ const UNIT = "(?:s|sec\\w*|se?c?o?n?d?s?\\b)(?![a-z])"
  * @returns {{ at: number, to?: number }[]} in flicks
  */
 export function timesIn(text, { duration = null } = {}) {
-  const said = String(text)
+  // A mention's place (⟦1⟧, TP1) is never a time; without one this is the text as it was
+  const said = withoutPlaces(text)
   // Relative stretches first: "the first 5 seconds", "the last 5 s" (needs the cut's length)
   const relative = []
   for (const m of said.matchAll(new RegExp(`\\b(first|last|final|opening)\\s+(\\d+(?:\\.\\d+)?)\\s*${UNIT}`, "gi"))) {
@@ -373,18 +375,20 @@ export function timesView(text, project, index) {
  * @param {{ ask: ReturnType<import("./ask.js").createAsk>, project: object, index: object, text: string, selection?: object, signal?: AbortSignal }} input
  * @returns {Promise<{ ops: object[], changes: string[], project: object | null, source: string, reason?: string, calls: number }>}
  */
-export async function revise({ ask, project, index, text, selection, history = [], motion = false, signal }) {
+export async function revise({ ask, project, index, text, selection, history = [], motion = false, pointed = "", signal }) {
   const assets = project.assets.map((a) => a.id)
   // A marked range reads like a typed one: code says what it points at
   const marked = Number.isInteger(selection?.from) && Number.isInteger(selection?.to) ? ` from ${clock(selection.from)} to ${clock(selection.to)}` : ""
   const times = timesView(`${text}${marked}`, project, index)
   const bin = `Footage in the project: ${project.assets.filter((a) => ["video", "audio"].includes(a.kind)).map((a) => `${a.id} (${a.kind}, ${seconds(a.facts.duration ?? 0)})`).join(", ")}`
-  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), bin, selectionText(selection, index), times].filter(Boolean).join("\n\n")
+  // pointed: the clips the person mentioned (mentions.js), fenced as data; empty, the view is what it was
+  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), bin, selectionText(selection, index), times, pointed].filter(Boolean).join("\n\n")
   // The last turns of this chat, so "shorter" or "no, the other one" mean something. The
   // person's lines are theirs; Kriya's are what it said before, not instructions
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person asks (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    ...(pointed ? ["A place like ⟦1⟧ in their words is a clip they pointed at; the list above says which asset each is. Use that asset id."] : []),
     "Answer with JSON only. Put in `ops` the operations that do exactly what they ask, and nothing else.",
     "Times like 0:05 are on the cut's timeline; the lines above say which clip, words and captions each time points at. Use those ids, never compute flicks yourself. To take out a stretch the person names by time, use the exact remove_range given for it above, unchanged; for a stretch named by words, remove_range from its first word (edge start) to its last word (edge end). To change what a caption says, caption_edit with its caption id; to remove a caption, ripple_delete its caption id; to caption words, caption_style with their word ids and a look; to put a title on screen, add_title with text and a word anchor; to take background noise out of the voice, clean_voice on each picture clip; to warm or cool the picture, grade with temperature (lower is warmer, 6500 neutral), vibrance or vignette; for a speed ramp or slow motion, speed_ramp on the clip with from and to (source flicks from the lines above, or word anchors) and peak {n, d} (2/1 speeds up and back, 1/2 is eased slow motion); for a constant speed, speed; to lay other footage over a moment, place_broll with a video asset id from the project, at a word anchor or clip edge, and duration in flicks.",
     ...(motion ? [`To put a motion graphic on screen, add_graphic with kind (${Object.entries(GRAPHIC_KINDS).map(([id, kind]) => `${id}: ${kind.label.toLowerCase()}`).join("; ")}), text, subtitle where the kind has a second line, and at (a word anchor). Its words must be the speaker's or the person's own from their request, never yours; a stat's text is digits the speaker says.`, `To dress a cut, transition with the clip the picture arrives in (never the first clip) and kind (${Object.keys(TRANSITIONS).join(", ")}); the cut itself doesn't move.`] : []),

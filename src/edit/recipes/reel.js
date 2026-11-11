@@ -143,7 +143,22 @@ export function fitLines(lines, max, required = new Set(), valueOf = (line, cost
   return lines.filter((l) => chosen.has(l.id))
 }
 
-const STORY_SCHEMA = {
+/**
+ * The clips a remake takes out: those `rebuilt` names, and whatever hung on one of them.
+ * B-roll, a cut's sound or a wide-and-tight punch anchored to a clip of the old cut has
+ * nothing left to sit on: it never played again, but it stayed in the project and piled up
+ * with every make (EH-60a, found 2026-11-11). The person's own clips are left as they are.
+ */
+export function remadeClips(sequence, rebuilt) {
+  const gone = new Set(sequence.clips.filter(rebuilt).map((c) => c.id))
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const c of sequence.clips) if (!gone.has(c.id) && c.createdBy !== "person" && [c.at, c.until].some((ref) => gone.has(ref?.clip))) ((grew = true), gone.add(c.id))
+  }
+  return sequence.clips.filter((c) => gone.has(c.id))
+}
+
+export const STORY_SCHEMA = {
   type: "object",
   properties: { hook: { anyOf: [{ type: "string", maxLength: 64 }, { type: "null" }] }, drop: { type: "array", maxItems: 40, items: { type: "string", maxLength: 64 } } },
   required: ["hook", "drop"],
@@ -222,7 +237,7 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const rebuilt = new Set(sequence.tracks.filter((t) => ["base", "caption", "music"].includes(t.role)).map((t) => t.id))
   const ops = [
     // Scenes too: an earlier make's scenes hang on the words of that cut
-    ...sequence.clips.filter((c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e) || isPlanGraphic(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
+    ...remadeClips(sequence, (c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e) || isPlanGraphic(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
     { op: "set_brief", format: recipe.id, targetDuration: target, mustKeep: brief.mustKeep ?? [], mustCut: brief.mustCut ?? [], effort: brief.effort ?? "best", ...(brief.language ? { language: brief.language } : {}) },
     { op: "set_format", width: recipe.canvas.width, height: recipe.canvas.height, fps: recipe.deliverable.fps },
     ...(project.deliverables.some((d) => d.preset === recipe.deliverable.preset) ? [] : [{ op: "add_deliverable", ...deliverableFor(brief) }]),

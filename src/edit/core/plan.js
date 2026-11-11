@@ -12,7 +12,7 @@ import { flicksToFrames, FLICKS, frameFlicks, framesToFlicks, scaleFlicks, snapT
 const MAX_SEGMENT = 6 * FLICKS
 const DRAFT_SHORT_SIDE = 720
 // A transition isn't an effect on the piece's own frames: it becomes the piece's `enter` below
-const PICTURE_EFFECTS = new Set(["reframe", "grade", "lut", "stabilize", "fade"])
+const PICTURE_EFFECTS = new Set(["reframe", "grade", "lut", "stabilize", "fade", "frame"])
 const AUDIO_EFFECTS = new Set(["level", "eq", "duck", "fade", "fit"])
 
 const even = (value) => Math.round(value / 2) * 2

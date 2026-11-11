@@ -4,7 +4,7 @@
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
 import { TRANSITION_MAX, TRANSITION_MIN, TRANSITIONS } from "./transitions.js"
-import { check, EFFECTS, SHAPES, validateProject } from "./project.js"
+import { check, cleanLabel, EFFECTS, SHAPES, validateProject } from "./project.js"
 import { snapToFrame } from "./time.js"
 
 class Refused extends Error {
@@ -627,7 +627,82 @@ const CODE_OPS = {
   },
 }
 
-const ALL_OPS = { ...OPS, ...CODE_OPS }
+// TP1 (ASSEMBLY_AND_INTENT §2, §3). Kept out of OPS: the Director's operation list and the
+// console's schema are the objects they were (TOP_TIER_FORENSIC_AUDIT §6 rule 1)
+const SPINE = ["story", "whole"]
+const ASSEMBLY_MAX = { parts: 200, files: 64 }
+const ASSEMBLY_OPS = {
+  describe_asset: {
+    fields: { asset: "id", "label?": "str", "role?": SHAPES.project.assets.list["role?"] },
+    run(op, s) {
+      if (op.label === undefined && op.role === undefined) refuse("needs_a_value", "give a label or a role")
+      if (op.label !== undefined && s.author !== "person") refuse("person_only", "a clip's label is the person's to set")
+      if (s.author === "agent") refuse("person_only", "a clip's role is set by the person, or by code from the index")
+      const asset = assetOf(s, op.asset)
+      if (asset.kind === "reference") refuse("wrong_asset_kind", `asset "${op.asset}" is a reference, not a clip`)
+      // Cleaned here, so the stored label is already data (EH-71); an empty one takes the label away
+      const label = op.label === undefined ? undefined : cleanLabel(op.label)
+      if (label) asset.label = label
+      else if (label === "") delete asset.label
+      if (op.role !== undefined) asset.role = op.role
+    },
+  },
+  set_assembly: {
+    fields: { assembly: SHAPES.project.sequences.list["assembly?"] },
+    run(op, s) {
+      const { version, parts } = op.assembly
+      if (version !== 1) refuse("bad_assembly", "this storyboard is a version this Kriya doesn't know")
+      if (parts.length > ASSEMBLY_MAX.parts) refuse("too_many_parts", `a storyboard holds up to ${ASSEMBLY_MAX.parts} parts`)
+      if (new Set(parts.map((part) => part.asset)).size > ASSEMBLY_MAX.files) refuse("too_many_files", `a storyboard uses up to ${ASSEMBLY_MAX.files} files`)
+      const ids = new Set()
+      for (const part of parts) {
+        if (ids.has(part.id)) refuse("duplicate_part", `two parts are called "${part.id}"`)
+        ids.add(part.id)
+        // A reference's kind is "reference", so it's refused here: measured, never placed (EDD-23)
+        const asset = assetOf(s, part.asset, SEQUENCED)
+        if (part.from === undefined && part.to === undefined) continue
+        const to = part.to === undefined ? asset.facts.duration : sourceEdge(s, part.to, asset.id, "end")
+        if (to === undefined) refuse("not_probed", `asset "${asset.id}" has no length, so a part of it can't be taken`)
+        checkRange(s, asset, part.from === undefined ? 0 : sourceEdge(s, part.from, asset.id, "start"), to)
+      }
+      const spine = new Set(parts.filter((part) => SPINE.includes(part.use)).map((part) => part.id))
+      for (const part of parts) {
+        if (SPINE.includes(part.use)) {
+          if (part.at !== undefined) refuse("bad_part", `part "${part.id}" is in the film's order, so it has no "at"`)
+          continue
+        }
+        if (part.at === undefined && part.use === "sound") continue // a song under the whole film
+        if (!part.at || !spine.has(part.at.part)) refuse("no_host", `part "${part.id}" plays over another part: name one that is in the film's order`)
+        if (["where", "word", "t"].filter((key) => part.at[key] !== undefined).length !== 1) refuse("bad_part", `part "${part.id}" needs one place: where, word or t`)
+        if (part.at.word !== undefined) known(s, { word: part.at.word })
+      }
+      // No parts is no storyboard: the key goes, so the project is what it was before one
+      if (parts.length) sequenceOf(s).assembly = { version, parts }
+      else delete sequenceOf(s).assembly
+    },
+  },
+  // TP2: a part's picture over another part's voice. place_broll as it is, and the clip carries
+  // the make's mark, so a remake finds it and never places it twice (EH-60)
+  place_over: {
+    fields: OPS.place_broll.fields,
+    run(op, s) {
+      OPS.place_broll.run(op, s)
+      sequenceOf(s).clips.at(-1).plan = true
+    },
+  },
+  // TP2: how a clip of another shape sits in the frame. fill takes the effect away (EH-59)
+  set_frame: {
+    fields: { clip: "id", mode: { enum: ["fill", "fit", "blur"] } },
+    run(op, s) {
+      const clip = writable(s, op.clip)
+      if (!clip.source || !PICTURE.includes(assetOf(s, clip.source.asset).kind)) refuse("not_footage", `clip "${op.clip}" has no picture to frame`)
+      if (op.mode === "fill") clip.effects = clip.effects.filter((e) => e.type !== "frame")
+      else setEffect(clip, { type: "frame", mode: op.mode })
+    },
+  },
+}
+
+const ALL_OPS = { ...OPS, ...CODE_OPS, ...ASSEMBLY_OPS }
 
 function captionOf(s, id) {
   const caption = writable(s, id).effects.find((e) => e.type === "caption")

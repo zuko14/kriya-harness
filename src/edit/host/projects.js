@@ -20,6 +20,8 @@ import { safeZoneFor, sceneFrame } from "../core/layout.js"
 import { revealWords } from "../director/beats.js"
 import { termId } from "../director/lookups.js"
 import { allowedMediaUrl, downloadMedia, MEDIA_TYPES, stillClipArgs } from "../engine/found-media.js"
+import { measureLoudness } from "../engine/loudness.js"
+import { planAssembly } from "../recipes/assembly.js"
 import { planMontage } from "../recipes/montage.js"
 import { analyseMulticam, PODCAST_MULTICAM } from "../recipes/multicam.js"
 import { planProgramme, programmeRecipe } from "../recipes/programme.js"
@@ -28,6 +30,8 @@ import { readDevice } from "../../store.js"
 import { createAsk } from "../director/ask.js"
 import { LOOKS } from "../engine/captions.js"
 import { cleanSelection, cleanWord, describe, noteWord, revise } from "../director/revise.js"
+import { clipList, decideAssembly, isAssembly } from "../director/assembly.js"
+import { cleanMentions, mentionsView } from "../director/mentions.js"
 import { openIndexDb } from "../index/db.js"
 import { makeReel, rebase } from "../loop/make.js"
 import { runGates } from "../gates/index.js"
@@ -292,10 +296,10 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     },
 
     /** The console: words → a proposal, applied to a copy, nothing landing yet (UX_SPEC §4, §5). */
-    async ask(state, { text, selection, history = [], job = 0 }) {
+    async ask(state, { text, selection, history = [], mentions, job = 0 }) {
       const chosen = cleanSelection(selection, state.log.current, state.index)
       const { motion } = await this.features()
-      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history, motion: motion && !state.engine.motion().missing })
+      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history, motion: motion && !state.engine.motion().missing, pointed: await this.pointed(state, mentions, text) })
       // A request about the whole video goes to the Director's make job; the Studio offers it
       const direct = result.direct ? { brief: { ...(result.direct.seconds ? { seconds: result.direct.seconds } : {}), ...(result.direct.captions ? { captions: result.direct.captions } : {}) } } : null
       if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, say: result.say, source: result.source, reason: direct || result.say ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way.") }
@@ -325,11 +329,23 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       return { applied: ops.length + fixes.length, dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })) }
     },
 
+    /**
+     * The clips a message points at, as the Director reads them (mentions.js). With
+     * editing.assembly off no mention resolves: the message is asked as it always was.
+     * @returns {Promise<string>} empty when there are none
+     */
+    async pointed(state, mentions, text) {
+      if (mentions === undefined || !(await this.features()).assembly) return ""
+      const clean = cleanMentions(state.log.current, mentions, text)
+      if (!clean) throw new EngineFailure("input", "bad_mention", "That message points at a clip that isn't in this project. Pick the clip again.")
+      return mentionsView(state.log.current, clean)
+    },
+
     /** What this Kriya allows now. A failed question means off. */
     async features() {
       if (!known || Date.now() - known.at > FEATURES_MS) known = { at: Date.now(), value: await features().catch(() => ({ visuals: false, playbooks: false, mediaSearch: false })) }
-      // A server from before editing.motion says nothing of it: off
-      return { motion: false, customMotion: false, ...known.value }
+      // A server from before editing.motion or editing.assembly says nothing of it: off
+      return { motion: false, customMotion: false, assembly: false, ...known.value }
     },
 
     /** One motion graphic as the render will draw it, for the Plan Card. @returns {string} a complete document */
@@ -457,7 +473,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     },
 
     /** The Director's plan for the whole cut: proposed, never made until the person approves it. */
-    async plan(state, { text, history = [], previous = null, choices = {}, job = 0, signal } = {}) {
+    async plan(state, { text, history = [], previous = null, choices = {}, mentions, job = 0, signal } = {}) {
       // With a cut already made, a request changes that cut: the plan it was made from is the one revised
       const fresh = STARTS_OVER.test(text)
       const last = fresh ? null : this.lastMake(state)
@@ -474,16 +490,24 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         const name = `${ref.path.split(/[\\/]/).at(-1)}${aspect === "all" ? "" : ` (only for: ${ASPECTS[aspect]})`}`
         references.push({ name, lines: taken.lines.length ? taken.lines : [`nothing measured for ${ASPECTS[aspect].toLowerCase()}`] })
       }
-      const { visuals, playbooks, mediaSearch, motion } = await this.features()
+      const { visuals, playbooks, mediaSearch, motion, assembly } = await this.features()
       const device = mediaSearch ? readDevice() : null
       // What was found is kept here, so an approval names an id and never carries a URL or a licence from the browser
       const lookups = device ? { search: (queries) => searchMedia(device, queries), define: (terms) => defineTerms(device, terms), keep: (found) => this.keepFound(state, found) } : null
-      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, motion: motion && !state.engine.motion().missing, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, signal })
+      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, motion: motion && !state.engine.motion().missing, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, pointed: await this.pointed(state, mentions, text), signal })
+      // The film's order (TP2, ASSEMBLY_AND_INTENT §4, §5), only with editing.assembly on: this message's mentions and
+      // words, then the storyboard, then earlier messages, then the plan being revised, then the Director, then the
+      // default. The Director's slot is asked only when something is open
+      const ordered = assembly ? await this.order(state, { text, history, previous, mentions, job, signal, targetDuration: plan.settings.seconds ? Math.round(plan.settings.seconds * FLICKS) : undefined }) : null
+      if (ordered?.assembly) plan.settings.assembly = ordered.assembly
+      else delete plan.settings.assembly
       const scenes = plan.settings.scenes ?? []
       const brief = briefOf(plan.settings)
       // The exact brief an approval makes, so the Studio sends back what was shown
       return {
         ...plan,
+        // The Order section of the card: each part as the person knows it, and each decision that wasn't theirs
+        ...(ordered?.assembly ? { order: { source: ordered.source, lines: ordered.lines, parts: this.orderView(state, ordered.assembly) } } : ordered?.lines.length ? { order: { source: null, lines: ordered.lines, parts: [] } } : {}),
         brief: { ...brief, ...(fresh ? { fresh: true } : {}) },
         // Said by code from the two briefs, so the card shows what an approval changes in the cut that's there,
         // and whether its story stays (the same test the make route applies, in the make's own units)
@@ -493,6 +517,25 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         // What the card may swap each scene to; code says, so it can't offer what won't draw
         ...(scenes.length ? { sceneChoices: { kinds: Object.fromEntries(Object.entries(SCENE_KINDS).map(([id, kind]) => [id, kind.label])), themes: Object.fromEntries(Object.entries(SCENE_THEMES).map(([id, theme]) => [id, theme.label])), swaps: scenes.map(swapsFor) } } : {}),
       }
+    },
+
+    /** The film's order for a plan (director/assembly.js). The storyboard stored on the project is the Studio's own to read here. */
+    async order(state, { text, history = [], previous = null, mentions, job = 0, signal, targetDuration }) {
+      const project = state.log.current
+      const pointed = mentions === undefined ? [] : (cleanMentions(project, mentions, text) ?? [])
+      const storyboard = project.sequences.find((q) => q.id === project.active)?.assembly ?? null
+      return decideAssembly({ project, index: state.index, text, mentions: pointed, storyboard, history, previous: previous?.settings?.assembly ?? null, ask: this.askFor(state, job), targetDuration, signal })
+    },
+
+    /** An assembly's parts as the card shows them: number, label, stretch in seconds, use, who decided. Labels are data. */
+    orderView(state, assembly) {
+      const clips = clipList(state.log.current, state.index)
+      const words = new Map(state.index.words.map((w) => [w.id, w]))
+      const edge = (ref, side) => (ref === undefined ? null : typeof ref === "number" ? ref : (words.get(ref.word)?.[ref.edge ?? side] ?? null))
+      return assembly.parts.map((part) => {
+        const clip = clips.find((c) => c.asset === part.asset)
+        return { id: part.id, asset: part.asset, number: clip?.n ?? null, label: clip?.label || clip?.name || "", from: edge(part.from, "start"), to: edge(part.to, "end"), duration: clip?.duration ?? null, use: part.use, why: part.why ?? null, ...(part.at ? { at: part.at } : {}), ...(part.fit ? { fit: part.fit } : {}) }
+      })
     },
 
     /** A reference's classified analysis (reference.js), kept by its fingerprint so it's measured once. */
@@ -526,9 +569,27 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
      */
     async make(state, request, { job = 0, signal, onStep = () => {}, replay, beforeStory } = {}) {
       const video = state.log.current.assets.filter((a) => a.kind === "video")
-      const asset = request.asset ?? video[0]?.id
+      // The film's order, only from this make's own brief (EH-63): never the storyboard stored on the project
+      const order = isAssembly(request.brief?.assembly?.parts) ? request.brief.assembly : null
+      const asset = request.asset ?? order?.parts.find((p) => ["story", "whole"].includes(p.use) && video.some((a) => a.id === p.asset))?.asset ?? video[0]?.id
       if (!asset || !video.some((a) => a.id === asset)) throw new EngineFailure("input", "no_take", "Add a video first.")
       if (!state.index.words.some((w) => w.asset === asset)) await this.indexAsset(state, asset, { signal })
+      // An assembly's files: each is where it was, or it is left out; one asked for by name ends the make for the person (§8)
+      const there = (id) => {
+        try {
+          return existsSync(sourcesOf(state)(id))
+        } catch {
+          return false
+        }
+      }
+      const offline = order ? [...new Set(order.parts.map((p) => p.asset))].filter((id) => !there(id)) : []
+      if (order && !replay) {
+        const numbers = clipList(state.log.current, state.index)
+        const asked = order.parts.filter((p) => offline.includes(p.asset) && (p.why === "person" || p.why === "storyboard"))
+        if (asked.length) return { verdict: "needs_you", notes: [`${[...new Set(asked.map((p) => `Clip ${numbers.find((c) => c.asset === p.asset)?.n ?? "?"}`))].join(" and ")} ${asked.length === 1 ? "is" : "are"} in the order you gave, and ${asked.length === 1 ? "its file isn't" : "their files aren't"} where ${asked.length === 1 ? "it was" : "they were"}. Put ${asked.length === 1 ? "it" : "them"} back, or take ${asked.length === 1 ? "it" : "them"} out of the storyboard, and make it again.`], calls: 0, stop: "needs_you", changes: [], dropped: [], attempts: [], gates: [] }
+        // Each part's file is read once, so its words and shots are there to cut by
+        for (const id of new Set(order.parts.map((p) => p.asset))) if (!offline.includes(id) && !state.index.words.some((w) => w.asset === id) && !state.index.shots.some((s) => s.asset === id)) await this.indexAsset(state, id, { signal })
+      }
       // References, classified (reference.js), numbers only and never placed on a track
       // (EDD-23): a video's pace and captions, an image's or video's colour, music's tempo and mood
       const styled = []
@@ -667,6 +728,19 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       } else if (!replay && direct.montage && direct.music) {
         planner = () => planMontage({ project: state.log.current, index: state.index, brief: direct })
       }
+      // The assembly make (TP2): its own recipe, the same render and gates. A replay follows it too:
+      // each part's story is answered from the recording, in the order it was asked
+      if (order) {
+        // shortcut: a file's speech is measured over the whole file, not only the stretch a part uses
+        const loudness = {}
+        for (const id of new Set(order.parts.filter((p) => ["story", "whole"].includes(p.use)).map((p) => p.asset))) {
+          if (offline.includes(id) || state.log.current.assets.find((a) => a.id === id)?.facts.hasAudio === false) continue
+          loudness[id] = (await measureLoudness(sourcePath(id), { run }).catch(() => ({ integrated: null }))).integrated
+        }
+        const { capabilities } = await tools()
+        planner = () => planAssembly({ project: state.log.current, index: state.index, brief: direct, ask, signal, loudness, filters: capabilities.filters, offline })
+        plannerRecipe = null
+      }
       const runtime = activeRuntime(home)
       const ask = replay ? replayAsk(replay.answers) : this.askFor(state, job)
       const parent = state.log.head
@@ -694,6 +768,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
           binDir: join(base, "bin"),
           recognise: verifiedRecogniser(runtime, { run, work, language: state.log.current.brief?.language ?? "en" }),
           ask,
+          // QG-15 runs only on a make that followed an assembly (EH-70)
+          ...(order ? { assembly: { ...order, left: order.parts.filter((p) => offline.includes(p.asset)).map((p) => p.id) } } : {}),
         },
       })
       // Each attempt as ranked, for the report: never the model's words

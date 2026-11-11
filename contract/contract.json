@@ -808,9 +808,19 @@
           },
           "customMotion": {
             "type": "boolean"
+          },
+          "assembly": {
+            "type": "boolean"
           }
         },
-        "required": ["visuals", "playbooks", "mediaSearch", "motion", "customMotion"],
+        "required": [
+          "visuals",
+          "playbooks",
+          "mediaSearch",
+          "motion",
+          "customMotion",
+          "assembly"
+        ],
         "additionalProperties": false
       }
     },

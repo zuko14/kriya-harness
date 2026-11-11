@@ -102,6 +102,8 @@ export function briefOf(settings = {}) {
     ...(Array.isArray(settings.scenes) && settings.scenes.length ? { scenes: settings.scenes, sceneSound: settings.sceneSound !== false } : {}),
     ...(Array.isArray(settings.graphics) && settings.graphics.length ? { graphics: settings.graphics } : {}),
     ...(Object.hasOwn(TRANSITIONS, settings.transition ?? "") ? { transition: settings.transition, ...(settings.transitionAll ? { transitionAll: true } : {}) } : {}),
+    // The film's order (TP2), present only when one was decided
+    ...(settings.assembly?.parts?.length ? { assembly: settings.assembly } : {}),
   }
 }
 
@@ -283,10 +285,11 @@ export function planProblems(settings, index) {
  *   lookups: { search, define, keep } with editing.mediaSearch on; null, no search word leaves the computer
  * @returns {Promise<{ say: string, steps: string[], settings: object, source: string, reason?: string }>}
  */
-export async function planCut({ ask, project, index, text, history = [], previous = null, references = [], choices = {}, visuals = false, playbooks = false, motion = false, lookups = null, signal }) {
+export async function planCut({ ask, project, index, text, history = [], previous = null, references = [], choices = {}, visuals = false, playbooks = false, motion = false, lookups = null, pointed = "", signal }) {
   const assets = project.assets.filter((a) => a.kind === "video" || a.kind === "audio").map((a) => a.id)
   const refs = references.length ? `References the person added, measured by code:\n${references.map((r) => `- ${r.name}: ${r.lines.join("; ")}`).join("\n")}` : "No references added."
-  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`].join("\n\n")
+  // pointed: the clips the person mentioned (mentions.js), fenced as data; empty, the view is what it was
+  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`, ...(pointed ? [pointed] : [])].join("\n\n")
   const asked = formatAsked(text, history, previous)
   // Trims are the person's, read by code from their words (this message and earlier ones) and kept through revisions
   const take = project.assets.find((a) => a.kind === "video" && (index.words ?? []).some((w) => w.asset === a.id)) ?? project.assets.find((a) => a.kind === "video")
@@ -301,6 +304,7 @@ export async function planCut({ ask, project, index, text, history = [], previou
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    pointed ? "A place like ⟦1⟧ in their words is a clip they pointed at; the list above says which clip each is. Code puts the files in the order they asked, and shows it on the card: don't choose an order yourself." : "",
     cuts.length ? `The person asked to trim ${cuts.map((c) => `${at(c.from)} to ${at(c.to)}`).join(", ")} of the take (${take.id}); code cuts exactly that, between words. Plan around it: no hook or cold open inside a trimmed stretch, and say the trim in your pitch.` : "",
     asked ? `The person wants the ${asked} format: settings.format is "${asked}", and your pitch says ${asked}.` : "",
     previous ? `Your previous plan, which they want changed: ${JSON.stringify(previous.settings ? { ...previous, settings: previousSettings } : previous).slice(0, 3000)}. Revise it by what they say now; keep what they didn't ask to change.` : "",

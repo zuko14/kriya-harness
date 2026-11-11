@@ -1,0 +1,1289 @@
+{
+ "note": "Recorded with the client at 08e5945, before TP1 (ET-TP-REG-02). Never regenerate: it proves old logs still replay.",
+ "root": {
+  "schema": 1,
+  "id": "p1",
+  "name": "Synthetic reel",
+  "canvas": {
+   "width": 1080,
+   "height": 1920,
+   "fps": {
+    "n": 30,
+    "d": 1
+   },
+   "color": {
+    "primaries": "bt709",
+    "transfer": "bt709",
+    "range": "tv"
+   },
+   "workingBitDepth": 10
+  },
+  "assets": [
+   {
+    "id": "a1",
+    "kind": "video",
+    "fingerprint": "fp-a1",
+    "path": "media/a1.mov",
+    "linked": true,
+    "rights": "own",
+    "role": "aroll",
+    "facts": {
+     "duration": 42336000000,
+     "fps": {
+      "n": 30,
+      "d": 1
+     },
+     "vfr": false,
+     "width": 1080,
+     "height": 1920,
+     "hasAudio": true
+    }
+   },
+   {
+    "id": "a2",
+    "kind": "video",
+    "fingerprint": "fp-a2",
+    "path": "media/a2.mov",
+    "linked": true,
+    "rights": "own",
+    "role": "broll",
+    "facts": {
+     "duration": 5644800000,
+     "fps": {
+      "n": 30,
+      "d": 1
+     },
+     "vfr": false,
+     "width": 1080,
+     "height": 1920,
+     "hasAudio": true
+    }
+   },
+   {
+    "id": "sfx:whoosh-soft",
+    "kind": "audio",
+    "fingerprint": "fp-sfx:whoosh-soft",
+    "path": "media/sfx:whoosh-soft.wav",
+    "linked": true,
+    "rights": "licensed",
+    "role": "sfx",
+    "facts": {
+     "duration": 705600000,
+     "hasAudio": true,
+     "peak": 141120000
+    }
+   },
+   {
+    "id": "m1",
+    "kind": "audio",
+    "fingerprint": "fp-m1",
+    "path": "media/m1.wav",
+    "linked": true,
+    "rights": "licensed",
+    "role": "music",
+    "facts": {
+     "duration": 84672000000,
+     "hasAudio": true
+    }
+   },
+   {
+    "id": "ref1",
+    "kind": "reference",
+    "fingerprint": "fp-ref1",
+    "path": "media/ref.mp4",
+    "linked": true,
+    "rights": "unknown",
+    "facts": {
+     "duration": 7056000000
+    }
+   },
+   {
+    "id": "lut1",
+    "kind": "lut",
+    "fingerprint": "fp-lut1",
+    "path": "media/warm.cube",
+    "linked": true,
+    "rights": "own",
+    "facts": {}
+   }
+  ],
+  "sequences": [
+   {
+    "id": "q1",
+    "name": "Main",
+    "tracks": [
+     {
+      "id": "t-base",
+      "role": "base",
+      "order": 0,
+      "muted": false,
+      "locked": false
+     },
+     {
+      "id": "t-caption",
+      "role": "caption",
+      "order": 5,
+      "muted": false,
+      "locked": false
+     }
+    ],
+    "markers": [],
+    "clips": []
+   }
+  ],
+  "active": "q1",
+  "look": {
+   "id": "default",
+   "caption": {},
+   "color": {},
+   "motion": {},
+   "sound": {},
+   "brand": {}
+  },
+  "deliverables": [],
+  "nextId": 1,
+  "head": null,
+  "history": []
+ },
+ "entries": [
+  {
+   "id": "5aae88a35a789a42",
+   "parent": null,
+   "author": "agent",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w0",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w9",
+      "edge": "end"
+     }
+    },
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w10",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w19",
+      "edge": "end"
+     }
+    },
+    {
+     "op": "set_music",
+     "asset": "m1"
+    },
+    {
+     "op": "caption_style",
+     "look": "bold",
+     "words": [
+      "a1:w0",
+      "a1:w1"
+     ]
+    }
+   ],
+   "hash": "6835e2b7d2f8b4bbe1fa8aa9ee4fa6c4305a8db8a2fdccfae0ccacf4aa1ee8ce",
+   "at": "2026-11-10T00:00:00Z"
+  },
+  {
+   "id": "c2958b20aacf0ac8",
+   "parent": "5aae88a35a789a42",
+   "author": "person",
+   "ops": [
+    {
+     "op": "stabilize",
+     "clip": "c1"
+    },
+    {
+     "op": "name_version",
+     "name": "Cut A"
+    }
+   ],
+   "hash": "c9eda54597f5cd608e8d0efd25e07acc60d10b629768a2682f84089bf1412032",
+   "at": "2026-11-10T00:00:01Z"
+  },
+  {
+   "id": "fd612d1db385ae10",
+   "parent": "c2958b20aacf0ac8",
+   "author": "code",
+   "ops": [
+    {
+     "op": "add_asset",
+     "id": "a7",
+     "kind": "audio",
+     "fingerprint": "fp-a7",
+     "path": "media/kriya-sfx-pop.wav",
+     "linked": true,
+     "rights": "own",
+     "rightsNote": "Made by Kriya's sound generator: no one else's recording.",
+     "facts": {
+      "duration": 211680000,
+      "hasAudio": true,
+      "peak": 14112000
+     }
+    }
+   ],
+   "hash": "04452c68e48e670838b5388518876998039a900495a5b7ad8ca0e7f5573b0c21",
+   "at": "2026-11-10T00:00:02Z"
+  },
+  {
+   "id": "e93fe5df8fdc594b",
+   "parent": "fd612d1db385ae10",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "place_broll",
+     "asset": "a2",
+     "at": {
+      "word": "a1:w21",
+      "edge": "start"
+     },
+     "duration": 705600000
+    }
+   ],
+   "hash": "87d283cd6d32f925b68fb1dd73f7a39989d9e84848a7a243c5a8213f813ef03b",
+   "at": "2026-11-10T00:01:00Z"
+  },
+  {
+   "id": "533b88c920aecdfb",
+   "parent": "e93fe5df8fdc594b",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_music",
+     "asset": "m1"
+    }
+   ],
+   "hash": "63bf0cef5efcdaeb9ff466dfccee3de30a8e252595ab12b96393ef1f7d80a4c6",
+   "at": "2026-11-10T00:01:01Z"
+  },
+  {
+   "id": "620701cc6324ef92",
+   "parent": "533b88c920aecdfb",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "split",
+     "clip": "c1",
+     "at": {
+      "word": "a1:w8",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "906e9b6feef625e9d560f7279961809d347b06e572ee2562fa0da54d572d3ce8",
+   "at": "2026-11-10T00:01:02Z"
+  },
+  {
+   "id": "a85a114864034d61",
+   "parent": "620701cc6324ef92",
+   "author": "person",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w45",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w48",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "3f127ca58c1924836066f7ebae9cb1b649a6158647e5a5d3559f4b3bb787a24d",
+   "at": "2026-11-10T00:01:03Z"
+  },
+  {
+   "id": "6ebcbda174ff8fa5",
+   "parent": "a85a114864034d61",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "use_take",
+     "clip": "c2",
+     "from": {
+      "word": "a1:w33",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w39",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "390421764fdc623d2be64b20e76e7323a7f2fc0c05a24c86d6f0e9468a5a85e6",
+   "at": "2026-11-10T00:01:04Z"
+  },
+  {
+   "id": "439e90c2c7f81fe8",
+   "parent": "6ebcbda174ff8fa5",
+   "author": "person",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w11",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "7d2a4e091ceaa84ea19fc51dbead50be1847ff05ad0a25fb7b0283066325ee78",
+   "at": "2026-11-10T00:01:05Z"
+  },
+  {
+   "id": "2cf64c451a1434c7",
+   "parent": "439e90c2c7f81fe8",
+   "author": "person",
+   "ops": [
+    {
+     "op": "use_take",
+     "clip": "c1",
+     "from": {
+      "word": "a1:w23",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w25",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "8f3334b9007af16da207a89570826ad2736313c23517d0186d94f3eb0a51954a",
+   "at": "2026-11-10T00:01:07Z"
+  },
+  {
+   "id": "af34f0b2760023c7",
+   "parent": "2cf64c451a1434c7",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "use_take",
+     "clip": "c5",
+     "from": {
+      "word": "a1:w45",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w49",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "438def063ee0e952abc32bf0f0992d597e54eb991c14970cce87642b44d8eda8",
+   "at": "2026-11-10T00:01:08Z"
+  },
+  {
+   "id": "86b39128b23cf74d",
+   "parent": "af34f0b2760023c7",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_music",
+     "asset": "m1"
+    }
+   ],
+   "hash": "a88841cf1b235c40c472fd61628e87b30b16ee87cdace85c6ca1d7c1fb5619cc",
+   "at": "2026-11-10T00:01:09Z"
+  },
+  {
+   "id": "619c00855f0cc6ab",
+   "parent": "86b39128b23cf74d",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "mark",
+     "name": "m",
+     "at": {
+      "word": "a1:w30",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "fb0ff6d5ece4320db4b41b375f12f07f2e1109167a0a8bd1481e080020949414",
+   "at": "2026-11-10T00:01:10Z"
+  },
+  {
+   "id": "bc7997165e52e1c5",
+   "parent": "619c00855f0cc6ab",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_level",
+     "clip": "c10",
+     "db": -3
+    }
+   ],
+   "hash": "7b423ab2da9e3973db6858cdf356f989d9e102315e2ac3777adfb6045af3ef01",
+   "at": "2026-11-10T00:01:13Z"
+  },
+  {
+   "id": "948073fb132f183a",
+   "parent": "bc7997165e52e1c5",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "set_level",
+     "clip": "c2",
+     "db": -3
+    }
+   ],
+   "hash": "ee66236511bec612f1b74df680c4a779069577517012642228ed89e02622937d",
+   "at": "2026-11-10T00:01:14Z"
+  },
+  {
+   "id": "92a5bb1013f7b6a2",
+   "parent": "948073fb132f183a",
+   "author": "person",
+   "ops": [
+    {
+     "op": "mark",
+     "name": "m",
+     "at": {
+      "word": "a1:w24",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "48a4877438650b38a8af793f290e13c84251459c42a8f65f215b1f8048b05c63",
+   "at": "2026-11-10T00:01:15Z"
+  },
+  {
+   "id": "0371b0e35235a030",
+   "parent": "92a5bb1013f7b6a2",
+   "author": "person",
+   "ops": [
+    {
+     "op": "caption_style",
+     "look": "bold",
+     "words": [
+      "a1:w20"
+     ]
+    }
+   ],
+   "hash": "5a9052cff426bdede1d78e683d104bf6a4d3b4f242e9b21e4aa841732562fdf4",
+   "at": "2026-11-10T00:01:17Z"
+  },
+  {
+   "id": "661a5b286e746c9a",
+   "parent": "0371b0e35235a030",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "remove_range",
+     "from": {
+      "word": "a1:w4",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w9",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "c96c20fcbac4fa2c84c9de5ad666faa5d9b4390587a11ea9ce295acc69fa0db8",
+   "at": "2026-11-10T00:01:18Z"
+  },
+  {
+   "id": "0b51947d521fbf28",
+   "parent": "661a5b286e746c9a",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_music",
+     "asset": "m1"
+    }
+   ],
+   "hash": "245da22cdeb99a95deed5359b94a26d63ab94b40bddaab318596a19c0461a1a1",
+   "at": "2026-11-10T00:01:19Z"
+  },
+  {
+   "id": "5f11fd1c67e3efef",
+   "parent": "0b51947d521fbf28",
+   "author": "person",
+   "ops": [
+    {
+     "op": "place_broll",
+     "asset": "a2",
+     "at": {
+      "word": "a1:w17",
+      "edge": "start"
+     },
+     "duration": 705600000
+    }
+   ],
+   "hash": "33b64a0854daeae8ec3a80ea39260e9e1ea4e39caaf175a91dd3393cf6700b62",
+   "at": "2026-11-10T00:01:21Z"
+  },
+  {
+   "id": "cfed97caf3c912fb",
+   "parent": "5f11fd1c67e3efef",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "caption_style",
+     "look": "bold",
+     "words": [
+      "a1:w20"
+     ]
+    }
+   ],
+   "hash": "e0b8d0f4812ecc2099f58d82881e6399b2b609787409376b20c9521490da923b",
+   "at": "2026-11-10T00:01:22Z"
+  },
+  {
+   "id": "367cfabdeb6a3b12",
+   "parent": "cfed97caf3c912fb",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w46",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w47",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "6401f04b4304e4088f140b884ecdb42674b0a94c4691205dc42b9f01dda03bc7",
+   "at": "2026-11-10T00:01:24Z"
+  },
+  {
+   "id": "72f232f38274d8bb",
+   "parent": "367cfabdeb6a3b12",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "set_music",
+     "asset": "m1"
+    }
+   ],
+   "hash": "1f1ee8c473fa3b81101d53dce8f24e7d6a2b5988b86b0c360bb7ed97a791beb3",
+   "at": "2026-11-10T00:01:26Z"
+  },
+  {
+   "id": "f80f36682c07b141",
+   "parent": "72f232f38274d8bb",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "place_broll",
+     "asset": "a2",
+     "at": {
+      "word": "a1:w47",
+      "edge": "start"
+     },
+     "duration": 705600000
+    }
+   ],
+   "hash": "2a78e8c451bea431a37308d3fdd74e98b1d07750949e2ecd8cc978a894f7adb3",
+   "at": "2026-11-10T00:01:28Z"
+  },
+  {
+   "id": "88a831580b050f4f",
+   "parent": "f80f36682c07b141",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "caption_style",
+     "look": "bold",
+     "words": [
+      "a1:w10"
+     ]
+    }
+   ],
+   "hash": "4b672a376392877aab3c51b948fd5e48b96556ec6317f22490924fbe09649caa",
+   "at": "2026-11-10T00:01:30Z"
+  },
+  {
+   "id": "715e9be4db7c3f5b",
+   "parent": "88a831580b050f4f",
+   "author": "person",
+   "ops": [
+    {
+     "op": "speed",
+     "clip": "c4",
+     "rate": {
+      "n": 3,
+      "d": 2
+     }
+    }
+   ],
+   "hash": "388f7232180d9baa26c55c812ce957fd6593f1f2e93ab0e0004b3eb8d9a515a6",
+   "at": "2026-11-10T00:01:31Z"
+  },
+  {
+   "id": "e18e23f42e94a635",
+   "parent": "715e9be4db7c3f5b",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w34",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w37",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "b264c693591af72be4c557d1cf5eec106e3631794b1c8ac52957bc43bca34897",
+   "at": "2026-11-10T00:01:32Z"
+  },
+  {
+   "id": "44a0bcf498748426",
+   "parent": "e18e23f42e94a635",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "place_broll",
+     "asset": "a2",
+     "at": {
+      "word": "a1:w44",
+      "edge": "start"
+     },
+     "duration": 705600000
+    }
+   ],
+   "hash": "e1a4691b1680a0e343d88ef6aa62da477a656b0f01f85dee7524a50b19da7478",
+   "at": "2026-11-10T00:01:34Z"
+  },
+  {
+   "id": "f9ebcaaaa14a7230",
+   "parent": "44a0bcf498748426",
+   "author": "person",
+   "ops": [
+    {
+     "op": "add_sfx",
+     "asset": "sfx:whoosh-soft",
+     "peak_at": {
+      "word": "a1:w41",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "ece8287a51c3876debf7ba3cbb86db4d6d0790c4b4d54e45367204b06f3c75eb",
+   "at": "2026-11-10T00:01:35Z"
+  },
+  {
+   "id": "2d8749caa0a6a805",
+   "parent": "f9ebcaaaa14a7230",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w21",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w25",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "a4eefadcc3337f8ef54e26f3449e8580f66efcdcdb7e1a36a1895e200aeccd05",
+   "at": "2026-11-10T00:01:36Z"
+  },
+  {
+   "id": "d5729b96f5cfa599",
+   "parent": "2d8749caa0a6a805",
+   "author": "person",
+   "ops": [
+    {
+     "op": "caption_style",
+     "look": "bold",
+     "words": [
+      "a1:w49"
+     ]
+    }
+   ],
+   "hash": "67e4f44dd28732a4fb589520fc3a3526e084aba6878cc827650e2f8cfd709310",
+   "at": "2026-11-10T00:01:37Z"
+  },
+  {
+   "id": "d3f60df636dcb6b1",
+   "parent": "d5729b96f5cfa599",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "mark",
+     "name": "m",
+     "at": {
+      "word": "a1:w7",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "9b52e52e98e34a3e721fd73ba27080cab82c74b8ed4d2b4c5d7eaede9254fed1",
+   "at": "2026-11-10T00:01:38Z"
+  },
+  {
+   "id": "ee0b86c1742d2207",
+   "parent": "d3f60df636dcb6b1",
+   "author": "person",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w7",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w10",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "b6e786c18d72a6db8559329c93bd1f85d75b1f42512674f9e8f15c97a926bed2",
+   "at": "2026-11-10T00:01:39Z"
+  },
+  {
+   "id": "b3cd5d7cf5120025",
+   "parent": "ee0b86c1742d2207",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "add_sfx",
+     "asset": "sfx:whoosh-soft",
+     "peak_at": {
+      "word": "a1:w31",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "bf0a87a281f514bd7f4dda145806330e0baf32165a391f5ef2ef4054a21f8646",
+   "at": "2026-11-10T00:01:40Z"
+  },
+  {
+   "id": "95419cdcddb00952",
+   "parent": "b3cd5d7cf5120025",
+   "author": "person",
+   "ops": [
+    {
+     "op": "place_broll",
+     "asset": "a2",
+     "at": {
+      "word": "a1:w5",
+      "edge": "start"
+     },
+     "duration": 705600000
+    }
+   ],
+   "hash": "961f50ccd48a270c0f22c21e5513efb3b194faacc3e4cf3204b49f9cedc1ad7f",
+   "at": "2026-11-10T00:01:41Z"
+  },
+  {
+   "id": "300ac6f0439dc549",
+   "parent": "95419cdcddb00952",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_music",
+     "asset": "m1"
+    }
+   ],
+   "hash": "7e8bccf135ecbb0b1048cd4094b13adc67ceecb3efc98a87d027131f1f1e1f7a",
+   "at": "2026-11-10T00:01:43Z"
+  },
+  {
+   "id": "b688e7879c590222",
+   "parent": "300ac6f0439dc549",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "place_broll",
+     "asset": "a2",
+     "at": {
+      "word": "a1:w27",
+      "edge": "start"
+     },
+     "duration": 705600000
+    }
+   ],
+   "hash": "6bacec867a9d6cf9044ec9e7127ba5bba9a230b48d4003d26de3319bf27169e3",
+   "at": "2026-11-10T00:01:44Z"
+  },
+  {
+   "id": "acad60d7d4d8c4ec",
+   "parent": "b688e7879c590222",
+   "author": "person",
+   "ops": [
+    {
+     "op": "remove_range",
+     "from": {
+      "word": "a1:w9",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w11",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "0a29e9d50e836f058a40919468187d4f116530119c7a5264ce4361ff6a2c64fd",
+   "at": "2026-11-10T00:01:45Z"
+  },
+  {
+   "id": "ac254f402642663a",
+   "parent": "acad60d7d4d8c4ec",
+   "author": "person",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w21",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "d5038e78007580e924965e76dbb48af5fff78fe3210ae9e90a47164fc56b1a7f",
+   "at": "2026-11-10T00:01:47Z"
+  },
+  {
+   "id": "1d6bdbe8686a57bb",
+   "parent": "ac254f402642663a",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "mark",
+     "name": "m",
+     "at": {
+      "word": "a1:w26",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "ec0152f4abebcfc3d8ea2490cee24aa69d3c11a49862b58149c1bb2891e5c317",
+   "at": "2026-11-10T00:01:48Z"
+  },
+  {
+   "id": "309181743e2beaa6",
+   "parent": "1d6bdbe8686a57bb",
+   "author": "person",
+   "ops": [
+    {
+     "op": "remove_range",
+     "from": {
+      "word": "a1:w32",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w33",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "f21d03e78891c482331557d070d94cc7a253670282261df9aa84d8f7d1f7f4c8",
+   "at": "2026-11-10T00:01:49Z"
+  },
+  {
+   "id": "bc236f33f7669834",
+   "parent": "309181743e2beaa6",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w2",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "5a2eef557080fe083a38c7b93e45c331114347074faa18f1379aac3deb1871fc",
+   "at": "2026-11-10T00:01:50Z"
+  },
+  {
+   "id": "63e57fcce6e07032",
+   "parent": "bc236f33f7669834",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "add_sfx",
+     "asset": "sfx:whoosh-soft",
+     "peak_at": {
+      "word": "a1:w22",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "8b10faec300395c7d378007f301c778de6d44794d56c6e6b30161885724ac342",
+   "at": "2026-11-10T00:01:52Z"
+  },
+  {
+   "id": "0b284517ece00c78",
+   "parent": "63e57fcce6e07032",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_music",
+     "asset": "m1"
+    }
+   ],
+   "hash": "c263ebd49b8499d5da71087573c6f0470a4a8ed9a84b190174ddb76c2b4d6f28",
+   "at": "2026-11-10T00:01:53Z"
+  },
+  {
+   "id": "cc1fea8c9b856d2d",
+   "parent": "0b284517ece00c78",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "ripple_delete",
+     "clip": "c29"
+    }
+   ],
+   "hash": "d8c9a38827d33ef6d8e7b04dba5939a8a2642cd43f72c46576f158b55962d1c4",
+   "at": "2026-11-10T00:01:54Z"
+  },
+  {
+   "id": "b0026fd5e99f221c",
+   "parent": "cc1fea8c9b856d2d",
+   "author": "person",
+   "ops": [
+    {
+     "op": "add_sfx",
+     "asset": "sfx:whoosh-soft",
+     "peak_at": {
+      "word": "a1:w3",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "0811e8c15b55c2fe2ab9ca7f310a3727cbaca73337e5c07ba179907aa096cbc1",
+   "at": "2026-11-10T00:01:55Z"
+  },
+  {
+   "id": "90c2beb03750d32f",
+   "parent": "b0026fd5e99f221c",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "grade",
+     "clip": "c4",
+     "gain": 1.1
+    }
+   ],
+   "hash": "4c5b8e0dae3dd2c642d4d30844e4de40417af8b17c1162c2f68b0efa187a2eae",
+   "at": "2026-11-10T00:01:56Z"
+  },
+  {
+   "id": "dec026ae1c88c749",
+   "parent": "90c2beb03750d32f",
+   "author": "person",
+   "ops": [
+    {
+     "op": "ripple_delete",
+     "clip": "c15"
+    }
+   ],
+   "hash": "8a1fe59d1a1f0743eeaedb9baca22d4b9dbeefbece34ca88af09909b46beb0d5",
+   "at": "2026-11-10T00:01:57Z"
+  },
+  {
+   "id": "725f32ff6c206edb",
+   "parent": "dec026ae1c88c749",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "remove_range",
+     "from": {
+      "word": "a1:w37",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w40",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "680d7fb6c473201fb002bfc8c3eb32e746f618d05f639d86c31540787194419f",
+   "at": "2026-11-10T00:01:58Z"
+  },
+  {
+   "id": "50f48a0fb669a24e",
+   "parent": "725f32ff6c206edb",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w18",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "c376e1734d32c0dd434d5f98386a9089b86d2caa5ba6dfa0d54a8b5616bb3a84",
+   "at": "2026-11-10T00:01:60Z"
+  },
+  {
+   "id": "b566770105320f8e",
+   "parent": "50f48a0fb669a24e",
+   "author": "person",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w9",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w11",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "8349b314852d933a06be85e8218e94c4b2c90a40abb593662e50a110dde474c3",
+   "at": "2026-11-10T00:01:61Z"
+  },
+  {
+   "id": "78027620d612b327",
+   "parent": "b566770105320f8e",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w42",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w42",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "175496d341aaec8faa9d1ac1ad41aa9f57166ee5655564ec880da14218834342",
+   "at": "2026-11-10T00:01:62Z"
+  },
+  {
+   "id": "b1c9016303261e30",
+   "parent": "78027620d612b327",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "caption_style",
+     "look": "bold",
+     "words": [
+      "a1:w13"
+     ]
+    }
+   ],
+   "hash": "3a8624646be98b6eb9e5e98e059372048c74caf77507ab39bc9156f9008217b2",
+   "at": "2026-11-10T00:01:64Z"
+  },
+  {
+   "id": "09e3e7828430441b",
+   "parent": "b1c9016303261e30",
+   "author": "person",
+   "ops": [
+    {
+     "op": "use_take",
+     "clip": "c36",
+     "from": {
+      "word": "a1:w40",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w46",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "c7f51082956d74320b113836d14c312578e7e560054c00bb4a87cba616e7da8a",
+   "at": "2026-11-10T00:01:65Z"
+  },
+  {
+   "id": "51768fad19ab3415",
+   "parent": "09e3e7828430441b",
+   "author": "person",
+   "ops": [
+    {
+     "op": "ripple_delete",
+     "clip": "c1"
+    }
+   ],
+   "hash": "4461f4b6d83b57585aae3e0d5e6ca78bab4025a4a50fcaf4a73cb579cf2ac1ad",
+   "at": "2026-11-10T00:01:67Z"
+  },
+  {
+   "id": "73dbfd0669f9fbb6",
+   "parent": "51768fad19ab3415",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w1",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "b97ee1cc0dae68afadf2db788742a79f495b6f74a23af3f6d06e667cc0b6de1c",
+   "at": "2026-11-10T00:01:68Z"
+  },
+  {
+   "id": "c8398559688fd983",
+   "parent": "73dbfd0669f9fbb6",
+   "author": "person",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w5",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "0d5485f756be8c45848d1b8f82d7f05235b2bdfe3147c2c5893b8f495b2963d3",
+   "at": "2026-11-10T00:01:69Z"
+  },
+  {
+   "id": "1063eb463921481b",
+   "parent": "c8398559688fd983",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "ripple_delete",
+     "clip": "c19"
+    }
+   ],
+   "hash": "c8a2101fd3994175e1ec40ffe075a28644ecaa173f30a6ac001b2e1dbf8955d3",
+   "at": "2026-11-10T00:01:70Z"
+  },
+  {
+   "id": "ac45d82d2ed4348c",
+   "parent": "1063eb463921481b",
+   "author": "person",
+   "ops": [
+    {
+     "op": "keep_range",
+     "asset": "a1",
+     "from": {
+      "word": "a1:w22",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w28",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "dd66893fe2cddb484da1c58cc03f6c8168b80bc199fc87121a6abe3da642416d",
+   "at": "2026-11-10T00:01:71Z"
+  },
+  {
+   "id": "07d327cb18a21e74",
+   "parent": "ac45d82d2ed4348c",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "mark",
+     "name": "m",
+     "at": {
+      "word": "a1:w5",
+      "edge": "start"
+     }
+    }
+   ],
+   "hash": "604c0aebc377ecce2769e36fecdee680bd4f2f94534260c324334d58da3dbb20",
+   "at": "2026-11-10T00:01:72Z"
+  },
+  {
+   "id": "1a374b8f72109141",
+   "parent": "07d327cb18a21e74",
+   "author": "person",
+   "ops": [
+    {
+     "op": "use_take",
+     "clip": "c22",
+     "from": {
+      "word": "a1:w20",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w23",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "12244313b9b628d04b891e67983d0196b398e7db04b3dc709929bc26dc2d03be",
+   "at": "2026-11-10T00:01:73Z"
+  },
+  {
+   "id": "829afe92d134e22b",
+   "parent": "1a374b8f72109141",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "remove_range",
+     "from": {
+      "word": "a1:w7",
+      "edge": "start"
+     },
+     "to": {
+      "word": "a1:w9",
+      "edge": "end"
+     }
+    }
+   ],
+   "hash": "e124fde8a15256a7ede09c7eb2cb680f206178285cb49eb866b427ffab2dd27e",
+   "at": "2026-11-10T00:01:76Z"
+  },
+  {
+   "id": "137aab48308113a7",
+   "parent": "829afe92d134e22b",
+   "author": "person",
+   "ops": [
+    {
+     "op": "set_level",
+     "clip": "c2",
+     "db": -3
+    }
+   ],
+   "hash": "e124fde8a15256a7ede09c7eb2cb680f206178285cb49eb866b427ffab2dd27e",
+   "at": "2026-11-10T00:01:77Z"
+  },
+  {
+   "id": "7438a05bf373baeb",
+   "parent": "137aab48308113a7",
+   "author": "agent",
+   "ops": [
+    {
+     "op": "punch_in",
+     "at": {
+      "word": "a1:w13",
+      "edge": "start"
+     },
+     "scale": 1.1
+    }
+   ],
+   "hash": "58ffc2b5368219224375e10a59f471a71fd6cf9c7d31c2211cf81dcdc76b1946",
+   "at": "2026-11-10T00:01:78Z"
+  }
+ ]
+}

@@ -35,6 +35,8 @@ export type Effect =
   | { type: "eq"; preset: string; strength?: number }
   | { type: "duck"; depth?: number; attack?: Flicks; release?: Flicks }
   | { type: "freeze"; at: TimeRef; duration: Flicks }
+  /** The whole picture inside the frame: on bars, or over a blurred copy of itself. Fill is the absence of it */
+  | { type: "frame"; mode: "fit" | "blur" }
 
 export type Clip = {
   id: string
@@ -54,6 +56,8 @@ export type Clip = {
   /** J and L cuts: how far sound starts before, or ends after, the picture */
   audioLead?: Flicks
   audioLag?: Flicks
+  /** An assembly make placed this clip; the next make removes it before placing again */
+  plan?: boolean
   createdBy: Author
 }
 
@@ -67,6 +71,8 @@ export type Asset = {
   rights: "own" | "licensed" | "public_domain" | "unknown"
   rightsNote?: string
   role?: "aroll" | "broll" | "screen" | "music" | "sfx" | "logo"
+  /** The person's name for the clip: letters, digits and spaces, 40 at most. Untrusted text. Its number is computed (clipNumbers), never stored */
+  label?: string
   facts: {
     duration?: Flicks
     fps?: Rate | null
@@ -89,7 +95,25 @@ export type Sequence = {
   markers: { id: string; name: string; at: TimeRef }[]
   clips: Clip[]
   parent?: string
+  /** The storyboard (ASSEMBLY_AND_INTENT §3). Changed only by set_assembly; a make follows one only from its own brief */
+  assembly?: Assembly
 }
+
+export type AssemblyPart = {
+  id: string
+  asset: string
+  /** A stretch of the file; absent, the whole file */
+  from?: TimeRef
+  to?: TimeRef
+  /** story and whole are the film's order; over and sound sit on another part */
+  use: "story" | "whole" | "over" | "sound"
+  at?: { part: string; where?: "start" | "middle" | "end"; word?: string; t?: Flicks }
+  /** Absent means fill */
+  fit?: "fill" | "fit" | "blur"
+  why?: "person" | "storyboard" | "director" | "default"
+}
+
+export type Assembly = { version: 1; parts: AssemblyPart[] }
 
 export type Deliverable = {
   id: string

@@ -232,6 +232,13 @@ a { color: var(--teal); }
 .scene-head .field { width: auto; }
 .scene-info .field { width: auto; flex: 1 1 140px; min-width: 0; }
 .scene-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+/* The Plan Card's Order (TP2): the film's parts, small; each move is a 44 px target, and a row wraps at 360 px */
+.order-strip { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.order-part { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line, rgba(127, 127, 127, 0.25)); }
+.order-n { flex: none; min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.order-what { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.order-moves { display: inline-flex; gap: 6px; flex: none; }
+.order-move { min-width: 44px; min-height: 44px; padding: 0; }
 /* A wide (16:9) preview and its controls don't fit side by side on a phone: the controls drop under it */
 .proposal .scene-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: flex-start; }
 .found-thumb { flex: none; width: 120px; height: 90px; object-fit: cover; border-radius: 6px; background: #000; }
@@ -246,5 +253,60 @@ a { color: var(--teal); }
 .refs-direct:empty { display: none; }
 .ref .ref-lines { list-style: none; padding: 0; margin: 2px 0; font-size: 13px; color: var(--ink-2); display: grid; gap: 2px; }
 .area-monitor .marks .btn { background: #2a2a2a; color: #eee; }
+
+/* TP1 (ASSEMBLY_AND_INTENT §2, §4): clip handles, the bin's tools, the storyboard and mentions.
+   All of it is drawn only with editing.assembly on; off, no rule here matches anything */
+.badge { flex: none; display: inline-block; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--teal); color: var(--on-teal); font: 600 12px/24px ui-monospace, "JetBrains Mono", monospace; text-align: center; }
+.thumb { flex: none; width: 64px; height: 36px; border-radius: 6px; background: var(--hover) center / cover no-repeat; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-2); }
+/* A video's thumbnails are one sheet of ten by ten: the first tile */
+.thumb.sheet { background-size: 1000% 1000%; background-position: 0 0; }
+.bin-tools { display: grid; gap: 8px; margin-bottom: 10px; }
+.asset-head { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.asset-head .btn { flex: 1; min-width: 0; justify-content: flex-start; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.asset.handle { cursor: grab; }
+.bin-group { color: var(--ink-2); padding-top: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* A long bin scrolls in place and draws only the rows in view, each the same height (main.js BIN_ROW) */
+.bin.virtual { max-height: 62vh; overflow: auto; gap: 0; }
+.bin.virtual > .asset { height: 236px; overflow: hidden; align-content: start; }
+.bin.virtual > .bin-group { height: 36px; }
+
+.area-story { grid-area: story; display: none; }
+.workspace.has-story[data-mode="direct"] .area-story { display: block; }
+.workspace.has-story[data-mode="direct"] .grid { grid-template-areas: "monitor kriya" "story story" "transcript transcript" "strip strip"; }
+.sb-cards { list-style: none; padding: 0 0 4px; margin: 0 0 8px; display: flex; gap: 8px; overflow-x: auto; }
+.sb-cards:empty { display: none; }
+.sb-cards > li { flex: none; width: 184px; }
+.sb-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; align-items: center; padding: 8px; border-radius: 10px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--edge); cursor: grab; }
+.sb-card .thumb { grid-column: 1 / -1; width: 100%; height: 94px; }
+.sb-card .name, .sb-add .name, .mention-option .name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.sb-card .name { font-weight: 500; }
+.sb-card .stretch, .sb-card .field, .sb-moves { grid-column: 1 / -1; }
+.sb-card .stretch { color: var(--ink-2); }
+.sb-moves { display: flex; gap: 6px; flex-wrap: wrap; }
+.sb-moves .btn { flex: 1; }
+/* With a pointer or a keyboard the order changes by drag or Alt+arrows; the buttons are for a phone */
+.sb-moves .move { display: none; }
+.sb-head { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); margin: 8px 0 6px; }
+.sb-unused { list-style: none; padding: 0; margin: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.sb-unused > li { min-width: 0; max-width: 100%; }
+.sb-add { gap: 6px; max-width: 100%; cursor: grab; }
+.sb-add .name { max-width: 200px; }
+.mention-list { list-style: none; margin: 0 0 6px; padding: 4px; border-radius: 10px; background: var(--sheet); box-shadow: inset 0 0 0 1px var(--edge), 0 6px 20px rgb(0 0 0 / 0.18); max-height: 280px; overflow: auto; }
+.mention-list[hidden] { display: none; }
+.mention-option { display: flex; gap: 8px; align-items: center; min-height: 44px; padding: 4px 8px; border-radius: 8px; cursor: pointer; }
+.mention-option[aria-selected="true"] { background: color-mix(in srgb, var(--teal) 16%, transparent); }
+.chip.mention { font-family: ui-monospace, "JetBrains Mono", monospace; background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--ink); }
+.word[draggable="true"] { cursor: grab; }
+/* .btn sets display, which would show a hidden button */
+.area-kriya > .btn[hidden] { display: none; }
+@media (max-width: 760px) {
+  .workspace.has-story[data-mode="direct"] .grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "final" "monitor" "story" "kriya" "transcript" "finish"; }
+  /* At a phone's width the strip is a list, and each row has Move up and Move down */
+  .sb-cards { flex-direction: column; overflow: visible; }
+  .sb-cards > li { width: auto; }
+  .sb-card { grid-template-columns: auto auto minmax(0, 1fr); }
+  .sb-card .thumb { grid-column: auto; width: 64px; height: 36px; }
+  .sb-moves .move { display: inline-flex; }
+}
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

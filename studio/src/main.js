@@ -3,11 +3,14 @@
 // monitor, transcript and timeline are made once per project and survive mode
 // switches, so changing mode never resets playback.
 
+import { fileName, GROUPS, groupBin, nameOf, searchBin, sortBin, SORTS, VIRTUAL_ABOVE, windowOf } from "./bin.js"
 import { api, clear, h } from "./dom.js"
 import { createFinish } from "./finish.js"
+import { attachMentions, CLIP_MIME, thumbEl, tokensIn } from "./mentions.js"
 import { createMonitor } from "./monitor.js"
 import { durationOf, programOf, shotMarks, sourceAt, sourceProgram, pieceAt, timelineAt } from "./program.js"
 import { keyAction, timecode, transport } from "./time.js"
+import { assemblyOp, createStoryboard, movePart, partsOf, spineOf } from "./storyboard.js"
 import { createTimeline } from "./timeline.js"
 import { createTranscript } from "./transcript.js"
 
@@ -221,6 +224,12 @@ async function workspace(id) {
   let source = null // an asset id when the monitor shows a source instead of the cut
   let mode = MODES.includes(remember("kriya-edit-mode")) ? remember("kriya-edit-mode") : "direct"
   let formatFollowed = false // reload(): Format follows the project's frame once, on opening
+  // editing.assembly, as this Kriya says (TP1): clip numbers and labels, the storyboard, mentions.
+  // Off, nothing below draws and the page is the one it was
+  const assemblyOn = view.assembly === true
+  const thumbOf = (asset) => (asset.offline ? null : asset.kind === "video" ? { url: `/tiles/${asset.media}?kind=thumbs`, sheet: true } : asset.kind === "image" ? { url: `/media/${asset.media}`, sheet: false } : null)
+  const clipOf = (asset) => ({ asset: asset.id, number: asset.number, name: nameOf(asset), duration: asset.facts.duration, thumb: thumbOf(asset) })
+  const clipsNow = () => assets.filter((a) => a.number).map(clipOf)
   const fps = () => project.canvas.fps
 
   const time = h("span", { class: "time label-mono", "aria-live": "off" }, "00:00.00")
@@ -315,6 +324,7 @@ async function workspace(id) {
     transcript.load(index)
     showChip()
     renderBin()
+    storyboard?.load(project)
     // On opening, Format follows the project's frame: found in use, a 16:9 project reopened
     // showed 9:16, so a plain "Make it" went back to 9:16. After that it's the person's choice
     if (!formatFollowed) {
@@ -355,27 +365,94 @@ async function workspace(id) {
     if (value !== null) fill.style.width = `${value}%`
     return h("div", { class: "progress", role: "progressbar", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": "100", ...(value === null ? {} : { "aria-valuenow": String(value) }) }, fill)
   }
-  function renderBin() {
-    clear(bin)
-    for (const asset of assets.filter((a) => a.kind !== "reference")) {
-      const status = index.assets.find((a) => a.asset === asset.id)
-      const words = status?.layers.find((l) => l.layer === "L2")
-      const job = indexing(asset.id)
-      const noWords = runtime?.speech ? "Indexed, no words yet: set up speech-to-text above" : (words?.notice ?? "Indexed, no words")
-      const note = job ? `Reading this file… ${job.progress ?? 0}%` : !status ? "Not indexed" : words?.status === "ok" ? "Indexed" : noWords
-      const media = ["video", "audio"].includes(asset.kind)
-      bin.append(
-        h(
-          "li",
-          { class: "asset" },
-          h("button", { type: "button", class: "btn", onclick: () => showSource(asset.id, 0) }, `${asset.path.split(/[\\/]/).at(-1)} · ${asset.kind}`),
-          h("span", { class: "note" }, asset.offline ? "Offline: the file has moved" : note),
-          job ? progressBar(job.progress ?? 0, `Indexing ${asset.path.split(/[\\/]/).at(-1)}`) : null,
-          media ? h("button", { type: "button", class: "btn", disabled: !!job, onclick: () => indexAsset(asset) }, status ? "Index again" : "Index") : null,
-          media ? h("button", { type: "button", class: "btn", onclick: () => change([{ op: "keep_range", asset: asset.id, from: 0, to: asset.facts.duration }]) }, "Add to cut") : null,
-        ),
-      )
+  // The bin's search, sort and groups (TP1); drawn only with editing.assembly on
+  const binSearch = h("input", { type: "search", id: "bin-search", class: "field", placeholder: "Label, file name or words said", autocomplete: "off", oninput: () => drawBin() })
+  const binSort = h("select", { id: "bin-sort", class: "field select", "aria-label": "Sort the bin", onchange: () => drawBin() }, Object.entries(SORTS).map(([value, label]) => h("option", { value }, `Sort: ${label.toLowerCase()}`)))
+  const binGroup = h("select", { id: "bin-group", class: "field select", "aria-label": "Group the bin", onchange: () => drawBin() }, Object.entries(GROUPS).map(([value, label]) => h("option", { value }, label)))
+  const binTools = assemblyOn ? h("div", { class: "bin-tools" }, h("label", { for: "bin-search", class: "sr-only" }, "Search the bin"), binSearch, binSort, binGroup) : null
+  const ROLES = { aroll: "Talking", broll: "B-roll", screen: "Screen recording", music: "Music", sfx: "Sound effect", logo: "Logo" }
+  const BIN_ROW = { asset: 236, head: 36 } // row heights once the list is long enough to draw only what's in view (styles.css)
+
+  /** The person's name for a clip, typed in place: Enter keeps it, Escape doesn't. An empty one takes the label away. */
+  function rename(asset, el) {
+    const input = h("input", { class: "field", value: asset.label ?? "", maxlength: "40", "aria-label": `Label for clip ${asset.number}`, placeholder: "A label, such as intro" })
+    el.replaceWith(input)
+    input.focus()
+    input.select()
+    let done = false
+    const finish = (keep) => {
+      if (done) return
+      done = true
+      const label = input.value.trim()
+      input.replaceWith(el)
+      if (keep && label !== (asset.label ?? "")) change([{ op: "describe_asset", asset: asset.id, label }])
+      else el.focus()
     }
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation()
+      if (event.key === "Enter") (event.preventDefault(), finish(true))
+      else if (event.key === "Escape") (event.preventDefault(), finish(false))
+    })
+    input.addEventListener("blur", () => finish(true))
+  }
+
+  function binRow(asset) {
+    const status = index.assets.find((a) => a.asset === asset.id)
+    const words = status?.layers.find((l) => l.layer === "L2")
+    const job = indexing(asset.id)
+    const noWords = runtime?.speech ? "Indexed, no words yet: set up speech-to-text above" : (words?.notice ?? "Indexed, no words")
+    const note = job ? `Reading this file… ${job.progress ?? 0}%` : !status ? "Not indexed" : words?.status === "ok" ? "Indexed" : noWords
+    const media = ["video", "audio"].includes(asset.kind)
+    const handle = assemblyOn && asset.number
+    const open = h("button", { type: "button", class: "btn", onclick: () => showSource(asset.id, 0) }, `${handle ? nameOf(asset) : asset.path.split(/[\\/]/).at(-1)} · ${asset.kind}`)
+    if (handle) {
+      open.title = `${fileName(asset)}. Double-click or F2 to label it.`
+      open.addEventListener("dblclick", () => rename(asset, open))
+      open.addEventListener("keydown", (event) => event.key === "F2" && (event.preventDefault(), event.stopPropagation(), rename(asset, open)))
+    }
+    const role = handle ? h("select", { class: "field select", "aria-label": `What clip ${asset.number} is`, onchange: () => change([{ op: "describe_asset", asset: asset.id, role: role.value }]) }, [asset.role ? null : h("option", { value: "", disabled: true }, "What it is…"), ...Object.entries(ROLES).map(([value, label]) => h("option", { value }, label))]) : null
+    if (role) role.value = asset.role ?? ""
+    return h(
+      "li",
+      { class: `asset${handle ? " handle" : ""}`, ...(handle ? { draggable: "true", ondragstart: (event) => event.dataTransfer.setData(CLIP_MIME, JSON.stringify({ asset: asset.id })) } : {}) },
+      handle ? h("div", { class: "asset-head" }, thumbEl(clipOf(asset)), h("span", { class: "badge", "aria-label": `Clip ${asset.number}` }, String(asset.number)), open) : open,
+      h("span", { class: "note" }, asset.offline ? "Offline: the file has moved" : note),
+      job ? progressBar(job.progress ?? 0, `Indexing ${asset.path.split(/[\\/]/).at(-1)}`) : null,
+      role,
+      media ? h("button", { type: "button", class: "btn", disabled: !!job, onclick: () => indexAsset(asset) }, status ? "Index again" : "Index") : null,
+      media ? h("button", { type: "button", class: "btn", onclick: () => change([{ op: "keep_range", asset: asset.id, from: 0, to: asset.facts.duration }]) }, "Add to cut") : null,
+    )
+  }
+  /** The bin's rows. Off, every file in the order added, as before; on, searched, sorted and grouped, and above 60 rows only those in view. */
+  function drawBin() {
+    const all = assets.filter((a) => a.kind !== "reference")
+    const keep = document.activeElement === binSearch
+    const scrolled = bin.scrollTop
+    clear(bin)
+    bin.classList.remove("virtual")
+    if (!assemblyOn) return bin.append(...all.map(binRow))
+    const found = sortBin(searchBin(all, index.words, binSearch.value), binSort.value)
+    const rows = groupBin(found, binGroup.value).flatMap((group) => [...(group.name === null ? [] : [{ head: `${group.name} · ${group.assets.length}` }]), ...group.assets])
+    const draw = (row) => (row.head ? h("li", { class: "bin-group label-mono" }, row.head) : binRow(row))
+    if (binSearch.value.trim() && !found.length) bin.append(h("li", { class: "note" }, "Nothing in the bin matches that."))
+    else if (rows.length <= VIRTUAL_ABOVE) bin.append(...rows.map(draw))
+    else {
+      bin.classList.add("virtual")
+      const { start, end, before, after } = windowOf(rows.map((row) => (row.head ? BIN_ROW.head : BIN_ROW.asset)), scrolled, bin.clientHeight || 600)
+      const space = (px) => {
+        const gap = h("li", { class: "bin-space", "aria-hidden": "true" })
+        gap.style.height = `${px}px`
+        return gap
+      }
+      bin.append(space(before), ...rows.slice(start, end).map(draw), space(after))
+      bin.scrollTop = scrolled
+    }
+    if (keep) binSearch.focus()
+  }
+  let binFrame = 0
+  bin.addEventListener("scroll", () => bin.classList.contains("virtual") && (cancelAnimationFrame(binFrame), (binFrame = requestAnimationFrame(drawBin))))
+  function renderBin() {
+    drawBin()
     renderReferences()
   }
   async function indexAsset(asset) {
@@ -440,6 +517,7 @@ async function workspace(id) {
     "section",
     { class: "panel bin-panel", "aria-label": "Bin" },
     h("h2", {}, "Bin"),
+    binTools,
     bin,
     uploads,
     picker,
@@ -576,6 +654,22 @@ async function workspace(id) {
      as "this" become proposals; questions get answers. Kriya's words are only ever text */
   const prompt = h("textarea", { id: "prompt", class: "field chat-input", rows: "2", placeholder: "Tell Kriya: \"remove 0:05 to 0:09\", \"change the caption at 0:12 to …\", \"make the start punchier\"", autocomplete: "off" })
   const chip = h("span", { class: "chip selection", hidden: true })
+  /* The storyboard and mentions (TP1, ASSEMBLY_AND_INTENT §4.1, §4.2), only with editing.assembly on.
+     Every storyboard action is one set_assembly, so Cmd+Z undoes it */
+  const storyEl = assemblyOn ? h("section", { class: "area-story panel storyboard", "aria-label": "Storyboard" }) : null
+  const storyboard = assemblyOn ? createStoryboard({ root: storyEl, clips: clipsNow, words: () => index.words ?? [], onChange: (parts) => change([assemblyOp(parts)]) }) : null
+  const mentionBox = assemblyOn ? attachMentions({ input: prompt, clips: clipsNow }) : null
+  // The words selected in the transcript, as a stretch of their file
+  const stretchNow = () => {
+    const [first, last] = (transcript.selection() ?? []).map((wid) => index.words.find((w) => w.id === wid))
+    return first && last ? { asset: first.asset, from: first.start, to: last.end } : null
+  }
+  const mentionThis = assemblyOn ? h("button", { type: "button", class: "btn", hidden: true, title: "Point at the selected words in your message", onclick: () => stretchNow() && mentionBox.insert(stretchNow()) }, "Mention this") : null
+  if (assemblyOn) {
+    prompt.placeholder = "Tell Kriya what to change. Type @ to point at a clip."
+    // Selected words can be dragged onto the chat box or the storyboard
+    transcriptEl.addEventListener("dragstart", (event) => stretchNow() && event.dataTransfer.setData(CLIP_MIME, JSON.stringify(stretchNow())))
+  }
   const chatEl = h("ol", { class: "chat", "aria-label": "Chat with Kriya", "aria-live": "polite" })
   const did = h("ul", { class: "did", "aria-label": "What I did" })
   const history = [] // the chat's turns, sent back (short) so a follow-up has its context
@@ -598,6 +692,9 @@ async function workspace(id) {
     const { label } = selectionNow()
     chip.hidden = !label
     chip.textContent = label ?? ""
+    if (!assemblyOn) return
+    mentionThis.hidden = !transcript.selection()
+    for (const el of transcriptEl.querySelectorAll(".word")) el.draggable = el.getAttribute("aria-pressed") === "true"
   }
   transcriptEl.addEventListener("click", () => setTimeout(showChip))
 
@@ -615,7 +712,9 @@ async function workspace(id) {
     return out
   }
   function message(who, text, ...more) {
-    const li = h("li", { class: `msg ${who}` }, h("span", { class: "who" }, who === "you" ? "You" : "Kriya"), h("p", {}, ...withTimes(text)), ...more)
+    // A mention shows as a chip; its stretch is of the file, so it isn't a time to seek the cut to
+    const words = who === "you" && mentionBox ? tokensIn(text).flatMap((part) => (part.number ? [h("span", { class: "chip mention" }, part.text)] : withTimes(part.text))) : withTimes(text)
+    const li = h("li", { class: `msg ${who}` }, h("span", { class: "who" }, who === "you" ? "You" : "Kriya"), h("p", {}, ...words), ...more)
     chatEl.append(li)
     li.scrollIntoView({ block: "nearest" })
     return li
@@ -880,6 +979,48 @@ async function workspace(id) {
     colour.value = plan.brief.captionStyle?.accent ?? ""
     return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Captions"), h("div", { class: "row" }, look, colour))
   }
+  /**
+   * The card's Order (ASSEMBLY_AND_INTENT §5): the film's parts, small, before anything renders. Each
+   * part can move earlier or later right here, and Approve sends exactly the order shown.
+   * Labels and file names are untrusted text: only ever textContent.
+   */
+  function orderStrip(plan) {
+    const list = h("ol", { class: "order-strip", "aria-label": "The film's order" })
+    const said = h("p", { class: "sr-only", role: "status", "aria-live": "polite" })
+    const WHO = { director: "the Director's choice", default: "the order added", storyboard: "your storyboard", person: "as you said" }
+    const USE = { story: "story", whole: "whole", over: "over the voice", sound: "sound only" }
+    const stretch = (part) => (part.from === null && part.to === null ? (part.duration ? clock(part.duration) : "") : `${part.from === null ? "0:00" : clock(part.from)}–${part.to === null ? "end" : clock(part.to)}`)
+    const draw = (focus = null) => {
+      clear(list)
+      const parts = plan.order.parts
+      const spine = spineOf(parts)
+      parts.forEach((part) => {
+        const place = spine.indexOf(part)
+        const label = `clip ${part.number ?? "?"}${part.label ? `, ${part.label}` : ""}`
+        const move = (by, text) =>
+          h("button", { type: "button", class: "btn order-move", "aria-label": `Move ${label} ${text}`, disabled: place < 0 || !spine[place + by], "data-move": `${part.id}:${by}`, onclick: () => {
+            const next = movePart(plan.settings.assembly.parts, part.id, by)
+            if (!next) return
+            // The same move on the order shown and on the order an approval sends
+            plan.settings.assembly = { version: 1, parts: next }
+            plan.brief.assembly = plan.settings.assembly
+            plan.order.parts = movePart(plan.order.parts, part.id, by)
+            said.textContent = `${label} moved ${text}.`
+            draw(`${part.id}:${by}`)
+          } }, by < 0 ? "↑" : "↓")
+        list.append(
+          h("li", { class: "order-part", "data-part": part.id },
+            h("span", { class: "order-n" }, place >= 0 ? String(place + 1) : "+"),
+            h("span", { class: "order-what" }, h("b", {}, `Clip ${part.number ?? "?"}`), part.label ? ` ${part.label}` : "", h("span", { class: "note small" }, ` ${[USE[part.use] ?? part.use, stretch(part), WHO[part.why]].filter(Boolean).join(" · ")}`)),
+            place >= 0 ? h("span", { class: "order-moves" }, move(-1, "earlier"), move(1, "later")) : null,
+          ),
+        )
+      })
+      if (focus) (list.querySelector(`[data-move="${focus}"]:not([disabled])`) ?? list.querySelector(`[data-part="${focus.split(":")[0]}"] button:not([disabled])`))?.focus()
+    }
+    draw()
+    return h("div", { class: "scenes order" }, h("p", { class: "lead" }, "Order"), plan.order.parts.length ? list : null, ...plan.order.lines.map((text) => h("p", { class: "note small" }, text)), said)
+  }
   function planBlock(plan) {
     planGenre = plan.genreLabel ? `reads as: ${plan.genreLabel}` : null
     const line = h("p", { class: "note small" }, settingsLine(plan.settings))
@@ -891,6 +1032,7 @@ async function workspace(id) {
       plan.revises ? h("p", { class: "note small" }, `${plan.differs?.length ? `What changes: ${plan.differs.join(" · ")}. ` : ""}${plan.keepsStory ? "The story and your own edits stay." : "The length or the trims change, so the lines are chosen again; your own edits are kept where they still fit."} Say "start over" for a new cut from the footage.`) : null,
       plan.steps.length ? h("ol", { class: "steps" }, plan.steps.map((step) => h("li", {}, ...withTimes(step)))) : null,
       line,
+      plan.order ? orderStrip(plan) : null,
       plan.settings.scenes?.length ? sceneCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       plan.settings.graphics?.length ? graphicCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
       plan.settings.pictures?.length ? pictureCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
@@ -921,10 +1063,10 @@ async function workspace(id) {
     makeTitles.box.checked = !!brief.titles
     makeTemplate.value = ""
   }
-  async function askPlan(text, previous = null) {
+  async function askPlan(text, previous = null, pointing = {}) {
     const thinking = message("kriya", previous ? "Revising the plan…" : "Planning the cut…")
     try {
-      const plan = await api("POST", `/projects/${id}/plan`, { text, history: history.slice(-6), previous, choices: choicesNow() })
+      const plan = await api("POST", `/projects/${id}/plan`, { text, history: history.slice(-6), previous, choices: choicesNow(), ...pointing })
       thinking.remove()
       pendingPlan = plan
       message("kriya", plan.say || "Here's my plan.", planBlock(plan))
@@ -935,27 +1077,31 @@ async function workspace(id) {
     }
   }
   async function send({ planning = false } = {}) {
-    const text = prompt.value.trim()
-    if (!text) return
-    prompt.placeholder = "Tell Kriya: \"remove 0:05 to 0:09\", \"change the caption at 0:12 to …\", \"make the start punchier\""
+    const typed = prompt.value.trim()
+    if (!typed) return
+    // The message as typed is what the chat shows; what's sent has each mention as a numbered place and a typed list
+    const taken = mentionBox ? mentionBox.take(typed) : { text: typed, mentions: [] }
+    const text = taken.text
+    const pointing = taken.mentions.length ? { mentions: taken.mentions } : {}
+    prompt.placeholder = assemblyOn ? "Tell Kriya what to change. Type @ to point at a clip." : "Tell Kriya: \"remove 0:05 to 0:09\", \"change the caption at 0:12 to …\", \"make the start punchier\""
     // Talking about the plan: revise it; asking for a plan: plan
     if (pendingPlan || planning) {
-      message("you", text)
-      history.push({ who: "you", text: text.slice(0, 400) })
+      message("you", typed)
+      history.push({ who: "you", text: typed.slice(0, 400) })
       prompt.value = ""
-      return askPlan(text, pendingPlan)
+      return askPlan(text, pendingPlan, pointing)
     }
     const { selection, label } = selectionNow()
-    message("you", label ? `${text}  (${label.replace(/^Selected: /, "on ")})` : text)
+    message("you", label ? `${typed}  (${label.replace(/^Selected: /, "on ")})` : typed)
     prompt.value = ""
     const thinking = message("kriya", "Thinking about that…")
     try {
-      const reply = await api("POST", `/projects/${id}/ask`, { text, selection, history: history.slice(-6) })
+      const reply = await api("POST", `/projects/${id}/ask`, { text, selection, history: history.slice(-6), ...pointing })
       thinking.remove()
       const words = reply.say || (reply.proposal ? "Here's what I'd change." : reply.direct ? "That's about the whole video." : (reply.reason ?? "I couldn't turn that into an edit. Try saying it another way."))
-      history.push({ who: "you", text: text.slice(0, 400) })
+      history.push({ who: "you", text: typed.slice(0, 400) })
       // A request about the whole video: the Director pitches a plan for approval
-      if (reply.direct && !reply.proposal) return askPlan(text)
+      if (reply.direct && !reply.proposal) return askPlan(text, null, pointing)
       message("kriya", words, reply.proposal ? proposalBlock(reply.proposal) : null)
       history.push({ who: "kriya", text: words.slice(0, 400) })
     } catch (error) {
@@ -980,7 +1126,7 @@ async function workspace(id) {
     h("button", { type: "button", class: "btn", "aria-keyshortcuts": "I", title: "Mark in (I)", onclick: () => act({ type: "mark", edge: "in" }) }, "Mark in"),
     h("button", { type: "button", class: "btn", "aria-keyshortcuts": "O", title: "Mark out (O)", onclick: () => act({ type: "mark", edge: "out" }) }, "Mark out"),
   )
-  const verdictWords = { delivered: "Checked", delivered_with_notes: "Checked, with notes", blocked: "Needs you", not_checked: "Not checked" }
+  const verdictWords = { delivered: "Checked", delivered_with_notes: "Checked, with notes", blocked: "Needs you", needs_you: "Needs you", not_checked: "Not checked" }
   // What the Director makes: the length, captions, music and a style reference, all optional
   const makeLength = h("select", { id: "make-length", class: "field select" }, [["", "Length: auto (30–60 s)"], ["30", "30 seconds"], ["45", "45 seconds"], ["60", "60 seconds"], ["90", "90 seconds"]].map(([value, label]) => h("option", { value }, label)))
   const makeCaptions = h("select", { id: "make-captions", class: "field select" }, [["", "No captions"], ["clean", "Captions: clean"], ["karaoke", "Captions: karaoke"], ["boxed", "Captions: boxed"], ["pop", "Captions: pop"], ["story", "Captions: story"], ["minimal", "Captions: minimal"]].map(([value, label]) => h("option", { value }, label)))
@@ -1049,7 +1195,7 @@ async function workspace(id) {
   async function make(extra, { exact = false, plan = null } = {}) {
     try {
       const refs = briefNow().references
-      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}) } : briefNow(extra), ...(plan ? { plan: { say: plan.say, steps: plan.steps, settings: plan.settings } } : {}) })
+      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}) } : { ...briefNow(extra), ...(assemblyOn && partsOf(project).length ? { assembly: { version: 1, parts: partsOf(project) } } : {}) }, ...(plan ? { plan: { say: plan.say, steps: plan.steps, settings: plan.settings } } : {}) })
       makeJob = job.id
       jobsNow.set(job.id, job)
       say.textContent = "Directing your reel: reading the footage, choosing the story, cutting and checking it. You can keep working."
@@ -1209,14 +1355,16 @@ async function workspace(id) {
         h("div", { class: "monitor-frame" }, canvas),
         h("div", { class: "transport" }, play, time, which, shape, markButtons, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
       ),
-      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, sideHandle, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Chat with Kriya"), chatEl, chip, promptForm, h("p", { class: "note small" }, "Say times like 0:05 or mark a stretch with I and O. Enter sends."), h("h2", {}, "What I did"), did),
+      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, sideHandle, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Chat with Kriya"), chatEl, chip, mentionThis, mentionBox?.el, promptForm, h("p", { class: "note small" }, "Say times like 0:05 or mark a stretch with I and O. Enter sends."), h("h2", {}, "What I did"), did),
       h("section", { class: "area-transcript panel", "aria-label": "Transcript" }, h("h2", {}, "Transcript"), h("p", { class: "note small hint" }, "Click a word to jump there. Double-click (or F2) to fix a misheard word."), transcriptEl),
+      storyEl,
       h("div", { class: "area-strip" }, stripEl),
       h("section", { class: "area-timeline panel", "aria-label": "Timeline" }, timelineEl),
       h("div", { class: "area-finish" }, finishEl),
       finalEl,
     ),
   )
+  if (assemblyOn) root.classList.add("has-story")
   clear(app).append(root)
   const savedSide = Number(remember("kriya-side-width"))
   if (savedSide >= SIDE.min) root.style.setProperty("--side", `${Math.min(sideMax(), savedSide)}px`)

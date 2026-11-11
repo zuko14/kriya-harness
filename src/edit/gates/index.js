@@ -10,9 +10,11 @@ import { join } from "node:path"
 import { busOf, speechSpans } from "../core/audio.js"
 import { isSceneBlock } from "../core/layout.js"
 import { wholeSegment } from "../core/plan.js"
+import { clipNumbers } from "../core/project.js"
 import { solve } from "../core/solver.js"
 import { measureLoudness } from "../engine/loudness.js"
 import { runTool } from "../engine/tool.js"
+import { judgeAssembly, sayFailure } from "./assembly.js"
 import { judgeCopy, ocrHelper, readOcr } from "./copy.js"
 import { healthArgs, judgeHealth, judgeMotion, judgeSync, readHealth, streamTimes, tileFrames } from "./picture.js"
 import { curveOf, judgeMix, rangeOf } from "./sound.js"
@@ -52,7 +54,8 @@ const ratio = (text) => {
   return n > 0 && d > 0 ? { n, d } : null
 }
 const seconds = (flicks) => (flicks / FLICKS).toFixed(6)
-const SEVERITY = { "QG-13": "note", "QG-14": "note" }
+// QG-15 is a note until its threshold is measured and its seeded run passes (EH-70)
+const SEVERITY = { "QG-13": "note", "QG-14": "note", "QG-15": "note" }
 const result = (id, status, numbers = {}, message = "", at = null, severity = SEVERITY[id] ?? "block") => ({ id, status, severity, numbers, message, ...(at === null ? {} : { at }) })
 
 async function probeFile(file, run) {
@@ -420,7 +423,7 @@ export function verdictOf(results) {
  *   tilePath, motion, work: the Engine's tiles, the runtime's Chrome and a scratch folder, for QG-08 and QG-09; stems: the Engine's, for QG-06's mix;
  *   recognise: a verified recogniser (file → words), for QG-04 and QG-14; ask: the Director, for QG-14 only; binDir: where helpers are built (QG-10)
  */
-export async function runGates({ file, plan, project, index, sourcePath, run = runTool, only = [...BUILT], thresholds = {}, tilePath, motion, work, inputPath, stems, recognise, ask, binDir }) {
+export async function runGates({ file, plan, project, index, sourcePath, run = runTool, only = [...BUILT], thresholds = {}, tilePath, motion, work, inputPath, stems, recognise, ask, binDir, assembly }) {
   // Frozen: no gate, fix or model can loosen what the recipe set (QUALITY_GATES §4)
   const limits = Object.freeze({ ...THRESHOLDS, ...thresholds })
   const shared = { file, plan, project, index, sourcePath, run, thresholds: limits, tilePath, motion, work, inputPath, stems, recognise, ask, binDir }
@@ -437,5 +440,21 @@ export async function runGates({ file, plan, project, index, sourcePath, run = r
       results.push(result(id, "not_checked", {}, `The gate couldn't run: ${error.message}`))
     }
   }
+  // QG-15 (TP2): only for a make that followed an assembly, so every other film has the gates it had
+  if (assembly?.parts?.length && (only.includes("QG-15") || only.length === BUILT.size)) {
+    try {
+      results.push(await qg15({ ...shared, assembly }))
+    } catch (error) {
+      results.push(result("QG-15", "not_checked", {}, `The gate couldn't run: ${error.message}`))
+    }
+  }
   return { gates: results, ...verdictOf(results) }
+}
+
+async function qg15(input) {
+  const judged = await judgeAssembly({ ...input, timeline: solve(input.project, input.index) })
+  const numbers = clipNumbers(input.project)
+  const first = judged.failures[0]
+  if (!first) return result("QG-15", "passed", judged.numbers)
+  return { ...result("QG-15", "failed", { ...judged.numbers, first }, sayFailure(first, (asset) => `clip ${numbers.get(asset) ?? "?"}`), first.seconds === undefined ? null : Math.round(first.seconds * FLICKS)), failures: judged.failures }
 }

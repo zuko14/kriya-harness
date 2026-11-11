@@ -8,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join } from "node:path"
 import { pipeline } from "node:stream/promises"
 
 import { compile } from "../core/plan.js"
+import { clipNumbers } from "../core/project.js"
 import { solve } from "../core/solver.js"
 import { LOOKS } from "../engine/captions.js"
 import { ENGINE_VERSION, guardPath } from "../engine/index.js"
@@ -18,6 +19,7 @@ import { TRANSITIONS } from "../core/transitions.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
+import { assemblyProblems, isAssembly } from "../director/assembly.js"
 import { FORMATS, GRADES } from "../recipes/reel.js"
 
 const HEADERS = {
@@ -140,8 +142,18 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
 
   // offline: the file isn't where the project says, so the Studio asks to relink it (EG-3)
   const withMedia = (state, asset) => ({ ...asset, media: mediaId(state.id, asset.id), ...(existsSync(isAbsolute(asset.path) ? asset.path : join(state.folder, asset.path)) ? {} : { offline: true }) })
+  // TP1, only with editing.assembly on: each clip's computed number (never stored, EH-54) and the
+  // day its file was last written, for the bin's sort and groups. Off, the view is what it was
+  // shortcut: the file's own date stands in for "recorded" (a copied file gets the day it was copied); read the container's creation time when that matters
+  const withHandle = (state, numbers) => (asset) => {
+    const view = withMedia(state, asset)
+    if (!numbers.has(asset.id)) return view
+    const recorded = view.offline ? null : statSync(isAbsolute(asset.path) ? asset.path : join(state.folder, asset.path)).mtime.toISOString()
+    return { ...view, number: numbers.get(asset.id), ...(recorded ? { recorded } : {}) }
+  }
+  const assemblyOn = async () => (await projects.features()).assembly === true
   const NOTICES = { index: "This project's index was damaged and set aside. Index the footage again.", journal: "This project's job record was damaged and set aside. Finished renders will be made again." }
-  const projectView = (state) => ({ project: state.log.current, head: state.log.head, assets: state.log.current.assets.map((asset) => withMedia(state, asset)), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
+  const projectView = async (state) => ({ project: state.log.current, head: state.log.head, ...((await assemblyOn()) ? { assembly: true, assets: state.log.current.assets.map(withHandle(state, clipNumbers(state.log.current))) } : { assets: state.log.current.assets.map((asset) => withMedia(state, asset)) }), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
 
   // The Media Runtime, installed from the Studio with its progress shown (the same signed
   // manifest and checks as `kriya edit setup`): a first Index no longer looks like nothing happening
@@ -313,16 +325,18 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
       }
       const state = await needProject(res, parts[1])
       if (!state) return
-      if (parts.length === 2 && method === "GET") return say(200, projectView(state))
+      if (parts.length === 2 && method === "GET") return say(200, await projectView(state))
       if (parts.length === 2 && method === "DELETE") return say(200, projects.remove(state.id, { running: (id) => jobs.runningIn(id) }))
       if (parts.length === 2 && method === "PATCH") {
         const { ops, undo } = await readJson(req)
         if (undo === true) {
           projects.undo(state)
-          return say(200, { ...projectView(state), diagnostics: [] })
+          return say(200, { ...(await projectView(state)), diagnostics: [] })
         }
+        // Labels and the storyboard are behind editing.assembly: off, the Host takes neither (ET-ASM-REG-01)
+        if (Array.isArray(ops) && ops.some((op) => ["describe_asset", "set_assembly", "place_over", "set_frame"].includes(op?.op)) && !(await assemblyOn())) return say(422, { ...(await projectView(state)), diagnostics: [{ code: "switched_off", message: "Clip labels and the storyboard aren't switched on.", op: 0 }] })
         const result = projects.change(state, { ops, author: "person" })
-        return say(result.ok ? 200 : 422, { ...projectView(state), diagnostics: result.diagnostics })
+        return say(result.ok ? 200 : 422, { ...(await projectView(state)), diagnostics: result.diagnostics })
       }
       if (parts[2] === "assets" && method === "POST") {
         const { path } = await readJson(req)
@@ -344,17 +358,17 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         return say(200, { ...compile(state.log.current, state.index, { engineVersion: ENGINE_VERSION, runtimeVersion: version }), timeline: { picture, audio, overlays, captions, duration } })
       }
       if (parts[2] === "ask" && parts.length === 3 && method === "POST") {
-        const { text, selection, history } = await readJson(req)
+        const { text, selection, history, mentions } = await readJson(req)
         if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want changed, in up to 2,000 characters.")
         // The chat's last turns, short and text only: nothing else of the browser's reaches the model
         const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
-        return say(200, await projects.ask(state, { text, selection, history: turns }))
+        return say(200, await projects.ask(state, { text, selection, history: turns, mentions }))
       }
       if (parts[2] === "proposals" && parts.length === 4 && method === "POST") {
         const { accept, only } = await readJson(req)
         if (typeof accept !== "boolean" || (only !== undefined && !(Array.isArray(only) && only.every(Number.isInteger)))) return refuse(res, 400, "Accept or reject the proposal.")
         const result = projects.decide(state, parts[3], { accept, only })
-        return say(200, { ...result, ...projectView(state) })
+        return say(200, { ...result, ...(await projectView(state)) })
       }
       if (parts[2] === "make" && parts.length === 3 && method === "POST") {
         const { asset, brief, plan } = await readJson(req)
@@ -410,6 +424,15 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
             clean.sceneSound = brief.sceneSound !== false
           }
         }
+        // The film's order (TP2), only from this make's own brief and only with editing.assembly on: the storyboard
+        // the Studio sent, or an approved plan's. Checked as set_assembly checks it; one file with none is the reel
+        // it always was, and with the switch off the key is dropped (ET-ASM-REG-01, EH-63)
+        if (brief && typeof brief === "object" && brief.assembly !== undefined && (await projects.features()).assembly === true) {
+          const assembly = { version: 1, parts: Array.isArray(brief.assembly?.parts) ? brief.assembly.parts : [] }
+          const problems = assemblyProblems(assembly, { project: state.log.current, index: state.index })
+          if (problems.length) return refuse(res, 400, `That order can't be made: ${problems[0]}`)
+          if (isAssembly(assembly.parts)) clean.assembly = assembly
+        }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         if (brief?.fresh === true) clean.fresh = true
         // The last make's story, set here by the Host (never taken from the browser) so a replay of this job has it too
@@ -458,11 +481,11 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
       }
       // The Director's plan: proposed in words with its settings; nothing is made here
       if (parts[2] === "plan" && parts.length === 3 && method === "POST") {
-        const { text, history, previous, choices } = await readJson(req)
+        const { text, history, previous, choices, mentions } = await readJson(req)
         if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want, in up to 2,000 characters.")
         const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
         const prior = cleanPlan(previous)
-        return say(200, await projects.plan(state, { text, history: turns, previous: prior, choices: choices && typeof choices === "object" ? choices : {} }))
+        return say(200, await projects.plan(state, { text, history: turns, previous: prior, choices: choices && typeof choices === "object" ? choices : {}, mentions }))
       }
       // A reference's classified analysis, measured once and kept
       if (parts[2] === "references" && parts.length === 4 && method === "GET") return say(200, await projects.referenceAnalysis(state, decodeURIComponent(parts[3])))
