@@ -420,10 +420,13 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
     thumbs: async (id, options) => (await graph.demand("thumbs", id, options)).file,
 
     /**
-     * @param {{ quality: "draft" | "master", deliverable?: string, job?: number, signal?: AbortSignal, onStep?: (done: number, total: number) => void, project?: object }} request
+     * @param {{ quality: "draft" | "master", deliverable?: string, job?: number, signal?: AbortSignal, onStep?: (done: number, total: number) => void, project?: object, partial?: boolean }} request
+     * partial (editing.livePreview, TP3): each draft segment's input names only the tiles it draws, so a
+     * change re-renders only the segments it touched. The picture only: the sound is always one mix of the
+     * whole film (QG-06) and a master one encode (ET-TR-M2), EH-66
      * @returns {Promise<{ file: string, plan: object }>}
      */
-    async render({ quality, deliverable, job, signal, onStep = () => {}, project: candidate }) {
+    async render({ quality, deliverable, job, signal, onStep = () => {}, project: candidate, partial = false }) {
       // A candidate version (the Edit Loop's attempt) renders without becoming the project
       const plan = compile(candidate ?? project, index, { engineVersion: ENGINE_VERSION, runtimeVersion: toolVersion, quality, deliverable })
       if (!plan.duration) throw new EngineFailure("plan", "empty", "There's nothing on the timeline to render.")
@@ -449,7 +452,9 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
           step(1)
         } else {
           const total = plan.segments.length + 1
-          for (const segment of plan.segments) graph.set(`segment:${segment.key}`, { plan: shared, segment })
+          // Off, every segment reads the whole plan's tiles, as before: a caption change re-renders them all
+          const tilesOf = (segment) => (partial === true ? plan.tiles.filter((tile) => segment.node.tiles.some((part) => part.key === tile.key)) : plan.tiles)
+          for (const segment of plan.segments) graph.set(`segment:${segment.key}`, { plan: { ...shared, tiles: tilesOf(segment) }, segment })
           graph.set(`join:${key}`, { segments: plan.segments.map((s) => s.key), audio: plan.audio.key })
           // Demanded here, not only by the join, so progress can be seen and slots shared
           await Promise.all(plan.segments.map((segment) => graph.demand("segment", segment.key, options).then(() => step(total))))

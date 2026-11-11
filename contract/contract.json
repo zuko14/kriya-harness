@@ -811,6 +811,9 @@
           },
           "assembly": {
             "type": "boolean"
+          },
+          "livePreview": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -819,7 +822,8 @@
           "mediaSearch",
           "motion",
           "customMotion",
-          "assembly"
+          "assembly",
+          "livePreview"
         ],
         "additionalProperties": false
       }

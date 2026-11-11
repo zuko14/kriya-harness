@@ -9,7 +9,7 @@ import { createFinish } from "./finish.js"
 import { attachMentions, CLIP_MIME, thumbEl, tokensIn } from "./mentions.js"
 import { createMonitor } from "./monitor.js"
 import { durationOf, programOf, shotMarks, sourceAt, sourceProgram, pieceAt, timelineAt } from "./program.js"
-import { keyAction, timecode, transport } from "./time.js"
+import { keyAction, snap, timecode, transport } from "./time.js"
 import { assemblyOp, createStoryboard, movePart, partsOf, spineOf } from "./storyboard.js"
 import { createTimeline } from "./timeline.js"
 import { createTranscript } from "./transcript.js"
@@ -227,6 +227,10 @@ async function workspace(id) {
   // editing.assembly, as this Kriya says (TP1): clip numbers and labels, the storyboard, mentions.
   // Off, nothing below draws and the page is the one it was
   const assemblyOn = view.assembly === true
+  // editing.livePreview, as this Kriya says (TP3): the monitor draws the draft's plan, the timeline
+  // trims by its edges, a proposal shows before and after. Off, nothing below draws or listens
+  const liveOn = view.livePreview === true
+  let livePlan = null // GET /projects/{id}/preview, for the cut on the monitor
   const thumbOf = (asset) => (asset.offline ? null : asset.kind === "video" ? { url: `/tiles/${asset.media}?kind=thumbs`, sheet: true } : asset.kind === "image" ? { url: `/media/${asset.media}`, sheet: false } : null)
   const clipOf = (asset) => ({ asset: asset.id, number: asset.number, name: nameOf(asset), duration: asset.facts.duration, thumb: thumbOf(asset) })
   const clipsNow = () => assets.filter((a) => a.number).map(clipOf)
@@ -254,7 +258,9 @@ async function workspace(id) {
       play.textContent = rate === 0 ? "Play" : "Pause"
       play.setAttribute("aria-label", rate === 0 ? "Play (Space)" : `Pause (Space), playing at ${rate}×`)
     },
+    ...(liveOn ? { tileUrl: (key) => `/projects/${id}/tile-preview?key=${key}` } : {}),
   })
+  const withPreview = (options) => (liveOn && livePlan ? { ...options, preview: livePlan } : options)
   // Declared before its first use in reload(); the select itself is made with the transport
   const shapeNow = () => ({ "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } })[shape.value] ?? project.canvas
   const currentPieces = () => (source ? sourceProgram(assets.find((a) => a.id === source)) : pieces)
@@ -284,7 +290,40 @@ async function workspace(id) {
       await reload()
     },
   })
-  const timeline = createTimeline({ root: timelineEl, onSeek: (t) => (showProgram(), monitor.seek(t)) })
+  const timeline = createTimeline({ root: timelineEl, onSeek: (t) => (showProgram(), monitor.seek(t)), ...(liveOn ? { onTrim: trimClip } : {}) })
+  // An edge dragged on the timeline (TP3): one trim, so Cmd+Z undoes it. The source time follows
+  // the piece at that edge, moving out past the cut as well as in
+  function trimClip({ clip, edge, at }) {
+    const parts = timelineData.picture.filter((p) => p.clip === clip).sort((a, b) => a.at - b.at)
+    const piece = edge === "in" ? parts[0] : parts.at(-1)
+    if (!piece || piece.hold) return
+    const { n, d } = typeof piece.speed === "object" ? piece.speed : { n: 1, d: 1 }
+    const length = assets.find((a) => a.id === piece.asset)?.facts.duration ?? piece.out
+    const source = Math.min(length, Math.max(0, piece.in + Math.round(((snap(at, fps()) - piece.at) * n) / d)))
+    const other = edge === "in" ? parts.at(-1).out : parts[0].in
+    if (edge === "in" ? source >= other : source <= other) return (say.textContent = "That would leave nothing of the clip.")
+    return change([{ op: "trim", clip, [edge]: source }])
+  }
+  // Where a dragged edge lands: the edges of words (in the cut, and just past each clip's ends) and the beats
+  function trimSnaps() {
+    const out = [...(livePlan?.beats ?? [])]
+    const clips = new Map()
+    for (const p of [...timelineData.picture].sort((a, b) => a.at - b.at)) clips.set(p.clip, [...(clips.get(p.clip) ?? []), p])
+    for (const parts of clips.values()) {
+      const [first, last] = [parts[0], parts.at(-1)]
+      if (first.hold) continue
+      const { n, d } = typeof first.speed === "object" ? first.speed : { n: 1, d: 1 }
+      for (const w of index.words ?? []) {
+        if (w.asset !== first.asset) continue
+        for (const s of [w.start, w.end]) {
+          const inside = timelineAt(parts, w.asset, s)
+          const at = inside ?? (s < first.in ? first.at + Math.round(((s - first.in) * d) / n) : s >= last.out ? last.at + Math.round(((s - last.in) * d) / n) : null)
+          if (at !== null) out.push(at)
+        }
+      }
+    }
+    return out
+  }
   const strip = createTimeline({ root: stripEl, compact: true, onSeek: (t) => (showProgram(), monitor.seek(t)) })
   const finalEl = h("div", { class: "area-final" })
   const finish = createFinish({ root: finishEl, finalRoot: finalEl, pixels: () => monitor.pixels(), project: () => project, onAdjust: () => setMode("edit") })
@@ -293,7 +332,7 @@ async function workspace(id) {
     if (!source) return
     source = null
     which.textContent = "Preview"
-    monitor.load(pieces, { fps: fps(), duration: durationOf(pieces), shape: shapeNow() })
+    monitor.load(pieces, withPreview({ fps: fps(), duration: durationOf(pieces), shape: shapeNow() }))
   }
   function showSource(asset, at) {
     source = asset
@@ -303,7 +342,8 @@ async function workspace(id) {
   }
 
   async function reload() {
-    const [next, plan, found] = await Promise.all([api("GET", `/projects/${id}`), api("GET", `/projects/${id}/plan`), api("GET", `/projects/${id}/index`)])
+    const [next, plan, found, preview] = await Promise.all([api("GET", `/projects/${id}`), api("GET", `/projects/${id}/plan`), api("GET", `/projects/${id}/index`), liveOn ? api("GET", `/projects/${id}/preview`).catch(() => null) : null])
+    livePlan = preview
     project = next.project
     assets = next.assets
     index = found
@@ -320,6 +360,7 @@ async function workspace(id) {
       return at === null || at === undefined ? [] : [{ at, name: m.name }]
     })
     timeline.load(timelineData, { duration: total, fps: fps(), marks, pins })
+    if (liveOn) timeline.setSnaps(trimSnaps())
     strip.load({ picture: timelineData.picture }, { duration: total, fps: fps(), marks })
     transcript.load(index)
     showChip()
@@ -333,7 +374,9 @@ async function workspace(id) {
       if (frame && project.sequences.some((q) => q.clips.length)) makeFormat.value = frame
     }
     // The preview shape the person chose holds through every reload (a finished Index used to reset it)
-    if (!source) await monitor.load(pieces, { fps: fps(), duration: total, shape: shapeNow() })
+    // The cut as it now is: a proposal's "Preview: after" ends with its Accept or Reject
+    if (!source) which.textContent = "Preview"
+    if (!source) await monitor.load(pieces, withPreview({ fps: fps(), duration: total, shape: shapeNow() }))
     for (const asset of new Set([...timelineData.audio, ...timelineData.picture].map((item) => item.asset))) {
       const media = assets.find((a) => a.id === asset)?.media
       if (media && assets.find((a) => a.id === asset).facts.hasAudio) {
@@ -736,8 +779,32 @@ async function workspace(id) {
       strip.setGhost(null)
       await reload()
     }
+    // Before and after on the monitor (TP3): the cut as it is, or as it would be, drawn from each one's own plan
+    const compare = liveOn && proposal.timeline
+      ? (() => {
+          const buttons = {}
+          const showIt = async (after) => {
+            try {
+              if (after) {
+                const plan = await api("GET", `/projects/${id}/preview?proposal=${encodeURIComponent(proposal.id)}`)
+                const next = programOf(proposal.timeline)
+                await monitor.load(next, { fps: fps(), duration: durationOf(next), shape: shapeNow(), preview: plan })
+              } else await monitor.load(pieces, withPreview({ fps: fps(), duration: durationOf(pieces), shape: shapeNow() }))
+              which.textContent = after ? "Preview: after" : "Preview"
+              buttons.before.setAttribute("aria-pressed", String(!after))
+              buttons.after.setAttribute("aria-pressed", String(after))
+            } catch (error) {
+              say.textContent = error.message
+            }
+          }
+          buttons.before = h("button", { type: "button", class: "btn", "aria-pressed": "true", onclick: () => showIt(false) }, "Before")
+          buttons.after = h("button", { type: "button", class: "btn", "aria-pressed": "false", onclick: () => showIt(true) }, "After")
+          return h("div", { class: "row compare", role: "group", "aria-label": "Show on the monitor" }, buttons.before, buttons.after)
+        })()
+      : null
     box.append(
       h("p", { class: "lead" }, "Proposed, not applied yet"),
+      ...(compare ? [compare] : []),
       h("ul", {}, proposal.changes.map((change, i) => h("li", {}, h("span", {}, ...withTimes(change)), proposal.changes.length > 1 ? h("button", { type: "button", class: "btn", onclick: () => decide(true, [i]) }, "Only this") : null))),
       h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => decide(true) }, proposal.changes.length > 1 ? "Accept all" : "Accept"), h("button", { type: "button", class: "btn", onclick: () => decide(false) }, "Reject")),
     )

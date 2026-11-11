@@ -344,8 +344,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     /** What this Kriya allows now. A failed question means off. */
     async features() {
       if (!known || Date.now() - known.at > FEATURES_MS) known = { at: Date.now(), value: await features().catch(() => ({ visuals: false, playbooks: false, mediaSearch: false })) }
-      // A server from before editing.motion or editing.assembly says nothing of it: off
-      return { motion: false, customMotion: false, assembly: false, ...known.value }
+      // A server from before editing.motion, editing.assembly or editing.livePreview says nothing of it: off
+      return { motion: false, customMotion: false, assembly: false, livePreview: false, ...known.value }
     },
 
     /** One motion graphic as the render will draw it, for the Plan Card. @returns {string} a complete document */

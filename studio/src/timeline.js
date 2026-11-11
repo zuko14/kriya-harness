@@ -15,11 +15,43 @@ const ROWS = [
 ]
 const ROW = 44
 const GAP = 6
+// Trim handles (TP3, editing.livePreview): a narrow strip just inside each end of a picture clip.
+// Anywhere else a press still scrubs (EH-67). A finger gets 22 px inside each clip, so 44 across a cut
+export const HANDLE = { mouse: 6, touch: 22 }
+const SNAP_PX = 8 // a dragged edge lands on a word's edge or a beat this close
+
+/** The picture clip edge under x on the Picture row, or null. Clips too short for both handles have none. */
+export function handleAt(picture, x, { width, duration, pointer = "mouse" }) {
+  if (!duration) return null
+  const reach = pointer === "touch" ? HANDLE.touch : HANDLE.mouse
+  const px = (at) => (at / duration) * width
+  const clips = new Map()
+  for (const item of picture) {
+    const clip = clips.get(item.clip) ?? { clip: item.clip, at: item.at, end: item.end }
+    clips.set(item.clip, { ...clip, at: Math.min(clip.at, item.at), end: Math.max(clip.end, item.end) })
+  }
+  for (const clip of clips.values()) {
+    const [left, right] = [px(clip.at), px(clip.end)]
+    if (right - left < reach * 3) continue
+    if (x >= left && x < left + reach) return { clip: clip.clip, edge: "in", at: clip.at }
+    if (x >= right - reach && x < right) return { clip: clip.clip, edge: "out", at: clip.end }
+  }
+  return null
+}
+
+/** t moved onto the nearest snap time within SNAP_PX, or left where it is. */
+export function snapTo(t, snaps, { width, duration }) {
+  let best = t
+  let off = (SNAP_PX / width) * duration
+  for (const s of snaps) if (Math.abs(s - t) <= off) [best, off] = [s, Math.abs(s - t)]
+  return best
+}
 
 /**
- * @param {{ root: HTMLElement, compact?: boolean, onSeek: (t: number) => void, onSelect?: (clip: string | null) => void }} options
+ * @param {{ root: HTMLElement, compact?: boolean, onSeek: (t: number) => void, onSelect?: (clip: string | null) => void, onTrim?: (trim: { clip: string, edge: "in" | "out", at: number }) => void }} options
+ * onTrim: edge handles are on (TP3); without it the timeline is what it was
  */
-export function createTimeline({ root, compact = false, onSeek, onSelect = () => {} }) {
+export function createTimeline({ root, compact = false, onSeek, onSelect = () => {}, onTrim }) {
   const rows = compact ? ROWS.slice(0, 1) : ROWS
   const canvas = h("canvas", { class: "lanes", "aria-hidden": "true" })
   const labels = compact ? null : h("div", { class: "lane-labels", "aria-hidden": "true" }, rows.map((row) => h("div", { class: "lane-label" }, row.label)))
@@ -35,6 +67,9 @@ export function createTimeline({ root, compact = false, onSeek, onSelect = () =>
   let peaks = new Map() // asset → finest peaks per second level
   let selected = null
   let ghost = null // a proposal's picture, drawn dashed over the Picture row (Proposal mode)
+  const trims = Boolean(onTrim) && !compact
+  let snaps = [] // timeline times a trimmed edge lands on: word edges and beats
+  let trimming = null // { clip, edge, at }: the edge being dragged, drawn where it would land
 
   const colour = (name) => getComputedStyle(root).getPropertyValue(name).trim() || "#888"
 
@@ -88,6 +123,20 @@ export function createTimeline({ root, compact = false, onSeek, onSelect = () =>
         ctx.fillStyle = colour("--shot")
         for (const mark of marks) ctx.fillRect(x(mark.at) - 0.5, y, 1, 8)
       }
+      if (row.key === "picture" && trims) {
+        // A small grip at each end of every clip long enough to have one
+        ctx.fillStyle = colour("--ink-2")
+        for (const item of timeline.picture) {
+          const [left, right] = [x(item.at), x(item.end)]
+          if (right - left < HANDLE.mouse * 3) continue
+          if (!timeline.picture.some((p) => p.clip === item.clip && p.end === item.at)) ctx.fillRect(left + 1, y + ROW / 2 - 8, 2, 16)
+          if (!timeline.picture.some((p) => p.clip === item.clip && p.at === item.end)) ctx.fillRect(right - 3, y + ROW / 2 - 8, 2, 16)
+        }
+        if (trimming) {
+          ctx.fillStyle = colour("--focus")
+          ctx.fillRect(x(trimming.at) - 1, y, 3, ROW)
+        }
+      }
     })
     // A note from the Review Room: a pin along the top, in the playhead's colour
     ctx.fillStyle = colour("--playhead")
@@ -101,13 +150,49 @@ export function createTimeline({ root, compact = false, onSeek, onSelect = () =>
     const rect = canvas.getBoundingClientRect()
     onSeek(Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * duration))
   }
+  // An edge handle under the pointer, only on the Picture row (the first)
+  const handleUnder = (event) => {
+    if (!trims) return null
+    const rect = canvas.getBoundingClientRect()
+    if (event.clientY - rect.top > ROW) return null
+    return handleAt(timeline.picture, event.clientX - rect.left, { width: rect.width, duration, pointer: event.pointerType === "touch" ? "touch" : "mouse" })
+  }
+  const trimAt = (event) => {
+    const rect = canvas.getBoundingClientRect()
+    const raw = Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * duration)
+    trimming = { ...trimming, at: snapTo(raw, snaps, { width: rect.width, duration }) }
+    draw()
+  }
   canvas.addEventListener("pointerdown", (event) => {
-    dragging = true
     canvas.setPointerCapture(event.pointerId)
+    const handle = handleUnder(event)
+    if (handle) {
+      trimming = { ...handle, from: handle.at }
+      return draw()
+    }
+    dragging = true
     seekAt(event)
   })
-  canvas.addEventListener("pointermove", (event) => dragging && seekAt(event))
-  canvas.addEventListener("pointerup", () => (dragging = false))
+  canvas.addEventListener("pointermove", (event) => {
+    if (trimming) return trimAt(event)
+    if (dragging) return seekAt(event)
+    if (trims) canvas.style.cursor = handleUnder(event) ? "ew-resize" : ""
+  })
+  canvas.addEventListener("pointerup", () => {
+    dragging = false
+    if (!trimming) return
+    const done = trimming
+    trimming = null
+    draw()
+    // A press on a handle that didn't move it changes nothing
+    if (done.at !== done.from) onTrim({ clip: done.clip, edge: done.edge, at: done.at })
+  })
+  if (trims)
+    canvas.addEventListener("pointercancel", () => {
+      dragging = false
+      trimming = null
+      draw()
+    })
   new ResizeObserver(draw).observe(canvas)
 
   function select(clip) {
@@ -140,6 +225,10 @@ export function createTimeline({ root, compact = false, onSeek, onSelect = () =>
     setGhost(next) {
       ghost = next
       draw()
+    },
+    /** Where a trimmed edge snaps: timeline times of word edges and beats (TP3). */
+    setSnaps(next) {
+      snaps = next
     },
     setTime(next) {
       t = next

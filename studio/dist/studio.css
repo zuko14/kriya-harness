@@ -134,6 +134,11 @@ a { color: var(--teal); }
 .workspace[data-mode="finish"] :is(.area-bin, .area-kriya, .area-transcript, .area-strip, .area-timeline) { display: none; }
 
 .monitor-frame { display: flex; justify-content: center; align-items: center; min-height: 200px; }
+/* The live preview's tiles (TP3): the renderer's own documents over the canvas, never a target.
+   color-scheme normal on the frames, so Chrome draws them transparent in the dark theme too */
+.monitor-frame:has(.tile-layer) { position: relative; }
+.tile-layer { position: absolute; overflow: hidden; pointer-events: none; color-scheme: normal; }
+.tile-layer .tile { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: transparent; pointer-events: none; color-scheme: normal; }
 .monitor { max-width: 100%; max-height: 62vh; background: #000; display: block; }
 .transport { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 .area-monitor .chip { background: rgb(255 255 255 / 0.12); color: #ddd; }

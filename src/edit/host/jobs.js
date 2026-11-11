@@ -50,7 +50,7 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
             ? JSON.stringify(await projects.revise(state, request, { job: number, signal: controller.signal, onStep }))
             : request.kind === "replay"
               ? JSON.stringify(await projects.replay(state, request.of, { job: number, signal: controller.signal, onStep }))
-            : (await state.engine.render({ ...request, job: number, signal: controller.signal, onStep, project: request.project ?? versionOf(state, number) })).file
+            : (await state.engine.render({ ...request, job: number, signal: controller.signal, onStep, project: request.project ?? versionOf(state, number), partial: request.quality === "draft" && (await projects.features?.())?.livePreview === true })).file
       update({ status: "done", progress: 100, dispatch: output, finished_at: new Date().toISOString() })
     } catch (error) {
       if (controller.signal.aborted) update({ status: "canceled", finished_at: new Date().toISOString() })

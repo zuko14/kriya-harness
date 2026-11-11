@@ -12,10 +12,10 @@ import { openManifest, RuntimeError, TRUSTED_KEYS } from "./manifest.js"
 export async function fetchFeatures(device) {
   try {
     const found = await call(device.url, "GET", "/editing/features", { token: device.token })
-    // motion, customMotion, assembly: a server from before them says nothing, which is off
-    return { visuals: found?.visuals === true, playbooks: found?.playbooks === true, mediaSearch: found?.mediaSearch === true, motion: found?.motion === true, customMotion: found?.customMotion === true, assembly: found?.assembly === true }
+    // motion, customMotion, assembly, livePreview: a server from before them says nothing, which is off
+    return { visuals: found?.visuals === true, playbooks: found?.playbooks === true, mediaSearch: found?.mediaSearch === true, motion: found?.motion === true, customMotion: found?.customMotion === true, assembly: found?.assembly === true, livePreview: found?.livePreview === true }
   } catch {
-    return { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false }
+    return { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false }
   }
 }
 

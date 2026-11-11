@@ -7,6 +7,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync
 import { basename, dirname, extname, isAbsolute, join } from "node:path"
 import { pipeline } from "node:stream/promises"
 
+import { apply } from "../core/ops.js"
 import { compile } from "../core/plan.js"
 import { clipNumbers } from "../core/project.js"
 import { solve } from "../core/solver.js"
@@ -21,6 +22,7 @@ import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
 import { assemblyProblems, isAssembly } from "../director/assembly.js"
 import { FORMATS, GRADES } from "../recipes/reel.js"
+import { previewOf, tileDocument } from "./preview.js"
 
 const HEADERS = {
   "cross-origin-opener-policy": "same-origin",
@@ -152,8 +154,9 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
     return { ...view, number: numbers.get(asset.id), ...(recorded ? { recorded } : {}) }
   }
   const assemblyOn = async () => (await projects.features()).assembly === true
+  const livePreviewOn = async () => (await projects.features()).livePreview === true
   const NOTICES = { index: "This project's index was damaged and set aside. Index the footage again.", journal: "This project's job record was damaged and set aside. Finished renders will be made again." }
-  const projectView = async (state) => ({ project: state.log.current, head: state.log.head, ...((await assemblyOn()) ? { assembly: true, assets: state.log.current.assets.map(withHandle(state, clipNumbers(state.log.current))) } : { assets: state.log.current.assets.map((asset) => withMedia(state, asset)) }), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
+  const projectView = async (state) => ({ project: state.log.current, head: state.log.head, ...((await livePreviewOn()) ? { livePreview: true } : {}), ...((await assemblyOn()) ? { assembly: true, assets: state.log.current.assets.map(withHandle(state, clipNumbers(state.log.current))) } : { assets: state.log.current.assets.map((asset) => withMedia(state, asset)) }), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
 
   // The Media Runtime, installed from the Studio with its progress shown (the same signed
   // manifest and checks as `kriya edit setup`): a first Index no longer looks like nothing happening
@@ -356,6 +359,31 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         // The solver's timeline too: the Studio's monitor and timeline place clips from it
         const { picture, audio, overlays, captions, duration } = solve(state.log.current, state.index)
         return say(200, { ...compile(state.log.current, state.index, { engineVersion: ENGINE_VERSION, runtimeVersion: version }), timeline: { picture, audio, overlays, captions, duration } })
+      }
+      // The live preview (TP3, editing.livePreview): what the monitor draws, from the draft's own plan;
+      // with ?proposal=, the cut as it would be if that proposal were accepted. Off, neither route exists
+      if (parts[2] === "preview" && parts.length === 3 && method === "GET") {
+        if (!(await livePreviewOn())) return refuse(res, 404, "The live preview isn't on.")
+        const proposalId = url.searchParams.get("proposal")
+        let project = state.log.current
+        if (proposalId !== null) {
+          const proposal = state.proposals.get(proposalId)
+          if (!proposal) return refuse(res, 404, "That proposal isn't there any more.")
+          const applied = apply(project, proposal.ops, { index: state.index })
+          if (applied.diagnostics.length) return refuse(res, 409, "That proposal no longer fits the cut.")
+          project = applied.project
+        }
+        const { version } = await tools()
+        state.previewTiles ??= new Map()
+        return say(200, previewOf(project, state.index, { runtimeVersion: version, tiles: state.previewTiles }))
+      }
+      // One tile of a preview: its own sandboxed document, no network, as the render draws it
+      if (parts[2] === "tile-preview" && parts.length === 3 && method === "GET") {
+        if (!(await livePreviewOn())) return refuse(res, 404, "The live preview isn't on.")
+        const html = tileDocument(state.previewTiles ?? new Map(), url.searchParams.get("key"))
+        if (html === null) return refuse(res, 404, "That tile isn't in this preview.")
+        res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; frame-ancestors 'self'; sandbox allow-scripts" })
+        return res.end(html)
       }
       if (parts[2] === "ask" && parts.length === 3 && method === "POST") {
         const { text, selection, history, mentions } = await readJson(req)
