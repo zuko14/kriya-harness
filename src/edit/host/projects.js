@@ -43,6 +43,7 @@ import { clipList, decideAssembly, isAssembly } from "../director/assembly.js"
 import { cleanMentions, mentionsView } from "../director/mentions.js"
 import { openIndexDb } from "../index/db.js"
 import { makeReel, rebase } from "../loop/make.js"
+import { liveFeed } from "./layers.js"
 import { runGates } from "../gates/index.js"
 import { FORMATS, REEL_TALKING_HEAD } from "../recipes/reel.js"
 import { compareRuns, replayAsk } from "../loop/replay.js"
@@ -790,7 +791,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
      * A make job. With `replay`, the Director's slots are answered from that job's
      * recording (no model call), and nothing lands on the project (EDIT_LOOP §10).
      */
-    async make(state, request, { job = 0, signal, onStep = () => {}, replay, beforeStory } = {}) {
+    async make(state, request, { job = 0, signal, onStep = () => {}, replay, beforeStory, onLive } = {}) {
       const video = state.log.current.assets.filter((a) => a.kind === "video")
       // The film's order, only from this make's own brief (EH-63): never the storyboard stored on the project
       const order = isAssembly(request.brief?.assembly?.parts) ? request.brief.assembly : null
@@ -1028,7 +1029,12 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       const parent = state.log.head
       // The person's edits to the last cut go onto this one, unless they asked to start over
       const last = replay || request.brief?.fresh ? null : this.lastMake(state)
+      // "Watch the Director edit" (editing.livePreview): the make's real state as previews, sent as it happens; never in history
+      const watching = onLive && !replay && (await this.features()).livePreview === true
+      const liveFonts = watching ? state.engine.motion().fonts : null
+      const onLiveMake = watching ? liveFeed({ index: state.index, runtimeVersion: (await tools()).version, tiles: (state.previewTiles ??= new Map()), ...(liveFonts ? { fonts: [...liveFonts.keys()] } : {}), send: onLive }) : null
       const result = await makeReel({
+        ...(onLiveMake ? { onLive: onLiveMake } : {}),
         edits: last?.edits ?? [],
         project: state.log.current,
         head: state.log.head,

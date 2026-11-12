@@ -4,6 +4,63 @@
 
 import { FLICKS, gainAt, sourceOf } from "./preview.js"
 
+// One audio context for the page: the plan's sounds and the level meter share it
+let shared = null
+const audioContext = () => (shared ??= new AudioContext())
+
+/** A level in dBFS as a fill fraction of the meter: −60 dB is empty, 0 dB full. */
+export const meterFill = (db) => (Number.isFinite(db) ? Math.min(1, Math.max(0, (db + 60) / 60)) : 0)
+
+/** The RMS level of samples in dBFS; −Infinity for silence. */
+export function levelOf(samples) {
+  let sum = 0
+  for (const v of samples) sum += v * v
+  const rms = Math.sqrt(sum / Math.max(1, samples.length))
+  return rms > 0 ? 20 * Math.log10(rms) : -Infinity
+}
+
+/**
+ * The level meter beside the transport timer: an AnalyserNode the picture's own sound and the
+ * plan's sounds pass through on their way out. A take's element joins only when it first plays,
+ * in the person's own gesture, so nothing is rerouted before they press Play.
+ */
+export function createMeter() {
+  let analyser = null
+  let buffer = null
+  const joined = new WeakSet()
+  const ready = () => {
+    if (!analyser) {
+      const context = audioContext()
+      analyser = context.createAnalyser()
+      analyser.fftSize = 1024
+      analyser.connect(context.destination)
+      buffer = new Float32Array(analyser.fftSize)
+    }
+    return analyser
+  }
+  return {
+    /** Where a sound goes to be measured and heard. */
+    input: () => ready(),
+    /** A take's element, through the meter from now on (an element can join only once). */
+    join(element) {
+      if (joined.has(element)) return
+      try {
+        audioContext().createMediaElementSource(element).connect(ready())
+        joined.add(element)
+      } catch {
+        // Already joined elsewhere, or no WebAudio: it plays as it did, unmeasured
+      }
+      void audioContext().resume().catch(() => {})
+    },
+    /** The level now, in dBFS. */
+    level() {
+      if (!analyser) return -Infinity
+      analyser.getFloatTimeDomainData(buffer)
+      return levelOf(buffer)
+    },
+  }
+}
+
 /**
  * Tiles over the canvas: one frame per tile showing at the playhead, sized to the render's
  * output and scaled to the canvas on screen. Each frame is its own document (no network,
@@ -61,6 +118,10 @@ export function createTileLayer({ canvas, urlOf }) {
       }
       if (mounted.size) place(output)
     },
+    /** The compare wipe: tiles show only right of this fraction of the width (null: everywhere). */
+    clipLeft(fraction) {
+      layer.style.clipPath = fraction === null ? "" : `inset(0 0 0 ${(fraction * 100).toFixed(2)}%)`
+    },
     /** Every frame, for tests and the scopes: key → its element. */
     get frames() {
       return new Map([...mounted].map(([key, { frame }]) => [key, frame]))
@@ -78,7 +139,7 @@ export function createTileLayer({ canvas, urlOf }) {
  * stays the take's own sound from the picture, as before. Other speeds play the picture alone.
  * @param {{ urlOf: (asset: string) => string }} options
  */
-export function createSound({ urlOf }) {
+export function createSound({ urlOf, meter = null }) {
   let context = null
   let playing = [] // { item, element, node, gain, timers }
   let plan = { items: [], duck: null }
@@ -129,7 +190,7 @@ export function createSound({ urlOf }) {
       if (rate !== 1) return
       const items = plan.items.filter((item) => item.bus !== "dialogue" && item.end > t)
       if (!items.length) return
-      context ??= new AudioContext()
+      context ??= audioContext()
       void context.resume()
       const now = performance.now()
       for (const item of items) {
@@ -138,7 +199,7 @@ export function createSound({ urlOf }) {
         element.src = urlOf(item.asset)
         const node = context.createMediaElementSource(element)
         const gain = context.createGain()
-        node.connect(gain).connect(context.destination)
+        node.connect(gain).connect(meter ? meter.input() : context.destination)
         const entry = { item, element, node, gain, timers: [] }
         playing.push(entry)
         schedule(entry, t, now)

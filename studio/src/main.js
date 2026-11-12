@@ -9,6 +9,9 @@ import { createFinish } from "./finish.js"
 import { attachMentions, CLIP_MIME, thumbEl, tokensIn } from "./mentions.js"
 import { createMonitor } from "./monitor.js"
 import { createDrawing } from "./draw.js"
+import { createDirectorStrip, createLookCards, createReplay, sheetCell, shouldAnimate } from "./director.js"
+import { createShortcuts } from "./shortcuts.js"
+import { meterFill } from "./live.js"
 import { durationOf, programOf, shotMarks, sourceAt, sourceProgram, pieceAt, timelineAt } from "./program.js"
 import { keyAction, snap, timecode, transport } from "./time.js"
 import { assemblyOp, createStoryboard, movePart, partsOf, spineOf } from "./storyboard.js"
@@ -242,6 +245,7 @@ async function workspace(id) {
   const typeKit = view.typeKit ?? null
   const MORE_LOOK_LABELS = { single: "One word", duo: "Two words", marker: "Marker", underline: "Underline", grow: "Grow", typewriter: "Typewriter", headline: "Headline", subtle: "Subtle" }
   let livePlan = null // GET /projects/{id}/preview, for the cut on the monitor
+  let headNow = view.head ?? null // the version the Studio shows
   const thumbOf = (asset) => (asset.offline ? null : asset.kind === "video" ? { url: `/tiles/${asset.media}?kind=thumbs`, sheet: true } : asset.kind === "image" ? { url: `/media/${asset.media}`, sheet: false } : null)
   const clipOf = (asset) => ({ asset: asset.id, number: asset.number, name: nameOf(asset), duration: asset.facts.duration, thumb: thumbOf(asset) })
   const clipsNow = () => assets.filter((a) => a.number).map(clipOf)
@@ -251,6 +255,16 @@ async function workspace(id) {
   const which = h("span", { class: "chip" }, "Preview")
   const canvas = h("canvas", { class: "monitor", role: "img", "aria-label": "Program monitor" })
   const say = h("p", { class: "note", role: "status", "aria-live": "polite" })
+  // editing.livePreview: the sound's level beside the timer, and a badge on the monitor while it shows the Director's working cut or a replay
+  const levelFill = liveOn ? h("span", { class: "level-fill" }) : null
+  const level = liveOn ? h("span", { class: "level", "aria-hidden": "true", title: "Sound level of the preview" }, levelFill) : null
+  const directorBadge = liveOn ? h("span", { class: "director-badge", hidden: true }, "Director working preview") : null
+  const showLevel = () => {
+    if (!levelFill) return
+    const db = monitor.level()
+    levelFill.style.width = `${(meterFill(db) * 100).toFixed(1)}%`
+    level.classList.toggle("hot", db > -6)
+  }
 
   const monitor = createMonitor({
     canvas,
@@ -258,6 +272,7 @@ async function workspace(id) {
     assetOf: (asset) => assets.find((a) => a.id === asset),
     onTime: (t) => {
       time.textContent = `${timecode(t, fps())} / ${timecode(durationNow(), fps())}`
+      showLevel()
       timeline.setTime(t)
       strip.setTime(t)
       const piece = pieceAt(currentPieces(), t)
@@ -266,6 +281,7 @@ async function workspace(id) {
       transcript.playing(word?.id ?? null)
     },
     onRate: (rate) => {
+      if (rate === 0) (showLevel(), liveSoon())
       play.textContent = rate === 0 ? "Play" : "Pause"
       play.setAttribute("aria-label", rate === 0 ? "Play (Space)" : `Pause (Space), playing at ${rate}×`)
     },
@@ -301,7 +317,13 @@ async function workspace(id) {
       await reload()
     },
   })
-  const timeline = createTimeline({ root: timelineEl, onSeek: (t) => (showProgram(), monitor.seek(t)), ...(liveOn ? { onTrim: trimClip } : {}) })
+  // A video's thumbnail sheet: a frame every `every` seconds, 10 × 10 (the Engine's thumbs node)
+  const sheetOf = (assetId) => {
+    const asset = assets.find((a) => a.id === assetId)
+    if (!asset || asset.offline || asset.kind !== "video" || !asset.facts?.duration) return null
+    return { url: `/tiles/${asset.media}?kind=thumbs`, every: Math.max(1, Math.ceil(asset.facts.duration / 705_600_000 / 100)) }
+  }
+  const timeline = createTimeline({ root: timelineEl, onSeek: (t) => (showProgram(), monitor.seek(t)), ...(liveOn ? { onTrim: trimClip, rich: { thumbs: sheetOf } } : {}) })
   // An edge dragged on the timeline (TP3): one trim, so Cmd+Z undoes it. The source time follows
   // the piece at that edge, moving out past the cut as well as in
   function trimClip({ clip, edge, at }) {
@@ -337,12 +359,13 @@ async function workspace(id) {
   }
   const strip = createTimeline({ root: stripEl, compact: true, onSeek: (t) => (showProgram(), monitor.seek(t)) })
   const finalEl = h("div", { class: "area-final" })
-  const finish = createFinish({ root: finishEl, finalRoot: finalEl, pixels: () => monitor.pixels(), project: () => project, onAdjust: () => setMode("edit") })
+  const finish = createFinish({ root: finishEl, finalRoot: finalEl, pixels: () => monitor.pixels(), project: () => project, onAdjust: () => setMode("edit"), scorecard: liveOn, ...(liveOn ? { head: () => headNow, onShow: (at) => (setMode("edit"), showProgram(), monitor.seek(at)) } : {}) })
 
   function showProgram() {
     if (!source) return
     source = null
     which.textContent = "Preview"
+    if (directorShowing && lastLive) return void showLive(lastLive)
     monitor.load(pieces, withPreview({ fps: fps(), duration: durationOf(pieces), shape: shapeNow() }))
   }
   function showSource(asset, at) {
@@ -356,6 +379,7 @@ async function workspace(id) {
     const [next, plan, found, preview] = await Promise.all([api("GET", `/projects/${id}`), api("GET", `/projects/${id}/plan`), api("GET", `/projects/${id}/index`), liveOn ? api("GET", `/projects/${id}/preview`).catch(() => null) : null])
     livePlan = preview
     project = next.project
+    headNow = next.head
     assets = next.assets
     index = found
     timelineData = plan.timeline
@@ -372,6 +396,7 @@ async function workspace(id) {
     })
     timeline.load(timelineData, { duration: total, fps: fps(), marks, pins })
     if (liveOn) timeline.setSnaps(trimSnaps())
+    if (liveOn) (timeline.setPreview(livePlan), lookCards?.refresh())
     strip.load({ picture: timelineData.picture }, { duration: total, fps: fps(), marks })
     transcript.load(index)
     showChip()
@@ -387,7 +412,9 @@ async function workspace(id) {
     // The preview shape the person chose holds through every reload (a finished Index used to reset it)
     // The cut as it now is: a proposal's "Preview: after" ends with its Accept or Reject
     if (!source) which.textContent = "Preview"
-    if (!source) await monitor.load(pieces, withPreview({ fps: fps(), duration: total, shape: shapeNow() }))
+    // While the monitor follows the Director or a replay, a reload keeps that view; the cut returns when it ends
+    if (!source && directorShowing && lastLive) await showLive(lastLive)
+    else if (!source && !replay?.open) await monitor.load(pieces, withPreview({ fps: fps(), duration: total, shape: shapeNow() }))
     for (const asset of new Set([...timelineData.audio, ...timelineData.picture].map((item) => item.asset))) {
       const media = assets.find((a) => a.id === asset)?.media
       if (media && assets.find((a) => a.id === asset).facts.hasAudio) {
@@ -814,6 +841,7 @@ async function workspace(id) {
     return li
   }
   function proposalBlock(proposal) {
+    proposalGhost = proposal.timeline ?? null
     timeline.setGhost(proposal.timeline)
     strip.setGhost(proposal.timeline)
     const box = h("div", { class: "proposal" })
@@ -826,6 +854,7 @@ async function workspace(id) {
       } catch (error) {
         say.textContent = error.message
       }
+      proposalGhost = null
       timeline.setGhost(null)
       strip.setGhost(null)
       await reload()
@@ -1290,6 +1319,7 @@ async function workspace(id) {
     makeLength.value = length
     makeCaptions.value = brief.captions ?? ""
     makeGrade.value = brief.grade ?? ""
+    lookCards?.mark()
     if (/^generated:/.test(brief.music ?? "") && [...makeMusic.options].some((o) => o.value === brief.music)) makeMusic.value = brief.music
     else if (!brief.music) makeMusic.value = ""
     makeVoice.value = brief.cleanVoice ? "clean" : ""
@@ -1522,6 +1552,7 @@ async function workspace(id) {
       const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}), ...styleNow() } : { ...briefNow(extra), ...(assemblyOn && partsOf(project).length ? { assembly: { version: 1, parts: partsOf(project) } } : {}) }, ...(plan ? { plan: { say: plan.say, steps: plan.steps, settings: plan.settings } } : {}) })
       makeJob = job.id
       jobsNow.set(job.id, job)
+      if (liveOn) (buildStrip.reset(), (stripUsed = true), takeEarly())
       say.textContent = "Directing your reel: reading the footage, choosing the story, cutting and checking it. You can keep working."
       showMake()
     } catch (error) {
@@ -1534,7 +1565,94 @@ async function workspace(id) {
     const job = makeJob ? jobsNow.get(makeJob) : null
     clear(makeStatus)
     makeButton.disabled = !!job
-    if (job) makeStatus.append(h("p", { class: "note" }, `Making the reel… ${job.progress ?? 0}%`), progressBar(job.progress ?? 0, "Making the reel"))
+    if (replayButton) replayButton.disabled = !!job
+    // editing.livePreview: the Director Build Strip in place of the bare percentage; it stays after the make, finished
+    if (job && liveOn) makeStatus.append(buildStrip.el, progressBar(job.progress ?? 0, "Making the reel"))
+    else if (job) makeStatus.append(h("p", { class: "note" }, `Making the reel… ${job.progress ?? 0}%`), progressBar(job.progress ?? 0, "Making the reel"))
+    else if (liveOn && stripUsed) makeStatus.append(buildStrip.el)
+  }
+
+  /* "Watch the Director edit" (editing.livePreview). Off, none of this is made and nothing listens */
+  let directorShowing = false // the monitor shows the Director's working cut, not the person's
+  let lastLive = null // the latest live view the Host sent for this make
+  let pendingLive = null // a view that arrived while the cut was playing: shown when it stops
+  let stripUsed = false
+  let proposalGhost = null // a proposal's ghost on the timeline, which a live view mustn't wipe
+  const buildStrip = liveOn ? createDirectorStrip({ onFollow: (follow) => (follow ? lastLive && showLive(lastLive) : restoreCut()) }) : null
+  const replay = liveOn
+    ? createReplay({
+        load: () => api("GET", `/projects/${id}/layers`),
+        show: (layer) => showView(layer, `Replay: ${layer.label}`),
+        restore: () => restoreCut(),
+        animate: shouldAnimate({ reduced: matchMedia("(prefers-reduced-motion: reduce)").matches, automated: navigator.webdriver === true }),
+      })
+    : null
+  const replayButton = liveOn ? h("button", { type: "button", class: "btn replay-open", title: "Watch the latest make build up layer by layer, from the raw footage to the mix. Nothing renders.", onclick: () => (directorShowing ? null : replay.start()) }, "Replay how it was edited") : null
+  /** A preview plan and its timeline on the monitor, with the badge saying whose cut it is. */
+  async function showView(view, label) {
+    if (!view?.preview || !view?.timeline) return
+    directorBadge.textContent = label
+    directorBadge.hidden = false
+    if (!proposalGhost) (timeline.setGhost(view.timeline), strip.setGhost(view.timeline))
+    if (source) return
+    const next = programOf(view.timeline)
+    await monitor.load(next, { fps: fps(), duration: durationOf(next), shape: shapeNow(), preview: view.preview })
+  }
+  function showLive(view) {
+    directorShowing = true
+    return showView(view, "Director working preview")
+  }
+  // A live view, unless the person is playing their cut: then when it stops
+  function liveSoon() {
+    if (!pendingLive || monitor.rate !== 0 || replay?.open || !buildStrip?.follow) return
+    const view = pendingLive
+    pendingLive = null
+    void showLive(view)
+  }
+  /** Back to the person's own cut on the monitor and timeline. */
+  async function restoreCut() {
+    directorShowing = false
+    pendingLive = null
+    if (directorBadge) directorBadge.hidden = true
+    timeline.setGhost(proposalGhost)
+    strip.setGhost(proposalGhost)
+    if (!source) await monitor.load(pieces, withPreview({ fps: fps(), duration: durationOf(pieces), shape: shapeNow() }))
+  }
+  // A fast make can send its first events before this page has its job id back: they wait here, for this project only
+  let earlyLive = []
+  function onLiveEvent(event) {
+    let data = null
+    try {
+      data = JSON.parse(event.data)
+    } catch {}
+    if (!data || data.project !== id) return
+    if (makeJob === null) return void (earlyLive = [...earlyLive, data].slice(-40))
+    takeLive(data)
+  }
+  /** The job id is known: the events that came first, then nothing more is held. */
+  function takeEarly() {
+    const held = earlyLive
+    earlyLive = []
+    for (const data of held) takeLive(data)
+  }
+  function takeLive(data) {
+    if (data.job !== makeJob) return
+    stripUsed = true
+    buildStrip.push(data)
+    if (data.preview && data.timeline) {
+      lastLive = data
+      pendingLive = data
+      if (buildStrip.follow) liveSoon()
+    }
+  }
+  /** The make ended: the strip stays as it finished; the reload that follows brings the cut back. */
+  function endDirector() {
+    buildStrip.finish()
+    directorShowing = false
+    lastLive = pendingLive = null
+    if (directorBadge) directorBadge.hidden = true
+    timeline.setGhost(proposalGhost)
+    strip.setGhost(proposalGhost)
   }
   // TP8 (editing.directorLoop, as this Kriya says): three openings to choose from. Off, none of it is on the page
   const directorLoop = view.directorLoop === true
@@ -1567,6 +1685,17 @@ async function workspace(id) {
   showOpenings()
   // The Brief (redesign 2026-11-12): the same controls, grouped by what they decide, two to a row where the
   // panel is wide enough; Make it stays in reach at the bottom of the panel however far the groups scroll
+  // editing.livePreview: each colour look drawn on a frame of the person's own footage, beside the select
+  const lookCards = liveOn
+    ? createLookCards({
+        select: makeGrade,
+        source: () => {
+          const take = assets.find((a) => a.kind === "video" && !a.offline && a.facts?.duration)
+          return take ? { url: `/tiles/${take.media}?kind=thumbs`, cell: sheetCell(take.facts.duration / 705_600_000) } : null
+        },
+      })
+    : null
+  if (lookCards) makeTemplate.addEventListener("change", () => lookCards.mark())
   const briefGroup = (title, ...rows) => h("section", { class: "brief-group", "aria-label": title }, h("h3", { class: "group-title" }, title), ...rows)
   const briefPair = (...fields) => h("div", { class: "brief-pair" }, ...fields)
   const makePanel = h(
@@ -1576,6 +1705,7 @@ async function workspace(id) {
     briefGroup("Shape", briefPair(h("div", {}, h("label", { for: "make-format", class: "sr-only" }, "Format"), makeFormat), h("div", {}, h("label", { for: "make-length", class: "sr-only" }, "Length"), makeLength))),
     briefGroup(
       "Look and sound",
+      ...(lookCards ? [lookCards.el] : []),
       briefPair(h("div", {}, h("label", { for: "make-captions", class: "sr-only" }, "Captions"), makeCaptions), h("div", {}, h("label", { for: "make-grade", class: "sr-only" }, "Colour look"), makeGrade)),
       briefPair(h("div", {}, h("label", { for: "make-music", class: "sr-only" }, "Music"), makeMusic), h("div", {}, h("label", { for: "make-voice", class: "sr-only" }, "Voice"), makeVoice)),
     ),
@@ -1593,7 +1723,7 @@ async function workspace(id) {
       : []),
     briefGroup("References", refSummary, directRefsEl, h("div", { class: "row tight" }, refPicker, addAspect, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference for what's chosen: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference"))),
     ...(directorLoop ? [briefGroup("Openings", openingsEl)] : []),
-    h("div", { class: "make-footer" }, makeButton, makeStatus),
+    h("div", { class: "make-footer" }, ...(liveOn ? [h("div", { class: "make-row" }, makeButton, replayButton)] : [makeButton]), makeStatus),
   )
   let makeJob = null
   async function makeProgress() {
@@ -1616,7 +1746,52 @@ async function workspace(id) {
   const shape = h("select", { class: "field small select", "aria-label": "Preview shape", onchange: () => monitor.setShape(shapeNow()) }, ["project", "16:9", "9:16"].map((value) => h("option", { value }, value === "project" ? "Project shape" : value)))
   const zoom = h("input", { type: "range", min: "1", max: "3", step: "0.05", value: "1", class: "zoom", "aria-label": "Zoom", oninput: () => monitor.setZoom(Number(zoom.value)) })
   const guides = h("input", { type: "checkbox", id: "guides", onchange: () => monitor.setGuides(guides.checked) })
-  const monitorFrame = h("div", { class: "monitor-frame" }, canvas)
+  const shortcuts = liveOn ? createShortcuts() : null
+  const monitorFrame = h("div", { class: `monitor-frame${liveOn ? " live" : ""}` }, canvas, directorBadge)
+  // Compare (editing.livePreview): a handle over the monitor, the raw footage left of it and the cut right of it
+  let compareAt = 0.5
+  const wipeGrip = liveOn ? h("span", { class: "wipe-grip", role: "slider", tabindex: "0", "aria-label": "Compare: raw footage on the left, your cut on the right", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "50" }) : null
+  const wipe = liveOn ? h("div", { class: "wipe", hidden: true }, h("span", { class: "wipe-tag raw" }, "Raw"), h("span", { class: "wipe-tag cut" }, "Cut"), h("span", { class: "wipe-line" }, wipeGrip)) : null
+  const compareButton = liveOn ? h("button", { type: "button", class: "btn small compare", "aria-pressed": "false", title: "Drag the handle across the picture: raw footage on one side, your cut on the other", onclick: () => setCompare(wipe.hidden) }, "Compare raw") : null
+  function placeWipe() {
+    if (!wipe || wipe.hidden) return
+    Object.assign(wipe.style, { left: `${canvas.offsetLeft}px`, top: `${canvas.offsetTop}px`, width: `${canvas.clientWidth}px`, height: `${canvas.clientHeight}px` })
+    wipe.querySelector(".wipe-line").style.left = `${(compareAt * 100).toFixed(2)}%`
+    wipeGrip.setAttribute("aria-valuenow", String(Math.round(compareAt * 100)))
+  }
+  function setCompare(on, at = compareAt) {
+    compareAt = Math.min(1, Math.max(0, at))
+    wipe.hidden = !on
+    compareButton.setAttribute("aria-pressed", String(on))
+    placeWipe()
+    return monitor.setWipe(on ? compareAt : null)
+  }
+  if (wipe) {
+    monitorFrame.append(wipe)
+    new ResizeObserver(placeWipe).observe(canvas)
+    const fromPointer = (event) => {
+      const rect = canvas.getBoundingClientRect()
+      return setCompare(true, (event.clientX - rect.left) / rect.width)
+    }
+    wipeGrip.addEventListener("pointerdown", (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      wipeGrip.setPointerCapture(event.pointerId)
+      const move = (e) => fromPointer(e)
+      const up = () => (wipeGrip.removeEventListener("pointermove", move), wipeGrip.removeEventListener("pointerup", up), wipeGrip.removeEventListener("pointercancel", up))
+      wipeGrip.addEventListener("pointermove", move)
+      wipeGrip.addEventListener("pointerup", up)
+      wipeGrip.addEventListener("pointercancel", up)
+    })
+    wipeGrip.addEventListener("keydown", (event) => {
+      const by = { ArrowLeft: -0.05, ArrowRight: 0.05 }[event.key]
+      const to = event.key === "Home" ? 0 : event.key === "End" ? 1 : by === undefined ? null : compareAt + by
+      if (to === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      setCompare(true, to)
+    })
+  }
   const drawing = customOn
     ? createDrawing({
         frame: monitorFrame,
@@ -1776,13 +1951,14 @@ async function workspace(id) {
         "section",
         { class: "area-monitor panel", "aria-label": "Monitor" },
         monitorFrame,
+        ...(replay ? [replay.el] : []),
         // The transport in groups (redesign 2026-11-12): playing, marking, how the picture is shown, drawing on it
         h(
           "div",
           { class: "transport" },
-          h("div", { class: "tgroup tplay" }, play, time, which),
+          h("div", { class: "tgroup tplay" }, play, time, ...(level ? [level] : []), which, ...(shortcuts ? [h("button", { type: "button", class: "btn keys-open", "aria-label": "Keyboard shortcuts", "aria-keyshortcuts": "?", title: "Keyboard shortcuts (?)", onclick: () => shortcuts.open() }, "?")] : [])),
           h("div", { class: "tgroup" }, markButtons),
-          h("div", { class: "tgroup tview" }, shape, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
+          h("div", { class: "tgroup tview" }, shape, ...(compareButton ? [compareButton] : []), h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
         ),
         ...(drawing ? [drawing.tools] : []),
       ),
@@ -1814,6 +1990,7 @@ async function workspace(id) {
       markIn = markOut = null
       return showChip()
     }
+    if (shortcuts && event.key === "?" && !event.metaKey && !event.ctrlKey) return (event.preventDefault(), shortcuts.open())
     const action = keyAction(event.key, { shift: event.shiftKey, mod: event.metaKey || event.ctrlKey })
     if (!action) return
     // A focused button keeps Space and Enter for itself, except the transport's own
@@ -1829,6 +2006,7 @@ async function workspace(id) {
       job = JSON.parse(event.data)
     } catch {}
     if (job?.id) jobsNow.set(job.id, job)
+    if (liveOn && job?.id && job.id === makeJob && !["pending", "running"].includes(job.status)) endDirector()
     styleJob(job)
     if (mode === "finish") finish.refresh().catch(() => {})
     makeProgress().catch(() => {})
@@ -1837,6 +2015,7 @@ async function workspace(id) {
     if (job && ["pending", "running"].includes(job.status)) renderBin()
     else reload().catch(() => {})
   })
+  if (liveOn) events.addEventListener("live", onLiveEvent)
   events.addEventListener("setup", (event) => {
     try {
       showRuntime({ ...(runtime ?? {}), setup: JSON.parse(event.data) })
@@ -1846,7 +2025,7 @@ async function workspace(id) {
 
   api("GET", "/runtime").then(showRuntime).catch(() => {})
   await reload()
-  window.__studio = { monitor, act, reload, setMode, get pieces() { return pieces } } // for the Studio's own browser tests
+  window.__studio = { monitor, act, reload, setMode, get pieces() { return pieces }, ...(liveOn ? { director: { get states() { return buildStrip.states }, get showing() { return directorShowing }, get replay() { return { open: replay.open, at: replay.at } } } } : {}) } // for the Studio's own browser tests
 }
 
 /* ───────────────────────────── route ──────────────────────────── */

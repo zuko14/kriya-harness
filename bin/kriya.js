@@ -224,7 +224,7 @@ async function main(argv) {
     case "edit": {
       useLoop(args)
       if (process.env.KRIYA_EDIT !== "on") {
-        say("Editing is off. Set KRIYA_EDIT=on, or add --edit, to use it.")
+        say("Editing is off. Run kriya edit --edit to open the Editing Studio, or set KRIYA_EDIT=on.")
         return 1
       }
       const { editCommand } = await import("../src/edit/runtime/cli.js")

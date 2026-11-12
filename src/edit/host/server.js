@@ -25,6 +25,8 @@ import { recogniser } from "../index/layers/words.js"
 import { assemblyProblems, isAssembly } from "../director/assembly.js"
 import { FORMATS, GRADES } from "../recipes/reel.js"
 import { previewOf, tileDocument } from "./preview.js"
+import { lastMadeEntry, layersOf, viewOf } from "./layers.js"
+import { projectAt } from "../core/history.js"
 import { TOKEN_HEADER } from "./paths.js"
 import { withFonts } from "../engine/fonts.js"
 import { applyStylePack, STYLE_PACKS } from "../core/style-packs.js"
@@ -43,7 +45,8 @@ const COOKIE = "kriya_edit"
 const MAX_BODY = 4 * 1024 * 1024
 // The Studio app, built by `npm run build:studio` (ED6)
 const STUDIO = join(import.meta.dirname, "..", "..", "..", "studio", "dist")
-const STUDIO_FILES = { "/": ["index.html", "text/html; charset=utf-8"], "/studio.js": ["studio.js", "text/javascript"], "/studio.css": ["studio.css", "text/css"] }
+// The Studio's three type faces (OFL-1.1, the harness's own: THIRD_PARTY_NOTICES.md), from this origin, so its policy stays 'self'
+const STUDIO_FILES = { "/": ["index.html", "text/html; charset=utf-8"], "/studio.js": ["studio.js", "text/javascript"], "/studio.css": ["studio.css", "text/css"], "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"], "/fonts/fraunces.woff2": ["fonts/fraunces.woff2", "font/woff2"], "/fonts/jetbrains-mono.woff2": ["fonts/jetbrains-mono.woff2", "font/woff2"] }
 const TYPES = { ".mp4": "video/mp4", ".mov": "video/quicktime", ".m4a": "audio/mp4", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".jpg": "image/jpeg", ".json": "application/json" }
 
 // An inline icon, so the browser doesn't ask for /favicon.ico (a 404 in the console)
@@ -434,6 +437,19 @@ export function createHandler({ home, ipcToken = null, roots, projects, jobs, ta
         state.previewTiles ??= new Map()
         const fonts = state.engine.motion().fonts
         return say(200, previewOf(project, state.index, { runtimeVersion: version, tiles: state.previewTiles, ...(fonts ? { fonts: [...fonts.keys()] } : {}) }))
+      }
+      // "Replay how it was edited" (editing.livePreview): the latest make's own operations, layer by layer,
+      // from the cut it started on, as previews to draw. Nothing renders and nothing is written
+      if (parts[2] === "layers" && parts.length === 3 && method === "GET") {
+        if (!(await livePreviewOn())) return refuse(res, 404, "The live preview isn't on.")
+        const { entry, job } = lastMadeEntry(state.journal.jobs("done"), state.log)
+        if (!entry) return refuse(res, 404, "There's no make to replay yet: make one first.")
+        const { version } = await tools()
+        state.previewTiles ??= new Map()
+        const fonts = state.engine.motion().fonts
+        const before = projectAt(state.log, entry.parent, { index: state.index })
+        const layers = layersOf(before, entry.ops, state.index).map(({ project, ...layer }) => ({ ...layer, ...viewOf(project, state.index, { runtimeVersion: version, tiles: state.previewTiles, ...(fonts ? { fonts: [...fonts.keys()] } : {}) }) }))
+        return say(200, { job, current: entry.id === state.log.head, layers })
       }
       // One tile of a preview: its own sandboxed document, no network, as the render draws it
       if (parts[2] === "tile-preview" && parts.length === 3 && method === "GET") {

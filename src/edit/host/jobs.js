@@ -48,7 +48,7 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
             ? // TP6: a reference's Edit DNA 2, measured only here, as a job with progress and a cancel (EH-73)
               JSON.stringify(await projects.measureReference(state, request.asset, { job: number, signal: controller.signal, onStep }))
           : request.kind === "make"
-            ? JSON.stringify(await projects.make(state, request, { job: number, signal: controller.signal, onStep, ...(request.dispatch && beforeStory && { beforeStory: (...args) => beforeStory(request, ...args) }) }))
+            ? JSON.stringify(await projects.make(state, request, { job: number, signal: controller.signal, onStep, onLive: (event) => emit("live", { job: id, project: state.id, ...event }), ...(request.dispatch && beforeStory && { beforeStory: (...args) => beforeStory(request, ...args) }) }))
           : request.kind === "openings"
             ? // TP8: three short openings to choose from, only with editing.directorLoop on
               JSON.stringify(await projects.openings(state, request, { job: number, signal: controller.signal, onStep }))
