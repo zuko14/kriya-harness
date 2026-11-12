@@ -65,7 +65,13 @@ export function manifestLicenceProblems(data) {
   for (const [platform, spec] of Object.entries(data?.platforms ?? {})) {
     for (const artifact of spec.artifacts ?? []) check(`${platform}/${artifact.id}`, artifact.licence, "runtime")
     for (const pkg of spec.python?.packages ?? []) check(`${platform}/python/${pkg.name}`, pkg.licence, "runtime")
-    for (const [pack, offered] of Object.entries(spec.packs ?? {})) for (const artifact of offered.artifacts ?? []) check(`${platform}/${pack}/${artifact.id}`, artifact.licence, "weight")
+    for (const [pack, offered] of Object.entries(spec.packs ?? {})) {
+      for (const artifact of offered.artifacts ?? []) {
+        check(`${platform}/${pack}/${artifact.id}`, artifact.licence, "weight")
+        // The table allows OFL-1.1 for fonts only (TP7): anywhere but the font pack it isn't a font
+        if (pack !== "pack-fonts" && /\bOFL-/.test(artifact.licence ?? "")) problems.push({ item: `${platform}/${pack}/${artifact.id}`, problem: "OFL-1.1 is allowed for fonts only, and this isn't the font pack" })
+      }
+    }
   }
   return problems
 }

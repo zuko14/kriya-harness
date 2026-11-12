@@ -20,6 +20,8 @@ export const ANCHORS = {
 }
 
 const BOX = { x: "int", y: "int", w: "pos", h: "pos" }
+// Keyframes on an effect (TP5): a value of the effect, moved through points in flicks from its start
+export const KEYS = { list: { param: "str", points: { list: { at: "flicks", value: "num", "ease?": "str" } } } }
 
 export const EFFECTS = {
   reframe: { mode: { enum: ["subject", "fixed"] }, "x?": "int", "y?": "int" },
@@ -41,6 +43,10 @@ export const EFFECTS = {
   // absence of this effect, so today's cuts compile to today's plan (EH-59). Never named `fit`:
   // that is the music effect (EH-56)
   frame: { mode: { enum: ["fit", "blur"] } },
+  // An effect from the registry (TP5, core/effects.js, EDD-64): its id and checked values; keyframes
+  // as numbers, or a named move code expands. `by` marks one an agent added, for the cap per minute
+  // TP9: `region`, a box the person drew, in thousandths of the frame: the effect acts only inside it (mask: only outside)
+  fx: { id: "id", "params?": "plain", "keys?": KEYS, "move?": "str", "by?": { enum: ["agent"] }, "region?": BOX },
 }
 
 export const SHAPES = {

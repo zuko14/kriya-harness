@@ -368,15 +368,15 @@ test("ET-VS-16 a client asks the server, and any failure means off", async () =>
   const device = { url: "http://kriya.test", token: "t" }
   try {
     globalThis.fetch = async () => new Response(JSON.stringify({ visuals: true }), { status: 200, headers: { "content-type": "application/json" } })
-    assert.deepEqual(await fetchFeatures(device), { visuals: true, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false })
+    assert.deepEqual(await fetchFeatures(device), { visuals: true, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: false })
     globalThis.fetch = async () => new Response(JSON.stringify({ code: "not_found", message: "Not found." }), { status: 404, headers: { "content-type": "application/json" } })
-    assert.deepEqual(await fetchFeatures(device), { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false }, "an older server")
+    assert.deepEqual(await fetchFeatures(device), { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: false }, "an older server")
     globalThis.fetch = async () => {
       throw new Error("offline")
     }
-    assert.deepEqual(await fetchFeatures(device), { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false })
+    assert.deepEqual(await fetchFeatures(device), { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: false })
     globalThis.fetch = async () => new Response(JSON.stringify({ visuals: "yes" }), { status: 200, headers: { "content-type": "application/json" } })
-    assert.deepEqual(await fetchFeatures(device), { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false }, "only a real yes")
+    assert.deepEqual(await fetchFeatures(device), { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: false }, "only a real yes")
   } finally {
     globalThis.fetch = saved
   }

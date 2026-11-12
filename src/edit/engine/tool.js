@@ -9,15 +9,31 @@ import { childEnv } from "../runtime/setup.js"
 
 const TAIL = 4000
 
-// ES-03: FFmpeg and FFprobe get no network at all where the OS can say so (macOS); the
-// protocol whitelist is the other barrier, and the only one elsewhere (EQ-11)
+// ES-03: FFmpeg and FFprobe get no network at all where the OS can say so: macOS's sandbox-exec, and
+// (TP11) Linux's bubblewrap with a network namespace of its own. On Linux a media tool never runs without
+// it. Windows has no runner yet (EQ-11): there the protocol whitelist is the only barrier, as before, and
+// nothing calls that confined
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 const NO_NETWORK = "(version 1)(allow default)(deny network*)"
+const BWRAP_PATHS = ["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"]
 const CONFINED = new Set(["ffmpeg", "ffprobe"])
-const canConfine = process.platform === "darwin" && existsSync(SANDBOX_EXEC)
 
-/** The command line that actually runs: a media tool wrapped in the no-network profile. */
-export const confined = (command, args) => (canConfine && CONFINED.has(basename(command)) ? [SANDBOX_EXEC, ["-p", NO_NETWORK, command, ...args]] : [command, args])
+/**
+ * The command line that actually runs: a media tool wrapped in the no-network profile.
+ * @returns {[string, string[]]} throws no_confinement for a media tool on Linux without bubblewrap
+ */
+export function confined(command, args, { platform = process.platform, exists = existsSync } = {}) {
+  const name = basename(command).replace(/\.exe$/i, "")
+  if (!CONFINED.has(name)) return [command, args]
+  if (platform === "darwin") return exists(SANDBOX_EXEC) ? [SANDBOX_EXEC, ["-p", NO_NETWORK, command, ...args]] : [command, args]
+  if (platform === "linux") {
+    const bwrap = BWRAP_PATHS.find((path) => exists(path))
+    if (!bwrap) throw new EngineFailure("environment", "no_confinement", `${name} runs without network inside bubblewrap on Linux, and it isn't installed. Install the bubblewrap package (bwrap).`)
+    // The files where they are (FFmpeg reads the person's footage and writes the cache), the network gone
+    return [bwrap, ["--die-with-parent", "--unshare-net", "--bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", command, ...args]]
+  }
+  return [command, args]
+}
 
 export class EngineFailure extends Error {
   /**

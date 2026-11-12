@@ -3,7 +3,7 @@
 // what may be shown. Words on screen are the speaker's or the person's own typed words, never
 // the model's; a number is one that was said. Nothing here writes code or draws: the kit does.
 
-import { cleanGraphic, GRAPHIC_ACCENTS, GRAPHIC_FONTS, GRAPHIC_KINDS, GRAPHIC_TONES, graphicLength, SUBTITLE_MAX, TEXT_MAX } from "../engine/graphics.js"
+import { ALL_GRAPHIC_KINDS, cleanGraphic, GRAPHIC_ACCENTS, GRAPHIC_FONTS, GRAPHIC_KINDS, GRAPHIC_TONES, graphicLength, STEP_MAX, STEPS_MAX, SUBTITLE_MAX, TEXT_MAX } from "../engine/graphics.js"
 import { paperEdit } from "../index/views.js"
 import { groundProblems } from "./beats.js"
 
@@ -30,6 +30,20 @@ export const GRAPHICS_SCHEMA = {
   },
   required: ["graphics"],
   additionalProperties: false,
+}
+
+/** TP7: the same answer with motion kit 2's kinds and a list's steps, asked only with editing.typeKit on (EH-59: off, the object above) */
+export const GRAPHICS_SCHEMA_2 = {
+  ...GRAPHICS_SCHEMA,
+  properties: {
+    graphics: {
+      ...GRAPHICS_SCHEMA.properties.graphics,
+      items: {
+        ...GRAPHICS_SCHEMA.properties.graphics.items,
+        properties: { ...GRAPHICS_SCHEMA.properties.graphics.items.properties, kind: { type: "string", enum: Object.keys(ALL_GRAPHIC_KINDS) }, steps: { type: "array", maxItems: STEPS_MAX, items: { type: "string", maxLength: STEP_MAX } } },
+      },
+    },
+  },
 }
 
 // "no graphics", "without titles" turn them off; naming one asks for them
@@ -59,7 +73,25 @@ export function brandIn(text) {
  * @param {{ spoken: string, near: string, person: string }} said the take's words, those around the graphic, and the person's own messages
  */
 export function graphicProblems(graphic, { spoken, near, person }) {
-  return groundProblems({ title: graphic.text, items: graphic.subtitle ? [{ text: graphic.subtitle }] : [] }, { all: `${spoken} ${person}`, near: `${near} ${person}` })
+  // TP7: a handle or call to action is the person's own typed words, never the speaker's or a model's
+  if (ALL_GRAPHIC_KINDS[graphic.kind]?.person) return groundProblems({ title: graphic.text, items: graphic.subtitle ? [{ text: graphic.subtitle }] : [] }, { all: person, near: person })
+  const items = [...(graphic.subtitle ? [{ text: graphic.subtitle }] : []), ...(graphic.steps ?? []).map((text) => ({ text }))]
+  return groundProblems({ title: graphic.text, items }, { all: `${spoken} ${person}`, near: `${near} ${person}` })
+}
+
+// A list's steps arrive on their words (TP7): each step's first word, in order after the list starts; any not found and none are timed
+function stepTimes(steps, word, words) {
+  const first = (text) => String(text).toLowerCase().normalize("NFKC").match(/[\p{L}\p{M}\p{N}]+/u)?.[0]
+  const after = words.filter((w) => w.start >= word.start && w.start - word.start <= 20 * FLICKS)
+  const out = []
+  let from = 0
+  for (const step of steps) {
+    const at = after.findIndex((w, i) => i >= from && first(w.text) === first(step))
+    if (at < 0) return null
+    out.push(Math.round(((after[at].start - word.start) / FLICKS) * 1000))
+    from = at + 1
+  }
+  return out
 }
 
 /**
@@ -70,7 +102,7 @@ export function graphicProblems(graphic, { spoken, near, person }) {
  * @param {{ index: object, asset: string, cuts?: { from: number, to: number }[], person?: string, scenes?: { from: string, to: string }[], brand?: object, limit?: number }} context cuts in seconds of the take
  * @returns {{ graphics: object[], dropped: { graphic: object, reason: string }[] }}
  */
-export function arrangeGraphics(raw, { index, asset, cuts = [], person = "", scenes = [], brand = {}, limit = MAX_GRAPHICS }) {
+export function arrangeGraphics(raw, { index, asset, cuts = [], person = "", scenes = [], brand = {}, limit = MAX_GRAPHICS, kinds = GRAPHIC_KINDS }) {
   const trimmed = (w) => cuts.some((c) => (w.start + w.end) / 2 >= c.from * FLICKS && (w.start + w.end) / 2 < c.to * FLICKS)
   const words = (index.words ?? []).filter((w) => w.asset === asset && !trimmed(w))
   const byId = new Map(words.map((w) => [w.id, w]))
@@ -79,7 +111,7 @@ export function arrangeGraphics(raw, { index, asset, cuts = [], person = "", sce
   const graphics = []
   const dropped = []
   const once = new Set()
-  const candidates = (Array.isArray(raw) ? raw : []).map((item) => cleanGraphic({ ...item, ...brand })).filter(Boolean)
+  const candidates = (Array.isArray(raw) ? raw : []).map((item) => cleanGraphic({ ...item, ...brand }, kinds)).filter(Boolean)
   // Where each starts in the take: the opening title first, the end card last
   const placed = candidates.map((graphic) => ({ graphic, word: graphic.kind === "intro" ? words[0] : graphic.kind === "end" ? words.at(-1) : byId.get(graphic.at) }))
   const order = (p) => (p.graphic.kind === "intro" ? -Infinity : p.graphic.kind === "end" ? Infinity : (p.word?.start ?? 0))
@@ -100,7 +132,8 @@ export function arrangeGraphics(raw, { index, asset, cuts = [], person = "", sce
         once.add(graphic.kind)
         if (!edge) free = word.start + graphicLength(graphic) + GAP
         const { at: _from, ...rest } = graphic
-        graphics.push(edge ? rest : { ...rest, at: word.id })
+        const timed = graphic.steps ? stepTimes(graphic.steps, word, words) : null
+        graphics.push(edge ? rest : { ...rest, at: word.id, ...(timed ? { stepAt: timed } : {}) })
       }
     }
   }
@@ -113,7 +146,7 @@ export function arrangeGraphics(raw, { index, asset, cuts = [], person = "", sce
  * or font was asked for.
  * @returns {Promise<{ graphics: object[], source: string, dropped: object[] }>}
  */
-export async function planGraphics({ ask, index, asset, text, history = [], previous = null, cuts = [], scenes = [], signal }) {
+export async function planGraphics({ ask, index, asset, text, history = [], previous = null, cuts = [], scenes = [], typeKit = false, signal }) {
   const said = [...history.filter((h) => h.who === "you").map((h) => h.text), text]
   const person = said.join("\n")
   const verdict = said.map(graphicsIn).filter(Boolean).at(-1) ?? null
@@ -121,14 +154,15 @@ export async function planGraphics({ ask, index, asset, text, history = [], prev
   const kept = previous?.settings?.graphics
   const was = Array.isArray(kept) && kept[0] ? { accent: kept[0].accent, tone: kept[0].tone, font: kept[0].font } : {}
   const brand = said.map(brandIn).reduce((all, one) => ({ ...all, ...one }), was)
-  const context = { index, asset, cuts, person, scenes, brand }
+  const kindTable = typeKit ? ALL_GRAPHIC_KINDS : GRAPHIC_KINDS
+  const context = { index, asset, cuts, person, scenes, brand, ...(typeKit ? { kinds: kindTable } : {}) }
   if (Array.isArray(kept) && !graphicsIn(text)) return { ...arrangeGraphics(kept, context), source: "kept" }
   const words = (index.words ?? []).filter((w) => w.asset === asset)
   const usable = words.length ? (words.at(-1).end - words[0].start) / FLICKS : 0
   if (words.length < 4) return { graphics: [], source: "code", dropped: [] }
   // About one every eight seconds at most; a short clip still has room for a title and one more
   const limit = Math.max(1, Math.min(MAX_GRAPHICS, Math.ceil(usable / 8)))
-  const kinds = Object.entries(GRAPHIC_KINDS).map(([id, kind]) => `- ${id} (styles: ${kind.styles.join(", ")}): ${kind.when}`).join("\n")
+  const kinds = Object.entries(kindTable).map(([id, kind]) => `- ${id} (styles: ${kind.styles.join(", ")}): ${kind.when}`).join("\n")
   const request = [
     `The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 1200))}`,
     "You are the Director choosing the motion graphics for this cut, the way a top editor dresses a video: a few, each with a reason, never decoration. The speaker stays the film.",
@@ -143,10 +177,10 @@ export async function planGraphics({ ask, index, asset, text, history = [], prev
     const tried = arrangeGraphics(graphics, { ...context, limit })
     return tried.graphics.length ? [] : tried.dropped.slice(0, 3).map((d) => `${d.graphic.kind} "${d.graphic.text}": ${d.reason}`)
   }
-  const answer = await ask({ task: "graphics", tier: "budget", schema: GRAPHICS_SCHEMA, view: paperEdit(index, { assets: [asset] }), request, maxOutput: 1200, check, fallback: () => ({ graphics: [] }), signal, priority: 0 })
+  const answer = await ask({ task: "graphics", tier: "budget", schema: typeKit ? GRAPHICS_SCHEMA_2 : GRAPHICS_SCHEMA, view: paperEdit(index, { assets: [asset] }), request, maxOutput: 1200, check, fallback: () => ({ graphics: [] }), signal, priority: 0 })
   return { ...arrangeGraphics(answer.value.graphics ?? [], { ...context, limit }), source: answer.source }
 }
 
 /** One line a person reads for a graphic, built by code. */
-export const graphicLine = (graphic) => `${GRAPHIC_KINDS[graphic.kind].label} "${graphic.text}"${graphic.subtitle ? `, "${graphic.subtitle}"` : ""}`
+export const graphicLine = (graphic) => `${ALL_GRAPHIC_KINDS[graphic.kind].label} "${graphic.text}"${graphic.subtitle ? `, "${graphic.subtitle}"` : ""}`
 export { GRAPHIC_TONES }

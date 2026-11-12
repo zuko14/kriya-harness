@@ -52,7 +52,8 @@ function nearly(a, b) {
 }
 
 /** Letters and digits, lower case, one space between words: what both sides are compared as. */
-export const normalise = (text) => String(text).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+// Combining marks stay with their letter (TP7): Devanagari's vowel signs are marks, and a misread one is a misread word
+export const normalise = (text) => String(text).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, " ").trim()
 
 export function similarity(a, b) {
   const x = normalise(a)
@@ -75,8 +76,9 @@ export function similarity(a, b) {
 export function intendedText(tile) {
   if (tile.kind === "caption") return tile.node.text ?? tile.node.words.map((w) => w.text).join(" ")
   if (isSceneBlock(tile.node)) return sceneText(tile.node.variables)
+  if (tile.node.blockId === "custom") return (tile.node.variables?.texts ?? []).join(" ")
   if (tile.node.blockId === "term") return [tile.node.variables?.text, tile.node.variables?.quote, tile.node.variables?.source].filter(Boolean).join(" ")
-  return [tile.node.variables?.text, tile.node.variables?.subtitle].filter(Boolean).join(" ")
+  return [tile.node.variables?.text, ...(tile.node.variables?.steps ?? []), tile.node.variables?.subtitle].filter(Boolean).join(" ")
 }
 
 // A name or a number: capitalised after the first word, or with a digit in it
@@ -90,12 +92,13 @@ export function judgeCopy(read, { copySimilarity }) {
   const failures = []
   const unread = []
   let worst = 1
-  for (const { tile, seen: reading, unsure = [] } of read) {
+  for (const { tile, seen: reading, unsure = [], reads = ["latin"] } of read) {
     const meant = intendedText(tile)
     // A reader's stray space ("O kay") isn't on the screen
     const squeezed = (text) => normalise(text).replace(/ /g, "")
     const seen = squeezed(meant) === squeezed(reading ?? "") ? meant : reading
-    if (scriptOf(meant) !== "latin") {
+    // TP7: a typed tile in Devanagari is read with hi-IN (SPIKES §6); every other script is unread here
+    if (!reads.includes(scriptOf(meant))) {
       unread.push({ tile: tile.key, script: scriptOf(meant) })
       continue
     }

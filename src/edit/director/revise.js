@@ -5,11 +5,14 @@
 
 import { apply } from "../core/ops.js"
 import { solve } from "../core/solver.js"
-import { cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_KINDS, GRAPHIC_VERSION, graphicLength, SUBTITLE_MAX, TEXT_MAX } from "../engine/graphics.js"
+import { ALL_GRAPHIC_KINDS, cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_KINDS, GRAPHIC_VERSION, graphicLength, STEP_MAX, STEPS_MAX, SUBTITLE_MAX, TEXT_MAX } from "../engine/graphics.js"
+import { ALL_LOOKS } from "../engine/captions.js"
 import { paperEdit, shotDigest } from "../index/views.js"
 import { TRANSITION_LABELS, transitionLength, TRANSITIONS } from "../core/transitions.js"
 import { brandIn, graphicProblems } from "./graphics.js"
 import { withoutPlaces } from "./mentions.js"
+import { grounded, tidyIntent } from "./intent.js"
+import { EFFECTS as FX, MOVES } from "../core/effects.js"
 
 const FLICKS = 705_600_000
 
@@ -107,6 +110,84 @@ const ITEMS = OPS_SCHEMA.properties.ops.items
 const MOTION_SCHEMA = { ...OPS_SCHEMA, properties: { ...OPS_SCHEMA.properties, ops: { ...OPS_SCHEMA.properties.ops, items: { ...ITEMS, properties: { ...ITEMS.properties, op: { type: "string", enum: [...CONSOLE_OPS, "add_graphic", "transition"] }, kind: { type: "string", enum: [...Object.keys(GRAPHIC_KINDS), ...Object.keys(TRANSITIONS)] }, style: { type: "string", maxLength: 16 }, subtitle: { type: "string", maxLength: SUBTITLE_MAX } } } } } }
 export const consoleSchema = (motion) => (motion ? MOTION_SCHEMA : OPS_SCHEMA)
 
+/** With editing.craft on (TP5), chat may also add a registry effect or a named move; off, `base` is returned as it is. */
+export function craftSchema(base, craft) {
+  if (!craft) return base
+  const items = base.properties.ops.items
+  return { ...base, properties: { ...base.properties, ops: { ...base.properties.ops, items: { ...items, properties: { ...items.properties, op: { type: "string", enum: [...items.properties.op.enum, "add_effect", "add_adjustment", "remove_effect"] }, effect: { type: "string", enum: Object.keys(FX) }, params: { type: "object", additionalProperties: { type: "number" } }, move: { type: "string", enum: Object.keys(MOVES) } } } } } }
+}
+/** With editing.typeKit on (TP7), chat may also use the fourteen caption looks and motion kit 2; off, `base` is returned as it is. */
+export function typeKitSchema(base, typeKit) {
+  if (!typeKit) return base
+  const items = base.properties.ops.items
+  const kinds = items.properties.kind ? { kind: { type: "string", enum: Object.keys(ALL_GRAPHIC_KINDS) }, steps: { type: "array", maxItems: STEPS_MAX, items: { type: "string", maxLength: STEP_MAX } } } : {}
+  return { ...base, properties: { ...base.properties, ops: { ...base.properties.ops, items: { ...items, properties: { ...items.properties, look: { type: "string", enum: Object.keys(ALL_LOOKS) }, ...kinds } } } } }
+}
+/**
+ * TP9 (CRAFT_UPGRADE §7): with editing.customMotion on, chat may ask for a custom animation
+ * (`custom_motion`, written afterwards by code's own slot, director/custom-motion.js); with a box drawn
+ * on the frame, it may act on it (`use_mark`). Neither, and `base` is returned as it is.
+ */
+export function pointingSchema(base, { customMotion = false, mark = false } = {}) {
+  if (!customMotion && !mark) return base
+  const items = base.properties.ops.items
+  const ops = [...items.properties.op.enum, ...(customMotion ? ["custom_motion"] : []), ...(mark ? ["use_mark"] : [])]
+  return { ...base, properties: { ...base.properties, ops: { ...base.properties.ops, items: { ...items, properties: { ...items.properties, op: { type: "string", enum: ops }, ...(customMotion ? { reuse: ID } : {}), ...(mark ? { use: { type: "string", enum: MARK_USES } } : {}) } } } } }
+}
+export const MARK_USES = ["callout", "blur", "zoom", "mask"]
+export const CUSTOM_MOTION_PROMPT = "Only for an animation that no kit graphic and no operation above can make (a logo that spins, a shape that draws itself, an animated diagram), custom_motion with text: what to animate, in the person's words, at (a word anchor) and duration only if they said how long. Code has it written, checks it and shows it to the person to approve. To place a saved custom animation again, custom_motion with reuse: its clip id, and at. At most one custom_motion."
+const MARK_KINDS = { box: "box", ring: "ring", arrow: "arrow" }
+
+/** Where a drawn box is, in words a model reads (code alone knows its numbers). */
+export function markView(mark) {
+  const across = mark.x + mark.w / 2 < 333 ? "left" : mark.x + mark.w / 2 > 667 ? "right" : "centre"
+  const down = mark.y + mark.h / 2 < 333 ? "top" : mark.y + mark.h / 2 > 667 ? "bottom" : "middle"
+  const share = Math.round((mark.w * mark.h) / 10_000)
+  return `The person drew a ${MARK_KINDS[mark.kind] ?? "box"} on the frame at ${clock(mark.at)}, in the ${down} ${across}, about ${share}% of the frame. "This", "here", "that" or "it" means what they drew. To act on it, use_mark with use: callout (mark it; an optional short label in text, the speaker's or the person's own words), blur (blur what is inside it), zoom (zoom in on it) or mask (darken everything else); duration in flicks only if they said how long. Code places it exactly where they drew: never give coordinates.`
+}
+
+/**
+ * `use_mark` as Edit Core operations, placed by code at the drawn box (TP9): a callout round it, a blur
+ * or a mask in it over the shot (from the moment drawn to the end of its piece), or a punch-in centred on
+ * it. The model chose what to do; the numbers are the person's drawing.
+ * @returns {{ ops: object[], problems: string[] }}
+ */
+export function expandMark(ops, { mark, project, index, person }) {
+  const problems = []
+  if (!ops.some((op) => op?.op === "use_mark")) return { ops, problems }
+  const { picture, duration: length } = solve(project, index)
+  const piece = picture.find((p) => mark.at >= p.at && mark.at < p.end)
+  const spoken = (index.words ?? []).map((w) => w.text).join(" ")
+  const region = { x: mark.x, y: mark.y, w: mark.w, h: mark.h }
+  // How long: what was asked, else the rest of the shot (capped), never past the cut's end; half a second at least
+  const span = (op, fallback) => Math.max(FLICKS / 2, Math.min(Number.isInteger(op.duration) ? op.duration : fallback, length - mark.at))
+  const rest = piece ? piece.end - mark.at : 3 * FLICKS
+  const out = ops.map((op, i) => {
+    if (op?.op !== "use_mark") return op
+    if (!MARK_USES.includes(op.use)) return problems.push(`operation ${i + 1}: use is one of ${MARK_USES.join(", ")}`), op
+    if (mark.at >= length) return problems.push(`operation ${i + 1}: the box was drawn past the end of the cut`), op
+    if (op.use === "callout") {
+      const graphic = cleanGraphic({ kind: "callout", style: MARK_KINDS[mark.kind] ?? "box", text: op.text ?? "", mark: region, ...brandIn(person) }, ALL_GRAPHIC_KINDS)
+      if (!graphic) return problems.push(`operation ${i + 1}: that label can't be a callout's`), op
+      const said = graphic.text ? graphicProblems(graphic, { spoken, near: spoken, person }) : []
+      if (said.length) return problems.push(`operation ${i + 1}: ${said[0]}; a callout's label is the speaker's or the person's own words`), op
+      return { op: "add_motion", block: GRAPHIC_BLOCK, version: GRAPHIC_VERSION, variables: graphic, at: mark.at, duration: span(op, 3 * FLICKS) }
+    }
+    if (op.use === "zoom") {
+      // Fit the drawn box in the frame, a little room round it, between 1.1× and 3×
+      const scale = Math.round(Math.min(3, Math.max(1.1, 0.9 * Math.min(1000 / mark.w, 1000 / mark.h))) * 100) / 100
+      return { op: "punch_in", at: mark.at, duration: span(op, Math.min(rest, 3 * FLICKS)), scale, ease: "smooth", x: Math.round(mark.x + mark.w / 2), y: Math.round(mark.y + mark.h / 2) }
+    }
+    const effect = op.use === "blur" ? { effect: "blur", params: { amount: 20 } } : { effect: "mask" }
+    return { op: "add_adjustment", at: mark.at, duration: span(op, Math.min(rest, 30 * FLICKS)), ...effect, region }
+  })
+  return { ops: out, problems }
+}
+
+export const TYPE_KIT_PROMPT = `Caption looks for caption_style: ${Object.keys(ALL_LOOKS).join(", ")}. With add_graphic you may also use ${Object.entries(ALL_GRAPHIC_KINDS).filter(([id]) => !GRAPHIC_KINDS[id]).map(([id, kind]) => `${id}: ${kind.label.toLowerCase()}`).join("; ")}; a list's lines go in \`steps\`, each the speaker's own words; a handle or call to action only in words the person typed.`
+
+export const CRAFT_PROMPT = `To put an effect on a clip, add_effect with clip, effect (${Object.entries(FX).map(([id, row]) => `${id}: ${row.label.toLowerCase()}`).join("; ")}) and only the values the person asks for in params; over a stretch of the cut, add_adjustment with at (a word anchor), until or duration, and effect; remove_effect with clip and effect. For a change over time, pick a named move instead of numbers: ${Object.entries(MOVES).map(([id, m]) => `${id} (${m.effect}: ${m.label})`).join("; ")}. Add an effect only when the person asks for it.`
+
 /**
  * `add_graphic` as the engine's own operation: the graphic cleaned, its words held to the
  * speaker's and the person's, its length set by code. Every other operation passes through.
@@ -114,14 +195,14 @@ export const consoleSchema = (motion) => (motion ? MOTION_SCHEMA : OPS_SCHEMA)
  * @param {{ index: object, person: string }} context person: the person's own messages
  * @returns {{ ops: object[], problems: string[] }}
  */
-export function expandGraphics(ops, { index, person }) {
+export function expandGraphics(ops, { index, person, kinds = GRAPHIC_KINDS }) {
   const problems = []
   const spoken = (index.words ?? []).map((w) => w.text).join(" ")
   const out = ops.map((op, i) => {
     // A transition's length is code's: the default, or what was asked, inside the allowed range
     if (op?.op === "transition") return Object.hasOwn(TRANSITIONS, op.kind ?? "") ? { op: "transition", clip: op.clip, kind: op.kind, duration: transitionLength(op.duration) } : (problems.push(`operation ${i + 1}: a transition's kind is one of ${Object.keys(TRANSITIONS).join(", ")}`), op)
     if (op?.op !== "add_graphic") return op
-    const graphic = cleanGraphic({ ...op, ...brandIn(person), at: undefined })
+    const graphic = cleanGraphic({ ...op, ...brandIn(person), at: undefined }, kinds)
     if (!graphic) return problems.push(`operation ${i + 1}: that isn't a graphic the kit draws (a "stat" is digits; text is up to ${TEXT_MAX} characters)`), op
     if (op.at === undefined) return problems.push(`operation ${i + 1}: add_graphic needs \`at\`, a word anchor or a clip edge`), op
     const said = graphicProblems(graphic, { spoken, near: spoken, person })
@@ -205,7 +286,9 @@ export function describe(op, index) {
     case "add_title":
       return `Added the title "${op.text}" at ${place(op.at)}`
     case "add_motion":
-      if (op.block === GRAPHIC_BLOCK) return `Added ${/^[aeiou]/i.test(GRAPHIC_KINDS[op.variables?.kind]?.label ?? "g") ? "an" : "a"} ${(GRAPHIC_KINDS[op.variables?.kind]?.label ?? "graphic").toLowerCase()} "${op.variables?.text ?? ""}"${op.variables?.subtitle ? `, "${op.variables.subtitle}"` : ""} at ${place(op.at)}`
+      if (op.block === "custom") return `Added a custom animation${op.variables?.name ? ` "${op.variables.name}"` : ""} at ${place(op.at)}`
+      if (op.block === GRAPHIC_BLOCK && op.variables?.mark) return `Marked what you drew with a ${op.variables.style ?? "box"} callout${op.variables.text ? `, "${op.variables.text}"` : ""}, at ${place(op.at)} for ${seconds(op.duration ?? 0)}`
+      if (op.block === GRAPHIC_BLOCK) return `Added ${/^[aeiou]/i.test(ALL_GRAPHIC_KINDS[op.variables?.kind]?.label ?? "g") ? "an" : "a"} ${(ALL_GRAPHIC_KINDS[op.variables?.kind]?.label ?? "graphic").toLowerCase()} "${op.variables?.text ?? ""}"${op.variables?.subtitle ? `, "${op.variables.subtitle}"` : ""} at ${place(op.at)}`
       return op.block === "scene" ? `Added an animated ${op.variables?.kind ?? ""} scene, "${op.variables?.text ?? ""}", at ${place(op.at)}` : op.op
     case "grade":
       return `Graded ${op.clip}${op.saturation !== undefined ? `, saturation ${op.saturation}` : ""}${op.gain !== undefined ? `, contrast ${op.gain}` : ""}${op.gamma !== undefined ? `, gamma ${op.gamma}` : ""}${op.lift !== undefined ? `, lift ${op.lift}` : ""}`
@@ -221,6 +304,10 @@ export function describe(op, index) {
       return `Cleaned the background noise out of ${op.clip}'s voice`
     case "set_level":
       return `Set ${op.clip} to ${op.db} dB`
+    case "add_adjustment":
+      // TP9: only a drawn region has words here; any other adjustment reads as it always did
+      if (op.region) return `${op.effect === "mask" ? "Darkened everything but" : "Blurred"} what you drew, from ${place(op.at)} for ${seconds(op.duration ?? 0)}`
+      return op.op
     case "add_deliverable":
       return `Set up the export: ${op.size?.width ?? "?"}×${op.size?.height ?? "?"}${op.loudness ? `, mastered to ${op.loudness.lufs} LUFS` : ""}${op.burnCaptions ? ", captions burned in" : ""}`
     default:
@@ -375,14 +462,16 @@ export function timesView(text, project, index) {
  * @param {{ ask: ReturnType<import("./ask.js").createAsk>, project: object, index: object, text: string, selection?: object, signal?: AbortSignal }} input
  * @returns {Promise<{ ops: object[], changes: string[], project: object | null, source: string, reason?: string, calls: number }>}
  */
-export async function revise({ ask, project, index, text, selection, history = [], motion = false, pointed = "", signal }) {
+export async function revise({ ask, project, index, text, selection, history = [], motion = false, pointed = "", intent = false, craft = false, typeKit = false, customMotion = false, mark = null, customBlocks = [], signal }) {
   const assets = project.assets.map((a) => a.id)
   // A marked range reads like a typed one: code says what it points at
   const marked = Number.isInteger(selection?.from) && Number.isInteger(selection?.to) ? ` from ${clock(selection.from)} to ${clock(selection.to)}` : ""
   const times = timesView(`${text}${marked}`, project, index)
   const bin = `Footage in the project: ${project.assets.filter((a) => ["video", "audio"].includes(a.kind)).map((a) => `${a.id} (${a.kind}, ${seconds(a.facts.duration ?? 0)})`).join(", ")}`
   // pointed: the clips the person mentioned (mentions.js), fenced as data; empty, the view is what it was
-  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), bin, selectionText(selection, index), times, pointed].filter(Boolean).join("\n\n")
+  // TP9: a drawn box and the saved custom animations, only when there are any; else the view is what it was
+  const saved = customMotion && customBlocks.length ? `Saved custom animations: ${customBlocks.map((b) => `${b.clip}${b.name ? ` ${JSON.stringify(b.name)}` : ""}`).join(", ")}` : ""
+  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), clipsView(project, index), bin, selectionText(selection, index), times, pointed, saved, mark ? markView(mark) : ""].filter(Boolean).join("\n\n")
   // The last turns of this chat, so "shorter" or "no, the other one" mean something. The
   // person's lines are theirs; Kriya's are what it said before, not instructions
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
@@ -396,11 +485,32 @@ export async function revise({ ask, project, index, text, selection, history = [
     "If they ask to fix or correct the transcript (names, misheard words), put each wrong word in `corrections` as {word: its id, text: the right word}, only where you are confident from the context.",
     "If they ask for the whole video to be made, directed, edited or improved (not one part of it), set `direct` to an object (with `seconds` and a caption look if they say so) and leave `ops` empty: the Director makes the whole cut.",
     'If none of these can do it, answer {"ops": []}.',
+    // editing.intent (TP4): nothing they asked is lost; off, the request is the text it was
+    ...(craft ? [CRAFT_PROMPT] : []),
+    ...(typeKit ? [TYPE_KIT_PROMPT] : []),
+    ...(customMotion ? [CUSTOM_MOTION_PROMPT] : []),
+    ...(intent ? ["Also put in `cannot` every piece of their request these operations can't do: their exact words as `evidence`, copied as written, and the nearest thing you can do as `nearest` if there is one. Empty when everything is done."] : []),
   ].join("\n")
   const words = new Map((index.words ?? []).map((w) => [w.id, w]))
   // Operations must apply; a correction on an unknown word is only dropped, never worth a second call
   const person = [...history.filter((h) => h.who === "you").map((h) => h.text), text].join("\n")
-  const expand = (ops) => (motion ? expandGraphics(ops, { index, person }) : { ops, problems: [] })
+  // TP9: custom_motion is answered afterwards by its own slot, so it is set aside here, checked for shape only
+  const customClips = new Set(customBlocks.map((b) => b.clip))
+  const customProblems = (ops) =>
+    ops.flatMap((op, i) => {
+      if (op?.op !== "custom_motion") return []
+      if (!customMotion) return [`operation ${i + 1}: custom_motion isn't available`]
+      if (op.at === undefined) return [`operation ${i + 1}: custom_motion needs \`at\`, a word anchor or a clip edge`]
+      if (op.reuse !== undefined) return customClips.has(op.reuse) ? [] : [`operation ${i + 1}: ${op.reuse} isn't a saved custom animation`]
+      return typeof op.text === "string" && op.text.trim() ? [] : [`operation ${i + 1}: custom_motion needs text: what to animate`]
+    })
+  const expand = (asked) => {
+    const graphics = motion ? expandGraphics(asked, { index, person, ...(typeKit ? { kinds: ALL_GRAPHIC_KINDS } : {}) }) : { ops: asked, problems: [] }
+    const marked = mark ? expandMark(graphics.ops, { mark, project, index, person }) : { ops: graphics.ops, problems: [] }
+    const custom = customProblems(marked.ops)
+    if (marked.ops.filter((op) => op?.op === "custom_motion").length > 1) custom.push("only one custom_motion at a time")
+    return { ops: marked.ops.filter((op) => op?.op !== "custom_motion"), custom: marked.ops.filter((op) => op?.op === "custom_motion"), problems: [...graphics.problems, ...marked.problems, ...custom] }
+  }
   const check = ({ ops: asked }) => {
     if (!asked.length) return []
     const { ops, problems } = expand(asked)
@@ -408,9 +518,14 @@ export async function revise({ ask, project, index, text, selection, history = [
     const tried = apply(project, ops, { index, author: "agent" })
     return tried.applied ? [] : tried.diagnostics.map((d) => `operation ${d.op + 1}: ${d.message}`)
   }
-  const answer = await ask({ task: "console", tier: "budget", schema: consoleSchema(motion), view, request, maxOutput: 2000, check, clean: tidyConsole, fallback: () => ({ ops: [] }), signal, priority: 0 })
+  const base = pointingSchema(typeKitSchema(craftSchema(consoleSchema(motion), craft), typeKit), { customMotion, mark: !!mark })
+  const schema = intent ? { ...base, properties: { ...base.properties, cannot: { type: "array", maxItems: 8, items: { type: "object", properties: { evidence: { type: "string", maxLength: 300 }, nearest: { type: "string", maxLength: 160 } }, required: ["evidence"], additionalProperties: false } } } } : base
+  // The `cannot` list is tidied before the schema sees it, so it never costs a repair call (EH-64)
+  const tidy = intent ? (value) => ({ ...tidyConsole(value), cannot: tidyIntent({ cannot: value?.cannot }, {}).cannot }) : tidyConsole
+  const answer = await ask({ task: "console", tier: "budget", schema, view, request, maxOutput: 2000, check, clean: tidy, fallback: () => ({ ops: [] }), signal, priority: 0 })
   const expanded = expand(answer.value.ops)
   const ops = expanded.problems.length ? [] : expanded.ops
+  const custom = expanded.problems.length ? [] : expanded.custom.map((op) => ({ at: op.at, ...(Number.isInteger(op.duration) ? { duration: op.duration } : {}), ...(op.reuse !== undefined ? { reuse: op.reuse } : { text: String(op.text).replace(/[\u0000-\u001f<>]/g, " ").trim().slice(0, 300) }) }))
   const tried = ops.length ? apply(project, ops, { index, author: "agent" }) : null
   // A correction that changes nothing, or isn't a known word, isn't offered
   const corrections = (answer.value.corrections ?? []).map((c) => ({ word: c.word, text: cleanWord(c.text) })).filter((c) => words.has(c.word) && c.text && c.text !== words.get(c.word).text)
@@ -425,5 +540,9 @@ export async function revise({ ask, project, index, text, selection, history = [
     source: answer.source,
     reason: answer.reason,
     calls: answer.calls,
+    // TP9: a custom animation to write (or a saved one to place), for the Host's own slot; only with the switch on
+    ...(custom.length ? { custom } : {}),
+    // What it couldn't do, in the person's own words: only words that are in their message
+    ...(intent ? { cannot: (answer.value.cannot ?? []).filter((c) => grounded(c.evidence, text, "")).map((c) => ({ said: c.evidence.replace(/[\u0000-\u001f<>]/g, " ").trim(), ...(c.nearest ? { nearest: c.nearest.replace(/[\u0000-\u001f<>]/g, " ").trim() } : {}) })) } : {}),
   }
 }

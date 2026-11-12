@@ -190,6 +190,10 @@ export async function runDaemon(options) {
   const canceling = new Set() // forwarded to the Host and not yet over
   let allowEdit = Boolean(options.allowEdit)
   let editAdvertised = false
+  // TP11: each folder's clip numbers and labels go in the hello only after Kriya said taviOrder (rule 17)
+  let orderAdvertised = false
+  const clipsOf = options.clipsOf ?? (async (folder) => (await import("./edit/host/clips.js")).advertisedClips(folder))
+  const featuresOf = options.featuresOf ?? (async () => (await import("./edit/runtime/fetch.js")).fetchFeatures(device))
   const editHost = options.editHost ?? {
     async hand(job) {
       const { ensureHost, hostCall } = await import("./edit/host/client.js")
@@ -218,6 +222,7 @@ export async function runDaemon(options) {
         // Not on this Kriya yet; asked again at the next hello
       }
     }
+    orderAdvertised = editSwitch && allowEdit && editAdvertised ? (await featuresOf().catch(() => null))?.taviOrder === true : false
     if (editSwitch && allowEdit && editAdvertised) {
       capabilities.edit = true
       await editHost.wake?.().catch((error) => log(`kriya daemon: the Edit Host didn't start: ${error.message}`))
@@ -226,7 +231,8 @@ export async function runDaemon(options) {
 
   const hello = async () => {
     await refreshEdit()
-    await send("POST", "/daemon/hello", { daemonVersion: CLIENT_VERSION, capabilities, projects: projects.map((p) => ({ id: p.id, name: p.name, path: p.shown, git: p.git })), rules: projectRules(projects) })
+    const clips = orderAdvertised ? await Promise.all(projects.map((p) => clipsOf(p.path).catch(() => []))) : []
+    await send("POST", "/daemon/hello", { daemonVersion: CLIENT_VERSION, capabilities, projects: projects.map((p, i) => ({ id: p.id, name: p.name, path: p.shown, git: p.git, ...(clips[i]?.length ? { clips: clips[i] } : {}) })), rules: projectRules(projects) })
     helloAt = Date.now()
   }
   // Remote Control changes folders and switches without stopping running tasks

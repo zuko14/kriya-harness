@@ -16,6 +16,8 @@ import { encoderFor } from "../engine/capabilities.js"
 import { probe } from "../engine/probe.js"
 import { runTool } from "../engine/tool.js"
 import { editHome } from "./paths.js"
+import { clipList, decideAssembly, resolveRefs } from "../director/assembly.js"
+import { cleanLabel } from "../core/project.js"
 
 const VIDEO = new Set([".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"])
 const REPORT_MS = 10_000 // At most this often (TOOLS_AND_CONTRACTS §5)
@@ -29,6 +31,8 @@ const FLICKS = 705_600_000
 const FILE_QUESTION_S = 600
 const TAKE_QUESTION_S = 300
 const TASTE_QUESTION_S = 3600
+const ORDER_QUESTION_S = 600
+const ORDER_OPTIONS = 4
 const TAKE_MARGIN = 0.1
 const CLIP_SECONDS = 5
 const WAIT_S = 25
@@ -80,6 +84,48 @@ export function secondsIn(brief) {
   if (!found) return undefined
   const seconds = Number(found[1]) * (/^m/i.test(found[2]) ? 60 : 1)
   return seconds >= 5 && seconds <= 600 ? seconds : undefined
+}
+
+const SPINE = ["story", "whole"]
+/** One order as the person reads it on a card: "Clip 2 (Intro), then clip 1". Numbers and their own labels, no file names. */
+export function orderLine(assembly, project) {
+  const numbered = new Map(clipList(project).map((c) => [c.asset, c.n]))
+  const label = (asset) => cleanLabel(project.assets.find((a) => a.id === asset)?.label)
+  const line = assembly.parts
+    .filter((p) => SPINE.includes(p.use))
+    .map((p, i) => `${i ? "clip" : "Clip"} ${numbered.get(p.asset) ?? "?"}${label(p.asset) ? ` (${label(p.asset)})` : ""}`)
+    .join(", then ")
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line
+}
+
+/**
+ * The order a Tavi brief names across the folder's clips (TP11), by code only: no model call, never the
+ * storyboard stored on the project (EH-63), only the project's own numbered clips (no reference, no path).
+ * @returns {Promise<{ assembly: object } | { options: { label: string, assembly: object }[] } | null>}
+ *   null: the brief names no order (one file, or one clip), and the job is the reel it always was
+ */
+export async function orderIn(brief, state) {
+  const project = state.log.current
+  const index = state.index ?? {}
+  const clips = clipList(project, index)
+  if (clips.filter((c) => c.picture && c.duration > 0).length < 2) return null
+  const said = resolveRefs(brief, clips, { index })
+  if (said.refs.length < 2) return null
+  const decided = await decideAssembly({ project, index, text: brief })
+  if (decided.assembly && !decided.open.length) return { assembly: decided.assembly }
+  // What code couldn't settle: each clip that fits the first open place, as its own order, for the person to pick
+  const open = decided.open.find((item) => item.candidates?.length >= 2)
+  if (!open) return null
+  const options = []
+  for (const asset of open.candidates.slice(0, ORDER_OPTIONS)) {
+    const n = clips.find((c) => c.asset === asset)?.n
+    // The place said ("the beach clip") becomes that clip's number, its own "clip" or "file" word with it
+    const place = new RegExp(`${open.said.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s+(?:clip|file|video|one))?`, "i")
+    const tried = await decideAssembly({ project, index, text: brief.replace(place, `clip ${n}`) })
+    if (tried.assembly && !tried.open.length && !options.some((o) => JSON.stringify(o.assembly.parts) === JSON.stringify(tried.assembly.parts))) options.push({ label: orderLine(tried.assembly, project), assembly: tried.assembly })
+  }
+  if (options.length === 1) return { assembly: options[0].assembly }
+  return options.length >= 2 ? { options } : null
 }
 
 /**
@@ -310,6 +356,37 @@ export function createTavi({ home, projects, taste = projects.taste, jobs, tools
       }
       // Only this recipe reaches a make job so far (ED11, ED12)
       if (recipe && recipe !== "reel-talking-head") return refuse("not_allowed")
+      // TP11: an order across the folder's clips, only with editing.assembly on and Kriya's taviOrder (rule 17);
+      // otherwise, and for a brief that names one file, everything below is as it was (ET-TP-REG-04)
+      const ordered = (state, assembly) => {
+        const seconds = secondsIn(brief)
+        const started = jobs().start(state, { kind: "make", brief: { effort, ...(seconds && { targetDuration: seconds * FLICKS }), assembly }, dispatch, dispatchJob: job })
+        entry.hostJob = started.id
+        return { accepted: true }
+      }
+      try {
+        const features = revisionOf ? null : await projects.features?.().catch(() => null)
+        const known = features?.assembly === true && features?.taviOrder === true ? projects.list().find((p) => dirname(p.file) === folder) : null
+        if (known) {
+          const state = await projects.get(known.id)
+          const order = await orderIn(brief, state)
+          if (order?.assembly) return ordered(state, order.assembly)
+          if (order?.options) {
+            void askPerson(dispatch, entry, job, {
+              kind: "order",
+              prompt: "Which order did you mean?",
+              options: order.options.map((o) => ({ label: o.label })),
+              defaultOption: 0,
+              timeoutSeconds: ORDER_QUESTION_S,
+            })
+              .then((option) => (entry.abort.signal.aborted ? final(dispatch, "canceled", { code: "canceled" }) : ordered(state, order.options[option].assembly)))
+              .catch((error) => (entry.abort.signal.aborted ? final(dispatch, "canceled", { code: "canceled" }) : failed(error)))
+            return { accepted: true }
+          }
+        }
+      } catch (error) {
+        return failed(error)
+      }
       try {
         const files = rankFiles(folder, brief)
         if (!files.length && !revisionOf) return await refuse("no_media")

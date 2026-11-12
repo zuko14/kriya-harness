@@ -337,8 +337,16 @@ test("a tile that started in an earlier segment seeks into itself; an effect the
   const graph = (args) => args[args.indexOf("-filter_complex") + 1]
   assert.match(graph(segmentArgs(plan, later, io)), new RegExp(`trim=start=${(later.start / FLICKS).toFixed(3)}`))
 
+  // TP5 (CRAFT §3.1, EH-57): a stored stabilize is drawn now, by deshake; on a runtime without it, compile
+  // leaves it out with a note. An effect the builder has no step for is still refused
   const stable = compile(done(project, [{ op: "stabilize", clip: "c1" }]), index, VERSIONS)
-  assert.throws(() => segmentArgs(stable, stable.segments[0], io), /stabilize/)
+  assert.match(graph(segmentArgs(stable, stable.segments[0], io)), /deshake/)
+  const without = compile(done(project, [{ op: "stabilize", clip: "c1" }]), index, { ...VERSIONS, filters: new Set(["scale", "crop"]) })
+  assert.equal(without.segments[0].node.picture[0].effects.some((e) => e.type === "stabilize"), false)
+  assert.equal(without.issues.some((i) => i.code === "effect_unavailable" && /deshake/.test(i.message)), true)
+  const unbuilt = structuredClone(stable)
+  unbuilt.segments[0].node.picture[0].effects = [{ type: "fade", in: ms(100) }]
+  assert.throws(() => segmentArgs(unbuilt, unbuilt.segments[0], io), /can't do fade/)
   const graded = compile(done(project, [{ op: "grade", clip: "c1", lift: 0.1, gain: 1.2, gamma: 1.1 }]), index, VERSIONS)
   assert.match(graph(segmentArgs(graded, graded.segments[0], io)), /eq=gamma=1\.1:brightness=0\.1:contrast=1\.2/)
   const matched = compile(done(project, [{ op: "match_color", clip: "c1", reference: "c1" }]), index, VERSIONS)

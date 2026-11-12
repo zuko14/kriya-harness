@@ -16,7 +16,7 @@ import { replayable } from "../src/edit/director/continuity.js"
 import { cleanMentions, mentionsView, withoutPlaces } from "../src/edit/director/mentions.js"
 import { CONSOLE_OPS, OPS_SCHEMA, timesIn } from "../src/edit/director/revise.js"
 import { ensureHost, hostCall, stopHost } from "../src/edit/host/client.js"
-import { socketPath } from "../src/edit/host/paths.js"
+import { hostHeaders, socketPath } from "../src/edit/host/paths.js"
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../src/edit/index/views.js"
 import { groupBin, searchBin, sortBin, VIRTUAL_ABOVE, windowOf } from "../studio/src/bin.js"
 import { chipText, mentionQuery, pickClips, toMessage, tokensIn } from "../studio/src/mentions.js"
@@ -396,7 +396,7 @@ const end = async (w) => {
 // A refusal with its status and body, which hostCall folds into one message
 const refused = (w, method, path, body) =>
   new Promise((done, fail) => {
-    const req = request({ socketPath: socketPath(w.home), method, path, headers: { host: "kriya-edit", "content-type": "application/json" } }, (res) => {
+    const req = request({ socketPath: socketPath(w.home), method, path, headers: { ...hostHeaders(w.home), "content-type": "application/json" } }, (res) => {
       const chunks = []
       res.on("data", (chunk) => chunks.push(chunk))
       res.on("end", () => (res.statusCode >= 400 ? done({ status: res.statusCode, ...JSON.parse(Buffer.concat(chunks).toString()) }) : fail(new Error(`the Host should have refused ${method} ${path}`))))

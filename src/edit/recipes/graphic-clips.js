@@ -3,7 +3,7 @@
 // what the plan checked, since a re-cut can drop a line or put a scene where a graphic was.
 
 import { solve } from "../core/solver.js"
-import { cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_VERSION, graphicLength } from "../engine/graphics.js"
+import { ALL_GRAPHIC_KINDS, cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_VERSION, graphicLength } from "../engine/graphics.js"
 import { graphicLine } from "../director/graphics.js"
 
 const FLICKS = 705_600_000
@@ -32,7 +32,9 @@ export function graphicOps({ graphics, project, index, asset, kept }) {
   const words = kept.map((w) => ({ ...w, out: outputOf(w) })).filter((w) => w.out !== null).sort((a, b) => a.out - b.out)
   if (!words.length) return { ops, notes }
   for (const raw of graphics) {
-    const graphic = cleanGraphic(raw)
+    // The make route is the switch's gate (EH-92): it lets motion kit 2 through only with editing.typeKit on, and a
+    // callout round a drawn box only with editing.customMotion on. What reaches here was approved, so it is placed
+    const graphic = cleanGraphic(raw, ALL_GRAPHIC_KINDS)
     if (!graphic) continue
     const length = graphicLength(graphic)
     const leave = (reason) => notes.push(`Left out the ${graphicLine(graphic)}: ${reason}.`)

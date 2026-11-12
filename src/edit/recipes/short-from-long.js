@@ -7,7 +7,7 @@
 
 import { apply } from "../core/ops.js"
 import { compile } from "../core/plan.js"
-import { LOOKS, pages } from "../engine/captions.js"
+import { ALL_LOOKS, pageLimits, pages } from "../engine/captions.js"
 import { candidateLines, fitLines, runsOf } from "./reel.js"
 
 const FLICKS = 705_600_000
@@ -29,7 +29,7 @@ export const SHORT_FROM_LONG = {
 /** With captions asked for, they burn in and the text gates run, as for the reel (ED8). */
 export function deliverableFor(brief = {}) {
   const base = SHORT_FROM_LONG.deliverable
-  return LOOKS[brief.captions] ? { ...base, burnCaptions: true, gates: [...base.gates, "QG-08", "QG-09", "QG-10"].sort() } : base
+  return ALL_LOOKS[brief.captions] ? { ...base, burnCaptions: true, gates: [...base.gates, "QG-08", "QG-09", "QG-10"].sort() } : base
 }
 
 // Openers that lean on something said before: a short that starts here starts mid-thought
@@ -229,7 +229,7 @@ export function planShort({ project, index, asset, brief = {}, variant = {} }) {
   if (!subject) notes.push("No face track for this recording, so the frame holds the centre.")
   const clips = step.project.sequences.find((q) => q.id === step.project.active).clips.filter((c) => base.has(c.track))
   const framing = clips.map((c) => (subject ? { op: "reframe", clip: c.id, mode: "subject" } : { op: "reframe", clip: c.id, mode: "fixed", x: Math.max(0, Math.round((facts.width - cropWidth) / 2)) }))
-  const captions = LOOKS[brief.captions] ? best.lines.flatMap((l) => runsOf(l, recipe.joinGap)).flatMap((run) => pages(run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
+  const captions = ALL_LOOKS[brief.captions] ? best.lines.flatMap((l) => runsOf(l, recipe.joinGap)).flatMap((run) => pages(run, pageLimits(brief.captions))).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
   const all = [...ops, ...framing, ...captions]
   const done = apply(project, all, { index, author: "agent" })
   if (!done.applied) throw new Error(`The short was refused: ${done.diagnostics[0].message}`)

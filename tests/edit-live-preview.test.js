@@ -10,7 +10,7 @@ import { duckEnvelope } from "../src/edit/core/audio.js"
 import { apply } from "../src/edit/core/ops.js"
 import { compile } from "../src/edit/core/plan.js"
 import { ensureHost, hostCall, stopHost } from "../src/edit/host/client.js"
-import { socketPath } from "../src/edit/host/paths.js"
+import { hostHeaders, socketPath } from "../src/edit/host/paths.js"
 import { DUCK_RATE, previewOf, tileDocument } from "../src/edit/host/preview.js"
 import { ENGINE_VERSION } from "../src/edit/engine/index.js"
 import { fetchFeatures } from "../src/edit/runtime/fetch.js"
@@ -167,7 +167,7 @@ async function world({ livePreview }) {
 }
 const raw = (home, path) =>
   new Promise((done, fail) => {
-    const req = request({ socketPath: socketPath(home), method: "GET", path, headers: { host: "kriya-edit" } }, (res) => {
+    const req = request({ socketPath: socketPath(home), method: "GET", path, headers: { ...hostHeaders(home) } }, (res) => {
       const chunks = []
       res.on("data", (chunk) => chunks.push(chunk))
       res.on("end", () => done({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }))

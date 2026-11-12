@@ -87,7 +87,7 @@ async function onceMore(work) {
  *   motion: HyperFrames and Chrome for the motion layer, from the Media Runtime
  *   cacheBytes: the cache's cap (ES-17); KRIYA_EDIT_CACHE_BYTES, else 20 GB
  */
-export function createEngine({ folder, roots, cache, exports: exportsDir, journal, toolVersion, capabilities, scheduler, free = defaultFree, run, onTool, motion = () => motionRuntime(activeRuntime()), cacheBytes = Number(process.env.KRIYA_EDIT_CACHE_BYTES) || 20 * GB }) {
+export function createEngine({ folder, roots, cache, exports: exportsDir, journal, toolVersion, capabilities, scheduler, free = defaultFree, run, onTool, motion = () => motionRuntime(activeRuntime()), customMotion = () => false, cacheBytes = Number(process.env.KRIYA_EDIT_CACHE_BYTES) || 20 * GB }) {
   const tool = (command, args, options) => {
     onTool?.(command, args)
     return (run ?? runTool)(command, args, options)
@@ -135,6 +135,8 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
     const effects = node.picture.flatMap((item) => item.effects)
     const luts = effects.filter((effect) => effect.type === "lut").map((effect) => effect.asset)
     const paths = await inputsFor([...node.picture, ...node.overlays].map((item) => item.asset).concat(luts), useProxy, need)
+    // TP7: the type kit's logo, always its own file: a draft proxy would lose its transparency
+    if (node.brand?.bug) paths.set(node.brand.bug.asset, sourcePath(assetOf(node.brand.bug.asset)))
     for (const key of new Set(effects.filter((effect) => effect.type === "grade" && effect.match).map((effect) => effect.match.key))) paths.set(key, (await need("match", key)).file)
     return paths
   }
@@ -428,7 +430,9 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
      */
     async render({ quality, deliverable, job, signal, onStep = () => {}, project: candidate, partial = false }) {
       // A candidate version (the Edit Loop's attempt) renders without becoming the project
-      const plan = compile(candidate ?? project, index, { engineVersion: ENGINE_VERSION, runtimeVersion: toolVersion, quality, deliverable })
+      // TP7: which of the pack's fonts this computer has, so a type kit's tiles are keyed by what they draw with
+      const fonts = motion().fonts
+      const plan = compile(candidate ?? project, index, { engineVersion: ENGINE_VERSION, runtimeVersion: toolVersion, quality, deliverable, filters: capabilities.filters, ...(fonts ? { fonts: [...fonts.keys()] } : {}), ...(customMotion() === true ? { customMotion: true } : {}) })
       if (!plan.duration) throw new EngineFailure("plan", "empty", "There's nothing on the timeline to render.")
       preflight(plan)
       const shared = { canvas: plan.canvas, output: plan.output, input: plan.input, tiles: plan.tiles }

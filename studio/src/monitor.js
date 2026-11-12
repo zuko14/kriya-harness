@@ -90,8 +90,11 @@ export function createMonitor({ canvas, urlOf, assetOf, onTime, onRate, tileUrl 
     const item = itemAt(live.picture, at)
     const into = transitionAt(live.picture, at)
     const still = into && held.get(`${into.asset}@${into.source}`)
+    // A grade and any effect the monitor can approximate (TP5), the clip's own and a stretch's at this time
+    const extra = [...(item?.fx ?? []), ...(live.adjust ?? []).filter((a) => at >= a.at && at < a.end).flatMap((a) => a.fx)]
     const graded = (image, look) => {
-      ctx.filter = gradeFilter(look)
+      const base = gradeFilter(look)
+      ctx.filter = extra.length ? `${base === "none" ? "" : `${base} `}${extra.join(" ")}` : base
       ctx.drawImage(image, 0, 0)
       ctx.filter = "none"
     }

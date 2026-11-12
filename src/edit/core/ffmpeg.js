@@ -3,6 +3,7 @@
 
 import { secondsArg } from "./time.js"
 import { TRANSITIONS } from "./transitions.js"
+import { fxSteps } from "./effects.js"
 
 const BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 // On the frames too: FFmpeg can drop the output flags alone when it converts a format
@@ -116,6 +117,9 @@ function pictureChain(item, width, height, plan, { input, toneMap, uid }) {
   for (const effect of item.effects) {
     if (effect.type === "lut") steps.push(filter("lut3d", { file: input(effect.asset) }))
     else if (effect.type === "grade") steps.push(...gradeSteps(effect, input))
+    // TP5: a registry effect, from numbers only; stabilize drawn at last (EH-57: the operation always stored it)
+    else if (effect.type === "fx") steps.push(...fxSteps(effect, { width, height, uid: uid ?? (() => 0), origin: effect.origin ?? 0, span: effect.span ?? 0 }))
+    else if (effect.type === "stabilize") steps.push("deshake")
     else if (effect.type !== "reframe" && effect.type !== "frame") throw new RangeError(`this render can't do ${effect.type} yet`)
   }
   // Square pixels on every piece: a zoom's crop leaves a fractional aspect, and concat refuses a mix (found in ED7)
@@ -203,6 +207,15 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
     layer(`[o${i}]`, item.at, item.end)
   })
 
+  // An effect over a stretch of the cut (TP5): the picture split, the effect on one copy, laid back over its window
+  for (const [i, adjust] of (node.adjust ?? []).entries()) {
+    const steps = fxSteps(adjust.fx, { width, height, uid, origin: adjust.fx.origin ?? 0, span: adjust.fx.span ?? 0 })
+    if (!steps.length) continue
+    chains.push(`${current}split[aj${i}][ak${i}]`, `[ak${i}]${steps.join(",")}[al${i}]`)
+    current = `[aj${i}]`
+    layer(`[al${i}]`, adjust.at, adjust.end)
+  }
+
   // The speaker, cut from the picture before anything covers it, goes back over the text behind
   const mattes = node.mattes ?? []
   const keeps = []
@@ -240,6 +253,33 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
     }
   }
   if (!matted) drawMattes()
+
+  // TP7 (CRAFT §5.4): the type kit's bar and logo bug, over everything and across the cut, so each
+  // segment draws its share of them on the cut's own clock (from: where this segment starts)
+  if (node.brand) {
+    const { bar, bug, from } = node.brand
+    const draw = (chain) => {
+      const next = `[v${step++}]`
+      chains.push(`${current}${chain}${next}`)
+      current = next
+    }
+    if (bar) {
+      const h = Math.max(4, Math.round(height * 0.008))
+      const y = height > width ? 0 : height - h
+      const total = secondsArg(bar.total)
+      draw(filter("drawbox", { x: 0, y, w: width, h, color: `${bar.track}@0.35`, t: "fill" }))
+      chains.push(`${filter("color", { c: bar.color, s: `${width}x${h}`, r: `${plan.output.fps.n}/${plan.output.fps.d}`, d: secondsArg(segment.end - segment.start) })}[bar]`)
+      // The filled part grows with the cut's time: this segment's t plus where it starts
+      draw(`[bar]${filter("overlay", { x: `-${width}+${width}*(t+${secondsArg(from)})/${total}`, y, eval: "frame" })}`)
+      for (const at of bar.chapters ?? []) draw(filter("drawbox", { x: Math.max(0, Math.round((width * at) / bar.total) - 1), y, w: Math.max(2, Math.round(h * 0.6)), h, color: bar.track, t: "fill" }))
+    }
+    if (bug) {
+      const side = Math.round(Math.min(width, height) * 0.11)
+      const margin = Math.round(Math.min(width, height) * 0.04)
+      chains.push(`[${inputFor(input(bug.asset))}:v]${filter("scale", { w: side, h: side, force_original_aspect_ratio: "decrease" })},format=rgba[bug]`)
+      draw(`[bug]${filter("overlay", { x: bug.corner.endsWith("r") ? `W-w-${margin}` : margin, y: bug.corner.startsWith("b") ? `H-h-${margin}` : margin, eof_action: "repeat" })}`)
+    }
+  }
 
   const head = ["-nostdin", "-hide_banner", ...inputs.flatMap(({ path, seek }) => [...(seek === null ? [] : ["-ss", secondsArg(seek)]), "-protocol_whitelist", "file,pipe", "-i", path])]
   if (frames) {

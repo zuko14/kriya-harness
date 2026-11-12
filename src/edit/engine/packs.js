@@ -9,6 +9,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 
 import { platformId } from "../runtime/setup.js"
+import { FONTS } from "./fonts.js"
 import { EngineFailure } from "./tool.js"
 
 /**
@@ -40,6 +41,16 @@ export const PACKS = {
     filters: [],
     artifacts: ["depth-anything-v2-small"],
     licences: [{ item: "Depth Anything V2 Small", licence: "Apache-2.0" }],
+  },
+  // TP7 (EDD-67): fonts for the type kit and every Indian script; no operation needs it, since
+  // a tile without it keeps the system stacks with a note (audit §6 rule 7)
+  "pack-fonts": {
+    title: "Fonts",
+    does: "the type kit's faces and a font for each Indian script, so text draws the same on every computer",
+    ops: [],
+    filters: [],
+    artifacts: Object.keys(FONTS),
+    licences: Object.values(FONTS).map((font) => ({ item: font.family.replace(/^Kriya /, ""), licence: "OFL-1.1" })),
   },
 }
 

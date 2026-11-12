@@ -218,3 +218,83 @@ test("ET-RV-01, -05 on real files: two takes become two real clips on a card; a 
   assert.ok(told[0].body.seconds > 10, `${told[0].body.seconds} s`)
   console.log(`ET-RV-05 told: ${JSON.stringify(told[0].body)}`)
 })
+
+// TP11 end to end: the computer advertises its clips' numbers and labels only after Kriya said taviOrder; a Tavi
+// brief naming an order it can't settle becomes an order card; the order the person taps is the film the real
+// Host makes with the real FFmpeg; and nothing with a file name leaves for Kriya
+test("TP11: a Tavi brief naming an order across clips: the clips advertised, an order card, the film in the order picked", { timeout: 400_000 }, async () => {
+  const { execFileSync } = await import("node:child_process")
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "kh-order-")))
+  process.env.KRIYA_HOME = home
+  process.env.KRIYA_EDIT_ROOTS = join(home, "work")
+  process.env.KRIYA_EDIT_IDLE_MS = "600000"
+  const folder = join(home, "work", "Trip")
+  mkdirSync(folder, { recursive: true })
+  rawTake(join(folder, "talk.mov"))
+  const clip = (name, colour) => execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=s=640x360:r=30:d=3,hue=h=${colour}`, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-c:a", "aac", "-shortest", "-y", join(folder, name)])
+  // Moving pictures (a still one is a freeze to QG-07), each its own hue
+  clip("beach final.mov", 0)
+  clip("beach walk.mov", 120)
+  clip("outro.mov", 240)
+  fakeRuntime(home)
+  const index = indexOf()
+  const hook = index.sentences[0].id
+  const fake = await startFakeKriya({
+    models: ["budget"],
+    editing: true,
+    review: true,
+    features: { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: true, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: true },
+    // The person taps the second order on their phone
+    onCard: (card) => card.kind === "order" && Object.assign(card, { status: "answered", option: 1 }),
+    chat(body) {
+      const task = body.response_format?.json_schema?.name
+      if (task === "story") return { content: JSON.stringify({ hook, drop: [] }) }
+      return { content: "{}" }
+    },
+  })
+  const login = spawn(process.execPath, [join(ROOT, "bin", "kriya.js"), "login", "--url", fake.url, "--no-browser"], { stdio: "ignore" })
+  assert.equal(await new Promise((done) => login.on("exit", done)), 0)
+  const options = { device: readDevice(), folders: [folder], once: true, log: () => {}, allowEdit: true, env: { KRIYA_EDIT: "on" } }
+  try {
+    // The person's own Studio project in that folder: four clips, one labelled
+    const { ensureHost } = await import("../../../src/edit/host/client.js")
+    await ensureHost({ env: process.env, home })
+    const { id: projectId } = await hostCall(home, "POST", "/projects", { name: "Trip", folder })
+    const assets = []
+    for (const name of ["talk.mov", "beach final.mov", "beach walk.mov", "outro.mov"]) assets.push(await hostCall(home, "POST", `/projects/${projectId}/assets`, { path: join(folder, name) }))
+    await hostCall(home, "PATCH", `/projects/${projectId}`, { ops: [{ op: "describe_asset", asset: assets[3].id, label: "Outro" }] })
+    const job = await hostCall(home, "POST", `/projects/${projectId}/index`, { asset: assets[0].id })
+    await until(async () => (await hostCall(home, "GET", "/jobs")).jobs.find((j) => j.id === job.id && j.status === "done"), 120_000, "the index")
+
+    const [offered] = offeredProjects([folder])
+    const id = fake.queue("edit", { project: offered.id, job: JOB, brief: "The beach clip, then clip 1, about 45 seconds", effort: "best" })
+    await runDaemon(options)
+    // Rule 17: numbers and the person's label, no file names
+    assert.deepEqual(fake.state.hello.projects[0].clips, [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4, label: "Outro" }])
+    const reports = () => fake.state.reports.filter((r) => r.id === id)
+    await until(() => reports().some((r) => ["done", "failed"].includes(r.status)), 300_000, "the ordered edit")
+    const final = reports().at(-1)
+    assert.equal(final.status, "done", JSON.stringify(final))
+    assert.ok(["delivered", "delivered_with_notes"].includes(final.result.outcome), JSON.stringify(final.result))
+    const card = fake.state.cards.find((c) => c.kind === "order")
+    assert.ok(card, "an order card was asked")
+    assert.equal(card.defaultOption, 0)
+    assert.equal(card.options.length, 2)
+    assert.ok(card.options.every((o) => !/beach|\.mov|talk/i.test(o.label)), JSON.stringify(card.options))
+    console.log(`TP11 order card: ${card.options.map((o) => o.label).join(" | ")}; tapped ${card.options[1].label}; verdict ${final.result.outcome}`)
+    assert.ok(reports().some((r) => r.result?.stage === "waiting_for_you"), "it said it was waiting for the person")
+    // The film plays the clip of the second order first, then the talk
+    const tapped = Number(/^Clip (\d)/.exec(card.options[1].label)[1])
+    const { project: cut } = await hostCall(home, "GET", `/projects/${projectId}`)
+    const base = cut.sequences.find((q) => q.id === cut.active).clips.filter((c) => c.source && c.track === cut.sequences.find((q) => q.id === cut.active).tracks.find((t) => t.role === "base")?.id)
+    const first = base.sort((a, b) => (a.at ?? 0) - (b.at ?? 0))[0]
+    assert.equal(first.source.asset, assets[tapped - 1].id, `clip ${tapped} opens the film`)
+    assert.ok(base.some((c) => c.source.asset === assets[0].id), "the talk is in it")
+    assert.ok(fake.state.previews.some((p) => p.job === JOB && p.finished), "its preview went up")
+    const sent = fake.state.requests.filter((r) => r.path !== "/chat/completions")
+    assert.doesNotMatch(JSON.stringify(sent.map((r) => [r.path, r.body])), /beach final|beach walk|talk\.mov|\/Trip\//)
+  } finally {
+    await stopHost(home)
+    await fake.close()
+  }
+})

@@ -12,10 +12,10 @@ import { openManifest, RuntimeError, TRUSTED_KEYS } from "./manifest.js"
 export async function fetchFeatures(device) {
   try {
     const found = await call(device.url, "GET", "/editing/features", { token: device.token })
-    // motion, customMotion, assembly, livePreview: a server from before them says nothing, which is off
-    return { visuals: found?.visuals === true, playbooks: found?.playbooks === true, mediaSearch: found?.mediaSearch === true, motion: found?.motion === true, customMotion: found?.customMotion === true, assembly: found?.assembly === true, livePreview: found?.livePreview === true }
+    // motion, customMotion, assembly, livePreview, intent, craft, typeKit, referenceIntent, directorLoop, taviOrder: a server from before them says nothing, which is off
+    return { visuals: found?.visuals === true, playbooks: found?.playbooks === true, mediaSearch: found?.mediaSearch === true, motion: found?.motion === true, customMotion: found?.customMotion === true, assembly: found?.assembly === true, livePreview: found?.livePreview === true, intent: found?.intent === true, craft: found?.craft === true, typeKit: found?.typeKit === true, referenceIntent: found?.referenceIntent === true, directorLoop: found?.directorLoop === true, taviOrder: found?.taviOrder === true }
   } catch {
-    return { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false }
+    return { visuals: false, playbooks: false, mediaSearch: false, motion: false, customMotion: false, assembly: false, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: false }
   }
 }
 

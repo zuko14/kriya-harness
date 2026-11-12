@@ -8,12 +8,13 @@ import { apply } from "../core/ops.js"
 import { solve } from "../core/solver.js"
 import { TRANSITION_DEFAULT, TRANSITIONS } from "../core/transitions.js"
 import { clipList, stretchOf } from "../director/assembly.js"
-import { LOOKS, pages, readablePages } from "../engine/captions.js"
+import { ALL_LOOKS, pageLimits, pages, placeOf, readablePages } from "../engine/captions.js"
 import { paperEdit } from "../index/views.js"
 import { isSceneBlock } from "../core/layout.js"
 import { graphicOps, isPlanGraphic } from "./graphic-clips.js"
 import { candidateLines, deliverableFor, fitLines, GRADES, recipeFor, remadeClips, runsOf, STORY_SCHEMA, trimIndex } from "./reel.js"
 import { sceneOps } from "./scene-clips.js"
+import { referenceLook } from "./reference-look.js"
 
 const FLICKS = 705_600_000
 const SPINE = ["story", "whole"]
@@ -268,18 +269,21 @@ export async function planAssembly({ project, index: fullIndex, brief = {}, ask,
   // 6. The dressing: look, voice cleanup, captions, transitions at the joins when asked
   const look = GRADES[brief.grade] ?? (brief.customGrade && typeof brief.customGrade === "object" ? brief.customGrade : null)
   const pictures = live.flatMap((p) => clipsOf.get(p.id))
-  const grading = look ? pictures.map((c) => ({ op: "grade", clip: c.id, ...look })) : []
+  // TP6: a reference's colour as a measured match (a LUT the Host wrote), only when this brief carries one
+  const grading = brief.lut ? pictures.map((c) => ({ op: "apply_lut", clip: c.id, asset: brief.lut })) : look ? pictures.map((c) => ({ op: "grade", clip: c.id, ...look })) : []
   const cleaning = brief.cleanVoice && !voice ? live.filter((p) => clipOf(p.asset)?.speech).flatMap((p) => clipsOf.get(p.id)).map((c) => ({ op: "clean_voice", clip: c.id, strength: 0.6 })) : []
   const runs = voice ? [wordsRun(fullIndex, voice, clipOf(voice.asset))] : live.flatMap((p) => (chosenBy.get(p.id) ?? []).flatMap((l) => runsOf(l)))
-  const captions = LOOKS[brief.captions] ? runs.filter((run) => run.length).flatMap((run) => readablePages(pages(run), run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
-  const captionLook = { ...(brief.captionStyle ?? {}), ...(brief.holdCaptions ? { hold: true } : {}) }
-  const style = LOOKS[brief.captions] && Object.keys(captionLook).length ? [{ op: "set_look", caption: captionLook }] : []
+  const captions = ALL_LOOKS[brief.captions] ? runs.filter((run) => run.length).flatMap((run) => readablePages(pages(run, pageLimits(brief.captions)), run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
+  const captionLook = { ...(brief.captionStyle ?? {}), ...(brief.holdCaptions ? { hold: true } : {}), ...(placeOf(brief.captions) ? { place: placeOf(brief.captions) } : {}) }
+  const style = ALL_LOOKS[brief.captions] && Object.keys(captionLook).length ? [{ op: "set_look", caption: captionLook }] : []
   const joins = Object.hasOwn(TRANSITIONS, brief.transition ?? "") ? live.slice(1).map((p) => ({ op: "transition", clip: clipsOf.get(p.id)[0].id, kind: brief.transition, duration: TRANSITION_DEFAULT })) : []
   if (brief.coldOpen || brief.punches || brief.angles || brief.titles || brief.ramps || brief.broll === "own") notes.push("A cold open, punch-ins, angles, title cards, speed ramps and automatic B-roll are a single take's; a film of several files doesn't use them yet.")
 
   let allOps = [...ops, ...style, ...conform, ...grading, ...cleaning, ...over, ...captions, ...music, ...narration, ...joins]
   step = apply(project, allOps, { index: fullIndex, author: "agent" })
   if (!step.applied) throw new Error(`The film was refused: ${step.diagnostics[0].message}`)
+  // TP6: a reference's grain, corners and bars over the whole film, only when this brief carries them (EH-59)
+  if (brief.fx?.length) step = referenceLook({ project, all: allOps, step, fx: brief.fx, index: fullIndex, notes })
   const placedNow = step.project.sequences.find((q) => q.id === step.project.active).clips
   // The voice-over plays at its own level, not as an effect under a voice
   if (voice) {
@@ -301,7 +305,7 @@ export async function planAssembly({ project, index: fullIndex, brief = {}, ask,
     const picturesHere = (brief.pictures ?? []).filter((s) => fileOf(s.from) === asset)
     const terms = (brief.terms ?? []).filter((t) => fileOf(t.at) === asset)
     if (scenes.length || picturesHere.length || terms.length) {
-      const made = sceneOps({ scenes, pictures: picturesHere, terms, project: apply(project, allOps, { index: fullIndex, author: "agent" }).project, index: fullIndex, asset, kept: keptOf(asset), captions: !!LOOKS[brief.captions], sound: { scene: brief.sfx?.scene, reveal: brief.sfx?.reveal } })
+      const made = sceneOps({ scenes, pictures: picturesHere, terms, project: apply(project, allOps, { index: fullIndex, author: "agent" }).project, index: fullIndex, asset, kept: keptOf(asset), captions: !!ALL_LOOKS[brief.captions], sound: { scene: brief.sfx?.scene, reveal: brief.sfx?.reveal } })
       allOps.push(...made.ops)
       notes.push(...made.notes)
     }

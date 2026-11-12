@@ -3,7 +3,7 @@
 // brings both in a signed manifest version (EB-09); until then
 // `tests/edit/media/setup-hyperframes.sh` installs them once.
 
-import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -55,4 +55,27 @@ export function linkMotion(home, { manifest = MANIFEST, hyperframes = true } = {
   writeFileSync(join(dir, ".complete"), "test")
   writeFileSync(join(home, "media", "current.json"), JSON.stringify({ current: "9.9.9", previous: null }))
   return { version: "9.9.9", dir, manifest }
+}
+
+/* TP7: the font pack, from the files setup-hyperframes.sh keeps by hash */
+const FONT_MANIFEST = JSON.parse(readFileSync(new URL("../runtime-2026.11.1.json", import.meta.url), "utf8")).platforms["darwin-arm64"].packs["pack-fonts"]
+const fontFile = (artifact) => join(homedir(), ".cache", "kriya-edit-test", "fonts", `${artifact.sha256}.ttf`)
+
+/** Why the font tests can't run here, or false. */
+export function fontsSkip() {
+  const missing = FONT_MANIFEST.artifacts.find((a) => !existsSync(fontFile(a)))
+  return chromeSkip() || (missing ? `no ${missing.id} in ~/.cache/kriya-edit-test/fonts: run tests/edit/media/setup-hyperframes.sh` : false)
+}
+
+/** linkMotion, with the font pack installed in it as \`kriya edit setup --pack fonts\` leaves it. */
+export function linkFonts(home, options = {}) {
+  const manifest = { ...MANIFEST, platforms: { "darwin-arm64": { ...MANIFEST.platforms["darwin-arm64"], packs: { "pack-fonts": FONT_MANIFEST } } } }
+  const runtime = linkMotion(home, { ...options, manifest })
+  const dir = join(runtime.dir, "packs", "pack-fonts")
+  for (const artifact of FONT_MANIFEST.artifacts) {
+    mkdirSync(join(dir, artifact.id), { recursive: true })
+    if (!existsSync(join(dir, artifact.id, artifact.entry))) symlinkSync(fontFile(artifact), join(dir, artifact.id, artifact.entry))
+  }
+  writeFileSync(join(dir, ".complete"), "test")
+  return runtime
 }

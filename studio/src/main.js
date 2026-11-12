@@ -8,11 +8,16 @@ import { api, clear, h } from "./dom.js"
 import { createFinish } from "./finish.js"
 import { attachMentions, CLIP_MIME, thumbEl, tokensIn } from "./mentions.js"
 import { createMonitor } from "./monitor.js"
+import { createDrawing } from "./draw.js"
 import { durationOf, programOf, shotMarks, sourceAt, sourceProgram, pieceAt, timelineAt } from "./program.js"
 import { keyAction, snap, timecode, transport } from "./time.js"
 import { assemblyOp, createStoryboard, movePart, partsOf, spineOf } from "./storyboard.js"
+import { styleBriefCard } from "./style-brief.js"
+import { variationsWall } from "./openings.js"
+import { createTabs } from "./tabs.js"
 import { createTimeline } from "./timeline.js"
 import { createTranscript } from "./transcript.js"
+import { answerOnBrief, FIELD_LABELS, understoodLine, valueText } from "./intent.js"
 
 const app = document.getElementById("app")
 const MODES = ["direct", "edit", "finish"]
@@ -230,6 +235,12 @@ async function workspace(id) {
   // editing.livePreview, as this Kriya says (TP3): the monitor draws the draft's plan, the timeline
   // trims by its edges, a proposal shows before and after. Off, nothing below draws or listens
   const liveOn = view.livePreview === true
+  // TP9 (editing.customMotion, as this Kriya says): drawing on the frame and custom animations. Off, none of it is on the page
+  const customOn = view.customMotion === true
+  // editing.typeKit, as this Kriya says (TP7): style packs, the type kit, brand colours, more caption looks.
+  // Off, none of it draws and the make panel is the one it was
+  const typeKit = view.typeKit ?? null
+  const MORE_LOOK_LABELS = { single: "One word", duo: "Two words", marker: "Marker", underline: "Underline", grow: "Grow", typewriter: "Typewriter", headline: "Headline", subtle: "Subtle" }
   let livePlan = null // GET /projects/{id}/preview, for the cut on the monitor
   const thumbOf = (asset) => (asset.offline ? null : asset.kind === "video" ? { url: `/tiles/${asset.media}?kind=thumbs`, sheet: true } : asset.kind === "image" ? { url: `/media/${asset.media}`, sheet: false } : null)
   const clipOf = (asset) => ({ asset: asset.id, number: asset.number, name: nameOf(asset), duration: asset.facts.duration, thumb: thumbOf(asset) })
@@ -611,6 +622,37 @@ async function workspace(id) {
     return found.lines.filter((line) => !(found.kind === "video" && found.pace && line === found.parts.sound))
   }
   const analyses = new Map() // asset id → its classified analysis, from the Host
+  // TP6 (editing.referenceIntent, as this Kriya says): a video reference's style, read as a job, and its brief.
+  // Off, none of this is on the page and no make carries a style brief
+  const referenceIntent = view.referenceIntent === true
+  const styles = new Map() // reference id → { status, progress, brief, job, error }
+  const offKey = (rid) => `kriya-ref-style-off:${id}:${rid}`
+  const styleOff = (rid) => new Set((remember(offKey(rid)) ?? "").split(",").filter(Boolean))
+  const loadStyle = (rid) => api("GET", `/projects/${id}/references/${encodeURIComponent(rid)}/brief?format=${encodeURIComponent(makeFormat.value)}`).then((found) => (styles.set(rid, found.status === "ready" ? { status: "ready", brief: found.brief } : { status: "none" }), renderReferences())).catch(() => (styles.set(rid, { status: "none" }), renderReferences()))
+  async function readStyle(rid) {
+    try {
+      const job = await api("POST", `/projects/${id}/references/${encodeURIComponent(rid)}/measure`)
+      jobsNow.set(job.id, job)
+      styles.set(rid, { status: "measuring", progress: 0, job: job.id })
+    } catch (error) {
+      styles.set(rid, { status: "failed", error: error.message })
+    }
+    renderReferences(`style-cancel-direct-${rid}`)
+  }
+  // A reference job's events: its progress, then the brief it leaves, or why there is none
+  function styleJob(job) {
+    if (job?.kind !== "reference" || !job.asset) return
+    if (job.status === "pending" || job.status === "running") styles.set(job.asset, { status: "measuring", progress: job.progress ?? 0, job: job.id })
+    else if (job.status === "done") return void loadStyle(job.asset)
+    else styles.set(job.asset, job.status === "canceled" ? { status: "none" } : { status: "failed", error: job.error ?? "the measure stopped" })
+    renderReferences()
+  }
+  // The brief the next cut follows: the first reference in use, taken whole, whose style was read
+  const styleNow = () => {
+    if (!referenceIntent) return {}
+    const ref = [...using].find((rid) => styles.get(rid)?.status === "ready" && aspectOf(rid) === "all" && assets.some((a) => a.id === rid && a.kind === "reference"))
+    return ref ? { styleBrief: { ref, off: [...styleOff(ref)] } } : {}
+  }
   const referencesEl = h("ul", { class: "bin", "aria-label": "References" })
   const directRefsEl = h("ul", { class: "bin refs-direct", "aria-label": "References for this cut" })
   const refSummary = h("p", { class: "note small" })
@@ -637,7 +679,8 @@ async function workspace(id) {
     const aspect = aspectOf(ref.id)
     const lines = h("ul", { class: "ref-lines" }, ...(found ? linesFor(found, aspect).map((line) => h("li", {}, line)) : [h("li", { class: "note" }, "Measuring…")]))
     const take = aspectSelect({ id: `aspect-${where}-${ref.id}`, "aria-label": `Take from ${name}` }, aspect, (event) => (remember(aspectKey(ref.id), event.target.value), renderReferences(event.target.id)))
-    return h("li", { class: "asset ref" }, h("button", { type: "button", class: "btn", onclick: () => ref.facts.duration && showSource(ref.id, 0) }, `${name} · ${kind}`), h("label", { class: "note small", for: `aspect-${where}-${ref.id}` }, "Take from it"), take, lines, h("label", { class: "inline", for: `use-${where}-${ref.id}` }, on, " Use in the cut"))
+    const style = referenceIntent && kind === "video" ? styleBriefCard({ id: ref.id, where, state: styles.get(ref.id) ?? { status: "none" }, off: styleOff(ref.id), onRead: () => readStyle(ref.id), onCancel: () => styles.get(ref.id)?.job && api("DELETE", `/jobs/${encodeURIComponent(styles.get(ref.id).job)}`).catch(() => {}), onToggle: (trait, on) => { const off = styleOff(ref.id); on ? off.delete(trait) : off.add(trait); remember(offKey(ref.id), [...off].join(",")); renderReferences(`style-${where}-${ref.id}-${trait}`) } }) : null
+    return h("li", { class: "asset ref" }, h("button", { type: "button", class: "btn", onclick: () => ref.facts.duration && showSource(ref.id, 0) }, `${name} · ${kind}`), h("label", { class: "note small", for: `aspect-${where}-${ref.id}` }, "Take from it"), take, referenceIntent && styles.get(ref.id)?.status === "ready" && aspect === "all" ? null : lines, style, h("label", { class: "inline", for: `use-${where}-${ref.id}` }, on, " Use in the cut"))
   }
   function renderReferences(focus = null) {
     clear(referencesEl)
@@ -652,6 +695,11 @@ async function workspace(id) {
         analyses.set(ref.id, null) // asked once, though it shows in two lists
         api("GET", `/projects/${id}/references/${encodeURIComponent(ref.id)}`).then((result) => (analyses.set(ref.id, result), renderReferences())).catch((error) => (analyses.set(ref.id, { lines: [`Couldn't measure it: ${error.message}`] }), renderReferences()))
       }
+      // TP6: a brief the measuring job left earlier is shown at once; asking never measures
+      if (referenceIntent && ref.facts.width && ref.facts.duration && !styles.has(ref.id)) {
+        styles.set(ref.id, { status: "none" })
+        void loadStyle(ref.id)
+      }
     }
     showRefSummary()
     if (focus) document.getElementById(focus)?.focus()
@@ -662,6 +710,9 @@ async function workspace(id) {
       select.value = list.some((a) => a.id === was) ? was : ""
     }
     keep(makeMusic, assets.filter((a) => a.kind === "audio" && !/kriya-music-/.test(a.path)), "No music")
+    // TP7: a logo is an image of the bin's (role logo first); the corner bug is drawn across the cut
+    // A person's own PNG comes in as a picture with a width: any still, or anything they marked as the logo
+    if (makeLogo) keep(makeLogo, assets.filter((a) => a.kind === "image" || a.role === "logo" || (a.kind === "video" && /\.(?:png|jpe?g|webp)$/i.test(a.path))).sort((a, b) => (b.role === "logo") - (a.role === "logo")), "Logo: none")
     // Music Kriya writes itself, royalty-free by construction, before the person's own files
     const was = makeMusic.value
     makeMusic.insertBefore(h("optgroup", { label: "Made by Kriya" }, h("option", { value: "generated:calm" }, "Music: calm bed (made by Kriya)"), h("option", { value: "generated:upbeat" }, "Music: upbeat bed (made by Kriya)"), h("option", { value: "generated:warm" }, "Music: warm bed (made by Kriya)")), makeMusic.options[1] ?? null)
@@ -802,17 +853,51 @@ async function workspace(id) {
           return h("div", { class: "row compare", role: "group", "aria-label": "Show on the monitor" }, buttons.before, buttons.after)
         })()
       : null
+    // TP9: a custom animation, as the render draws it, in its own sandboxed frame; Approve, Restyle or Remove
+    const custom = customOn && proposal.motion
+      ? (() => {
+          const w = project.canvas.width
+          const hh = project.canvas.height
+          const show = Math.min(220, Math.round((220 * w) / Math.max(w, hh)))
+          const src = `/projects/${id}/custom-preview?proposal=${encodeURIComponent(proposal.id)}&op=${proposal.motion.op}`
+          const frame = h("iframe", { title: "Preview of the custom animation", sandbox: "allow-scripts", loading: "lazy", src })
+          Object.assign(frame.style, { width: `${w}px`, height: `${hh}px`, transform: `scale(${show / w})` })
+          const picture = h("div", { class: "scene-picture custom-picture" }, frame)
+          Object.assign(picture.style, { width: `${show}px`, height: `${Math.round((show * hh) / w)}px` })
+          const checks = (proposal.motion.gates ?? []).map((g) => `${g.id} ${g.status.replaceAll("_", " ")}`).join(" · ")
+          const restyle = () => {
+            prompt.value = `${proposal.ask ?? "That animation"}, in a different style`
+            decide(false).then(() => send())
+          }
+          return h(
+            "div",
+            { class: "scene-row custom-motion" },
+            picture,
+            h(
+              "div",
+              { class: "scene-info" },
+              h("p", { class: "small" }, "Custom animation, written by a model and checked by code"),
+              checks ? h("p", { class: "note small" }, `Checked on its own tile: ${checks}`) : null,
+              h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => decide(true) }, "Approve"), h("button", { type: "button", class: "btn", onclick: () => (frame.src = src) }, "Play again"), h("button", { type: "button", class: "btn", onclick: restyle }, "Restyle"), h("button", { type: "button", class: "btn", onclick: () => decide(false) }, "Remove")),
+            ),
+          )
+        })()
+      : null
     box.append(
       h("p", { class: "lead" }, "Proposed, not applied yet"),
+      ...(custom ? [custom] : []),
       ...(compare ? [compare] : []),
       h("ul", {}, proposal.changes.map((change, i) => h("li", {}, h("span", {}, ...withTimes(change)), proposal.changes.length > 1 ? h("button", { type: "button", class: "btn", onclick: () => decide(true, [i]) }, "Only this") : null))),
-      h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => decide(true) }, proposal.changes.length > 1 ? "Accept all" : "Accept"), h("button", { type: "button", class: "btn", onclick: () => decide(false) }, "Reject")),
+      // A custom animation alone is answered by its own Approve and Remove
+      ...(custom && proposal.changes.length === 1 ? [] : [h("div", { class: "row" }, h("button", { type: "button", class: "btn primary", onclick: () => decide(true) }, proposal.changes.length > 1 ? "Accept all" : "Accept"), h("button", { type: "button", class: "btn", onclick: () => decide(false) }, "Reject"))]),
     )
     return box
   }
   /* The Director's plan: pitched in words with its settings; approve it, or say what to
      change and it's revised. Nothing is made until it's approved */
   let pendingPlan = null
+  // Which tab of the Kriya panel shows (set once the panel is built; before that, nothing to switch)
+  let showTab = () => {}
   const choicesNow = () => ({ ...briefNow(), ...(makeVoice.value === "clean" ? { cleanVoice: true } : {}) })
   const wordText = (wid) => index.words.find((w) => w.id === wid)?.text ?? wid
   const clockOf = (n) => `${Math.floor(n / 60)}:${(n % 60).toFixed(1).padStart(4, "0")}`
@@ -832,6 +917,11 @@ async function workspace(id) {
       settings.introSound && settings.introSound !== "none" ? `a ${settings.introSound} into the story` : null,
       Number.isInteger(settings.punches) ? `${settings.punches} punch-ins` : null,
       settings.angles ? "wide and tight angles" : null,
+      // TP10: the sound arranged to the cut, present only on a plan made with editing.craft
+      settings.arrange ? "an accent in the music's key on every join" : null,
+      settings.ambience ? "a room tone from your own quiet" : null,
+      settings.splits ? "the voice leading and trailing its picture at the joins" : null,
+      settings.beatJoins ? "B-roll on the beat" : null,
       settings.broll === "own" ? "B-roll from your clips" : null,
       settings.titles ? "title cards" : null,
       settings.scenes?.length ? `${settings.scenes.length} animated scene${settings.scenes.length === 1 ? "" : "s"}` : null,
@@ -1027,9 +1117,21 @@ async function workspace(id) {
     draw()
     return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Definitions"), list)
   }
+  /** TP7: the plan's style pack, on the card; the person's to keep, change or drop before approving. */
+  function styleChoice(plan) {
+    const pick = h("select", { class: "field select", "aria-label": "Style pack", onchange: () => {
+      if (pick.value) plan.brief.stylePack = plan.settings.stylePack = pick.value
+      else {
+        delete plan.brief.stylePack
+        delete plan.settings.stylePack
+      }
+    } }, [h("option", { value: "" }, "No style pack"), ...Object.entries(typeKit.packs).map(([value, pack]) => h("option", { value, title: pack.does }, pack.label))])
+    pick.value = plan.brief.stylePack ?? ""
+    return h("div", { class: "scenes" }, h("p", { class: "lead" }, "Style"), pick)
+  }
   /** The film's caption look and highlight colour, on the card. */
   function captionChoice(plan, changed) {
-    const looks = { clean: "Clean", karaoke: "Karaoke", boxed: "Boxed", pop: "Pop", story: "Story", minimal: "Minimal" }
+    const looks = { clean: "Clean", karaoke: "Karaoke", boxed: "Boxed", pop: "Pop", story: "Story", minimal: "Minimal", ...(typeKit ? Object.fromEntries(typeKit.looks.map((id) => [id, MORE_LOOK_LABELS[id] ?? id])) : {}) }
     const colours = { "#ffd23f": "Yellow", "#ffb347": "Amber", "#4fd1c5": "Teal", "#ff7ab6": "Pink", "#ffffff": "White" }
     const look = h("select", { class: "field select", "aria-label": "Caption look", onchange: () => {
       plan.brief.captions = look.value
@@ -1088,28 +1190,94 @@ async function workspace(id) {
     draw()
     return h("div", { class: "scenes order" }, h("p", { class: "lead" }, "Order"), plan.order.parts.length ? list : null, ...plan.order.lines.map((text) => h("p", { class: "note small" }, text)), said)
   }
+  // The intent frame (TP4, editing.intent): what was understood, what isn't in this cut, and open choices with a
+  // default already picked. Answering is the person's; it changes this plan and isn't asked again on a revision
+  function intentSection(plan, changed) {
+    const { understood = [], cannot = [], questions = [], defaulted = [] } = plan.intent
+    plan.intent.answers ??= {}
+    const choice = (q, i) => {
+      const name = `q-${plan.intent.id ?? (plan.intent.id = Math.random().toString(36).slice(2, 8))}-${i}`
+      return h(
+        "fieldset",
+        { class: "question" },
+        h("legend", {}, q.question),
+        ...q.options.map((option) =>
+          h("label", { class: "inline choice" }, h("input", { type: "radio", name, value: String(option), checked: option === (plan.intent.answers[q.field] ?? q.default), onchange: () => {
+            plan.intent.answers[q.field] = option
+            plan.settings[q.field] = option
+            answerOnBrief(plan.brief, q.field, option)
+            changed()
+          } }), ` ${valueText(q.field, option)}${option === q.default ? " (default)" : ""}`),
+        ),
+      )
+    }
+    return h(
+      "div",
+      { class: "intent" },
+      understood.length ? h("div", {}, h("p", { class: "lead" }, "What I understood"), h("ul", {}, understood.map((u) => h("li", {}, understoodLine(u))))) : null,
+      cannot.length ? h("div", {}, h("p", { class: "lead" }, "Not in this cut"), h("ul", {}, cannot.map((c) => h("li", {}, `"${c.said}"${c.nearest ? `. Nearest I can do: ${c.nearest}` : ""}`)))) : null,
+      ...questions.map(choice),
+      defaulted.length ? h("p", { class: "note small" }, `Also decided by default: ${defaulted.map((d) => `${FIELD_LABELS[d.field] ?? d.field} ${valueText(d.field, d.value)}`).join(", ")}.`) : null,
+    )
+  }
   function planBlock(plan) {
     planGenre = plan.genreLabel ? `reads as: ${plan.genreLabel}` : null
-    const line = h("p", { class: "note small" }, settingsLine(plan.settings))
+    const line = h("p", { class: "note small plan-summary" }, settingsLine(plan.settings))
+    // Each part of the plan on a tab of its own (redesign 2026-11-12): the steps first, then what the plan adds, each
+    // with its count; a change on one updates the summary line and the counts. One part alone shows without tabs
+    let tabs = null
+    const changed = () => {
+      line.textContent = settingsLine(plan.settings)
+      tabs?.refresh()
+    }
+    const overview = [plan.steps.length ? h("ol", { class: "steps" }, plan.steps.map((step) => h("li", {}, ...withTimes(step)))) : null, plan.intent ? intentSection(plan, changed) : null, plan.order ? orderStrip(plan) : null].filter(Boolean)
+    const look = [plan.brief.captions ? captionChoice(plan, changed) : null, typeKit ? styleChoice(plan) : null].filter(Boolean)
+    const sections = [
+      overview.length ? { key: "plan", label: "Plan", panel: h("div", { class: "plan-section" }, ...overview) } : null,
+      plan.settings.scenes?.length ? { key: "scenes", label: "Scenes", panel: h("div", { class: "plan-section" }, sceneCards(plan, changed)), count: () => plan.settings.scenes?.length ?? 0 } : null,
+      plan.settings.graphics?.length ? { key: "graphics", label: "Graphics", panel: h("div", { class: "plan-section" }, graphicCards(plan, changed)), count: () => plan.settings.graphics?.length ?? 0 } : null,
+      plan.settings.pictures?.length ? { key: "pictures", label: "Pictures", panel: h("div", { class: "plan-section" }, pictureCards(plan, changed)), count: () => plan.settings.pictures?.length ?? 0 } : null,
+      plan.settings.terms?.length ? { key: "terms", label: "Definitions", panel: h("div", { class: "plan-section" }, termCards(plan, changed)), count: () => plan.settings.terms?.length ?? 0 } : null,
+      look.length ? { key: "look", label: "Look", panel: h("div", { class: "plan-section" }, ...look) } : null,
+    ].filter(Boolean)
+    if (sections.length > 1) tabs = createTabs(sections, { label: "Parts of the plan", className: "plan-tabs" })
+    // Expand (redesign 2026-11-12): the same card, as a large sheet over the workspace, to read and adjust it at full size
+    const backdrop = h("div", { class: "plan-backdrop", hidden: true, onclick: () => expand(false) })
+    const expandButton = h("button", { type: "button", class: "btn ghost plan-expand", "aria-expanded": "false", onclick: () => expand(!box.classList.contains("expanded")) }, "Expand")
+    const onKey = (event) => event.key === "Escape" && (event.stopPropagation(), expand(false))
+    function expand(on) {
+      box.classList.toggle("expanded", on)
+      backdrop.hidden = !on
+      expandButton.textContent = on ? "Close" : "Expand"
+      expandButton.setAttribute("aria-expanded", String(on))
+      if (on) {
+        document.body.append(backdrop)
+        box.setAttribute("role", "dialog")
+        box.setAttribute("aria-modal", "true")
+        box.setAttribute("aria-label", "The Director's plan")
+        window.addEventListener("keydown", onKey, true)
+        expandButton.focus()
+      } else {
+        box.removeAttribute("role")
+        box.removeAttribute("aria-modal")
+        box.removeAttribute("aria-label")
+        backdrop.remove()
+        window.removeEventListener("keydown", onKey, true)
+      }
+    }
     const box = h(
       "div",
       { class: "proposal plan" },
-      h("p", { class: "lead" }, plan.revises ? "A change to your current cut, not made yet" : "The Director's plan, not made yet"),
+      h("div", { class: "plan-head" }, h("div", { class: "plan-title" }, h("p", { class: "lead" }, plan.revises ? "A change to your current cut, not made yet" : "The Director's plan, not made yet"), expandButton), line),
       // Worked out by Kriya's code from the plan your cut was made with and this one
       plan.revises ? h("p", { class: "note small" }, `${plan.differs?.length ? `What changes: ${plan.differs.join(" · ")}. ` : ""}${plan.keepsStory ? "The story and your own edits stay." : "The length or the trims change, so the lines are chosen again; your own edits are kept where they still fit."} Say "start over" for a new cut from the footage.`) : null,
-      plan.steps.length ? h("ol", { class: "steps" }, plan.steps.map((step) => h("li", {}, ...withTimes(step)))) : null,
-      line,
-      plan.order ? orderStrip(plan) : null,
-      plan.settings.scenes?.length ? sceneCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
-      plan.settings.graphics?.length ? graphicCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
-      plan.settings.pictures?.length ? pictureCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
-      plan.settings.terms?.length ? termCards(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
-      plan.brief.captions ? captionChoice(plan, () => (line.textContent = settingsLine(plan.settings))) : null,
+      ...(tabs ? [tabs.strip] : []),
+      ...sections.map((section) => section.panel),
       h(
         "div",
-        { class: "row" },
-        h("button", { type: "button", class: "btn primary", onclick: () => ((pendingPlan = null), showPlanInPanel(plan.brief), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Direct.`)), make(plan.brief, { exact: true, plan })) }, "Approve and make it"),
-        h("button", { type: "button", class: "btn", onclick: () => ((pendingPlan = plan), prompt.focus(), (prompt.placeholder = "Say what to change in the plan…")) }, "Change…"),
+        { class: "row plan-actions" },
+        h("button", { type: "button", class: "btn primary", onclick: () => (expand(false), (pendingPlan = null), showPlanInPanel(plan.brief), clear(box).append(h("p", { class: "note" }, `Approved. Making it now in ${plan.brief.format ?? makeFormat.value}; the progress is in Brief.`)), make(plan.brief, { exact: true, plan }), showTab("brief")) }, "Approve and make it"),
+        h("button", { type: "button", class: "btn", onclick: () => (expand(false), (pendingPlan = plan), prompt.focus(), (prompt.placeholder = "Say what to change in the plan…")) }, "Change…"),
       ),
     )
     return box
@@ -1131,6 +1299,7 @@ async function workspace(id) {
     makeTemplate.value = ""
   }
   async function askPlan(text, previous = null, pointing = {}) {
+    showTab("chat")
     const thinking = message("kriya", previous ? "Revising the plan…" : "Planning the cut…")
     try {
       const plan = await api("POST", `/projects/${id}/plan`, { text, history: history.slice(-6), previous, choices: choicesNow(), ...pointing })
@@ -1146,10 +1315,14 @@ async function workspace(id) {
   async function send({ planning = false } = {}) {
     const typed = prompt.value.trim()
     if (!typed) return
+    showTab("chat")
     // The message as typed is what the chat shows; what's sent has each mention as a numbered place and a typed list
     const taken = mentionBox ? mentionBox.take(typed) : { text: typed, mentions: [] }
     const text = taken.text
-    const pointing = taken.mentions.length ? { mentions: taken.mentions } : {}
+    // TP9: a drawn box goes with this message as "this", once
+    const drawn = drawing?.mark()
+    const pointing = { ...(taken.mentions.length ? { mentions: taken.mentions } : {}), ...(drawn ? { mark: drawn } : {}) }
+    if (drawn) drawing.clear()
     prompt.placeholder = assemblyOn ? "Tell Kriya what to change. Type @ to point at a clip." : "Tell Kriya: \"remove 0:05 to 0:09\", \"change the caption at 0:12 to …\", \"make the start punchier\""
     // Talking about the plan: revise it; asking for a plan: plan
     if (pendingPlan || planning) {
@@ -1159,7 +1332,7 @@ async function workspace(id) {
       return askPlan(text, pendingPlan, pointing)
     }
     const { selection, label } = selectionNow()
-    message("you", label ? `${typed}  (${label.replace(/^Selected: /, "on ")})` : typed)
+    message("you", drawn ? `${typed}  (on the ${drawn.kind} you drew at ${clock(drawn.at)})` : label ? `${typed}  (${label.replace(/^Selected: /, "on ")})` : typed)
     prompt.value = ""
     const thinking = message("kriya", "Thinking about that…")
     try {
@@ -1167,9 +1340,12 @@ async function workspace(id) {
       thinking.remove()
       const words = reply.say || (reply.proposal ? "Here's what I'd change." : reply.direct ? "That's about the whole video." : (reply.reason ?? "I couldn't turn that into an edit. Try saying it another way."))
       history.push({ who: "you", text: typed.slice(0, 400) })
+      if (reply.proposal?.motion) reply.proposal.ask = text
       // A request about the whole video: the Director pitches a plan for approval
       if (reply.direct && !reply.proposal) return askPlan(text, null, pointing)
-      message("kriya", words, reply.proposal ? proposalBlock(reply.proposal) : null)
+      // TP4: what the change couldn't do, in the person's own words, never left unsaid
+      const cannot = reply.cannot?.length ? h("div", { class: "intent" }, h("p", { class: "lead" }, "Not in this change"), h("ul", {}, reply.cannot.map((c) => h("li", {}, `"${c.said}"${c.nearest ? `. Nearest I can do: ${c.nearest}` : ""}`)))) : null
+      message("kriya", words, reply.proposal ? proposalBlock(reply.proposal) : null, cannot)
       history.push({ who: "kriya", text: words.slice(0, 400) })
     } catch (error) {
       thinking.remove()
@@ -1185,8 +1361,59 @@ async function workspace(id) {
     { class: "prompt", onsubmit: (event) => (event.preventDefault(), send()) },
     h("label", { for: "prompt", class: "sr-only" }, "Message Kriya"),
     prompt,
-    h("div", { class: "send" }, h("button", { class: "btn primary", type: "submit" }, "Send"), h("button", { type: "button", class: "btn", title: "Ask the Director for a plan of the whole cut", onclick: () => send({ planning: true }) }, "Plan")),
+    h("div", { class: "send" }, h("button", { class: "btn primary", type: "submit" }, "Send"), h("button", { type: "button", class: "btn", title: "Ask the Director for a plan of the whole cut", onclick: () => send({ planning: true }) }, "Plan"), ...(view.dictation ? [holdToTalk()] : [])),
   )
+  /* Hold to talk (TP4, §7.4): only when this computer has the recogniser's weights. The recording goes to this
+     Studio's own Host and becomes text in the box, which the person reads before sending; no speech service is used */
+  function holdToTalk() {
+    const button = h("button", { type: "button", class: "btn talk", "aria-pressed": "false", title: "Hold to talk (or hold Space on this button); the text appears in the box" }, "Hold to talk")
+    let recorder = null
+    let stream = null
+    let started = 0
+    const start = async () => {
+      if (recorder) return
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch {
+        say.textContent = "The microphone isn't available to the Studio."
+        return
+      }
+      const chunks = []
+      recorder = new MediaRecorder(stream)
+      recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data)
+      recorder.onstop = async () => {
+        for (const track of stream.getTracks()) track.stop()
+        const type = (recorder.mimeType || "audio/webm").split(";")[0]
+        recorder = null
+        button.setAttribute("aria-pressed", "false")
+        button.textContent = "Hold to talk"
+        if (Date.now() - started < 300 || !chunks.length) return (say.textContent = "Hold the button while you speak.")
+        say.textContent = "Turning your words into text on this computer…"
+        try {
+          const response = await fetch(`/projects/${id}/dictate`, { method: "POST", headers: { "content-type": type }, body: new Blob(chunks, { type }) })
+          const answer = await response.json()
+          if (!response.ok) throw new Error(answer.message ?? "That couldn't be heard.")
+          prompt.value = `${prompt.value ? `${prompt.value} ` : ""}${answer.text}`.trim()
+          say.textContent = answer.text ? "Read it over, then send." : "Nothing was heard."
+          prompt.focus()
+        } catch (error) {
+          say.textContent = error.message
+        }
+      }
+      started = Date.now()
+      recorder.start()
+      button.setAttribute("aria-pressed", "true")
+      button.textContent = "Listening… let go to stop"
+      // A minute at most
+      setTimeout(() => recorder?.state === "recording" && recorder.stop(), 60_000)
+    }
+    const stop = () => recorder?.state === "recording" && recorder.stop()
+    button.addEventListener("pointerdown", (event) => (event.preventDefault(), start()))
+    for (const name of ["pointerup", "pointerleave", "pointercancel"]) button.addEventListener(name, stop)
+    button.addEventListener("keydown", (event) => (event.key === " " || event.key === "Enter") && !event.repeat && (event.preventDefault(), start()))
+    button.addEventListener("keyup", (event) => (event.key === " " || event.key === "Enter") && stop())
+    return button
+  }
   const markButtons = h(
     "div",
     { class: "marks", role: "group", "aria-label": "Mark a range of the cut" },
@@ -1197,7 +1424,33 @@ async function workspace(id) {
   // What the Director makes: the length, captions, music and a style reference, all optional
   const makeLength = h("select", { id: "make-length", class: "field select" }, [["", "Length: auto (30–60 s)"], ["30", "30 seconds"], ["45", "45 seconds"], ["60", "60 seconds"], ["90", "90 seconds"]].map(([value, label]) => h("option", { value }, label)))
   const makeCaptions = h("select", { id: "make-captions", class: "field select" }, [["", "No captions"], ["clean", "Captions: clean"], ["karaoke", "Captions: karaoke"], ["boxed", "Captions: boxed"], ["pop", "Captions: pop"], ["story", "Captions: story"], ["minimal", "Captions: minimal"]].map(([value, label]) => h("option", { value }, label)))
+  if (typeKit) makeCaptions.append(...typeKit.looks.map((value) => h("option", { value }, `Captions: ${(MORE_LOOK_LABELS[value] ?? value).toLowerCase()}`)))
   const makeMusic = h("select", { id: "make-music", class: "field select" })
+  // TP7: a style pack fills what the selects leave open; the type kit, colours, logo and bar are the person's own
+  const makeStyle = typeKit ? h("select", { id: "make-style", class: "field select" }, [h("option", { value: "" }, "Style: none"), ...Object.entries(typeKit.packs).map(([value, pack]) => h("option", { value, title: pack.does }, `Style: ${pack.label}`))]) : null
+  const makeType = typeKit ? h("select", { id: "make-type", class: "field select" }, [h("option", { value: "" }, "Type: the film's own"), ...Object.entries(typeKit.pairs).map(([value, label]) => h("option", { value }, `Type: ${label}`))]) : null
+  const makeBar = typeKit ? h("select", { id: "make-bar", class: "field select" }, [["", "Bar: none"], ["progress", "Bar: progress"], ["chapters", "Bar: chapters"]].map(([value, label]) => h("option", { value }, label))) : null
+  const makeLogo = typeKit ? h("select", { id: "make-logo", class: "field select" }) : null
+  const colourIn = (idName, label) => {
+    const on = h("input", { type: "checkbox", id: `${idName}-on` })
+    const pick = h("input", { type: "color", id: idName, class: "swatch", value: idName === "make-ink" ? "#ffffff" : "#ffd23f", "aria-label": label })
+    return { on, pick, el: h("label", { class: "inline", for: `${idName}-on` }, on, ` ${label} `, pick) }
+  }
+  const makeInk = typeKit ? colourIn("make-ink", "My text colour") : null
+  const makeAccent = typeKit ? colourIn("make-accent", "My accent") : null
+  const typeNote = typeKit && !typeKit.shipped ? h("p", { class: "note" }, "The Fonts pack isn't installed on this computer, so a type kit draws in the system fonts until it is (kriya edit setup --pack fonts).") : null
+  const typeKitNow = () => {
+    if (!typeKit) return {}
+    // A pack brings its own pair; with none, the film's chosen pair, or Clean, carries the colours, logo and bar
+    const pair = makeType.value || (makeStyle.value ? null : (typeKit.chosen?.pair ?? "clean"))
+    const colors = { ...(makeInk.on.checked ? { text: makeInk.pick.value } : {}), ...(makeAccent.on.checked ? { accent: makeAccent.pick.value } : {}) }
+    const extras = { ...(Object.keys(colors).length ? { colors } : {}), ...(makeLogo.value ? { logo: makeLogo.value } : {}), ...(makeBar.value ? { bar: makeBar.value } : {}) }
+    return {
+      ...(makeStyle.value ? { stylePack: makeStyle.value } : {}),
+      // A type kit only when one is chosen here: the film's own stays as it is (EH-69)
+      ...(makeType.value || Object.keys(extras).length ? { typeKit: { ...(pair ? { pair } : {}), ...extras } } : {}),
+    }
+  }
   const makeFormat = h("select", { id: "make-format", class: "field select" }, [["9:16", "Format: 9:16 (Reels, Shorts)"], ["16:9", "Format: 16:9 (YouTube)"], ["1:1", "Format: 1:1 (square post)"], ["4:5", "Format: 4:5 (feed post)"]].map(([value, label]) => h("option", { value }, label)))
   const makeGrade = h("select", { id: "make-grade", class: "field select" }, [["", "Look: natural"], ["vivid", "Look: vivid"], ["cinematic", "Look: cinematic (cool, vignette)"], ["warm", "Look: warm"], ["bright", "Look: bright"], ["mono", "Look: black and white"]].map(([value, label]) => h("option", { value }, label)))
   const makeVoice = h("select", { id: "make-voice", class: "field select" }, [["", "Voice: as recorded"], ["clean", "Voice: remove background noise"]].map(([value, label]) => h("option", { value }, label)))
@@ -1256,13 +1509,17 @@ async function workspace(id) {
     ...(makeAngles.box.checked ? { angles: true } : {}),
     ...(makeBroll.box.checked ? { broll: "own" } : {}),
     ...(makeTitles.box.checked ? { titles: true } : {}),
+    ...typeKitNow(),
+    ...styleNow(),
+    // TP8: the opening the person picked on the Variations wall, as the make's hook
+    ...(directorLoop && chosenOpening ? { hook: chosenOpening, mustKeep: [chosenOpening] } : {}),
     ...extra,
   })
   /** exact: the brief as given (an approved plan) plus the references in use; else the panel's choices under it */
   async function make(extra, { exact = false, plan = null } = {}) {
     try {
       const refs = briefNow().references
-      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}) } : { ...briefNow(extra), ...(assemblyOn && partsOf(project).length ? { assembly: { version: 1, parts: partsOf(project) } } : {}) }, ...(plan ? { plan: { say: plan.say, steps: plan.steps, settings: plan.settings } } : {}) })
+      const job = await api("POST", `/projects/${id}/make`, { brief: exact ? { ...extra, ...(refs ? { references: refs } : {}), ...styleNow() } : { ...briefNow(extra), ...(assemblyOn && partsOf(project).length ? { assembly: { version: 1, parts: partsOf(project) } } : {}) }, ...(plan ? { plan: { say: plan.say, steps: plan.steps, settings: plan.settings } } : {}) })
       makeJob = job.id
       jobsNow.set(job.id, job)
       say.textContent = "Directing your reel: reading the footage, choosing the story, cutting and checking it. You can keep working."
@@ -1279,29 +1536,64 @@ async function workspace(id) {
     makeButton.disabled = !!job
     if (job) makeStatus.append(h("p", { class: "note" }, `Making the reel… ${job.progress ?? 0}%`), progressBar(job.progress ?? 0, "Making the reel"))
   }
+  // TP8 (editing.directorLoop, as this Kriya says): three openings to choose from. Off, none of it is on the page
+  const directorLoop = view.directorLoop === true
+  let chosenOpening = null
+  let openings = { status: "none" }
+  const openingsEl = h("div", { class: "openings-host" })
+  function showOpenings() {
+    if (!directorLoop) return
+    clear(openingsEl).append(variationsWall({ project: id, state: openings, chosen: chosenOpening, onAsk: askOpenings, onChoose: (hook) => ((chosenOpening = hook), showOpenings()) }))
+  }
+  async function askOpenings() {
+    try {
+      const job = await api("POST", `/projects/${id}/openings`, { brief: { format: makeFormat.value, ...(makeCaptions.value ? { captions: makeCaptions.value } : {}), ...(makeGrade.value ? { grade: makeGrade.value } : {}) } })
+      openings = { status: "making", job: job.id, progress: 0 }
+      chosenOpening = null
+    } catch (error) {
+      openings = { status: "failed", error: error.message }
+    }
+    showOpenings()
+  }
+  async function openingsProgress() {
+    if (openings.status !== "making") return
+    const job = (await api("GET", "/jobs")).jobs.find((j) => j.id === openings.job)
+    if (!job) return
+    if (job.status === "done") openings = { status: "ready", job: job.id, openings: JSON.parse(job.output).openings }
+    else if (["failed", "canceled"].includes(job.status)) openings = { status: "failed", error: job.error ?? "the drafts stopped" }
+    else openings = { ...openings, progress: job.progress ?? 0 }
+    showOpenings()
+  }
+  showOpenings()
+  // The Brief (redesign 2026-11-12): the same controls, grouped by what they decide, two to a row where the
+  // panel is wide enough; Make it stays in reach at the bottom of the panel however far the groups scroll
+  const briefGroup = (title, ...rows) => h("section", { class: "brief-group", "aria-label": title }, h("h3", { class: "group-title" }, title), ...rows)
+  const briefPair = (...fields) => h("div", { class: "brief-pair" }, ...fields)
   const makePanel = h(
     "div",
     { class: "make" },
-    h("label", { for: "make-template", class: "sr-only" }, "Template"),
-    makeTemplate,
-    h("label", { for: "make-format", class: "sr-only" }, "Format"),
-    makeFormat,
-    h("label", { for: "make-length", class: "sr-only" }, "Length"),
-    makeLength,
-    h("label", { for: "make-captions", class: "sr-only" }, "Captions"),
-    makeCaptions,
-    h("label", { for: "make-grade", class: "sr-only" }, "Colour look"),
-    makeGrade,
-    h("label", { for: "make-music", class: "sr-only" }, "Music"),
-    makeMusic,
-    h("label", { for: "make-voice", class: "sr-only" }, "Voice"),
-    makeVoice,
-    h("div", { class: "extras", role: "group", "aria-label": "Extras" }, makeAngles.el, makeBroll.el, makeTitles.el),
-    refSummary,
-    directRefsEl,
-    h("div", { class: "row tight" }, refPicker, addAspect, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference for what's chosen: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference")),
-    makeButton,
-    makeStatus,
+    briefGroup("Start from", h("label", { for: "make-template", class: "sr-only" }, "Template"), makeTemplate),
+    briefGroup("Shape", briefPair(h("div", {}, h("label", { for: "make-format", class: "sr-only" }, "Format"), makeFormat), h("div", {}, h("label", { for: "make-length", class: "sr-only" }, "Length"), makeLength))),
+    briefGroup(
+      "Look and sound",
+      briefPair(h("div", {}, h("label", { for: "make-captions", class: "sr-only" }, "Captions"), makeCaptions), h("div", {}, h("label", { for: "make-grade", class: "sr-only" }, "Colour look"), makeGrade)),
+      briefPair(h("div", {}, h("label", { for: "make-music", class: "sr-only" }, "Music"), makeMusic), h("div", {}, h("label", { for: "make-voice", class: "sr-only" }, "Voice"), makeVoice)),
+    ),
+    briefGroup("Extras", h("div", { class: "extras toggles", role: "group", "aria-label": "Extras" }, makeAngles.el, makeBroll.el, makeTitles.el)),
+    ...(typeKit
+      ? [
+          briefGroup(
+            "Brand",
+            briefPair(h("div", {}, h("label", { for: "make-style", class: "sr-only" }, "Style pack"), makeStyle), h("div", {}, h("label", { for: "make-type", class: "sr-only" }, "Type kit"), makeType)),
+            h("div", { class: "extras toggles", role: "group", "aria-label": "Brand colours" }, makeInk.el, makeAccent.el),
+            briefPair(h("div", {}, h("label", { for: "make-logo", class: "sr-only" }, "Logo"), makeLogo), h("div", {}, h("label", { for: "make-bar", class: "sr-only" }, "Bar across the film"), makeBar)),
+            ...(typeNote ? [typeNote] : []),
+          ),
+        ]
+      : []),
+    briefGroup("References", refSummary, directRefsEl, h("div", { class: "row tight" }, refPicker, addAspect, h("button", { type: "button", class: "btn", "aria-label": "Add a reference", title: "Add a reference for what's chosen: a video, an image or music", onclick: () => refPicker.click() }, "+ Reference"))),
+    ...(directorLoop ? [briefGroup("Openings", openingsEl)] : []),
+    h("div", { class: "make-footer" }, makeButton, makeStatus),
   )
   let makeJob = null
   async function makeProgress() {
@@ -1324,6 +1616,20 @@ async function workspace(id) {
   const shape = h("select", { class: "field small select", "aria-label": "Preview shape", onchange: () => monitor.setShape(shapeNow()) }, ["project", "16:9", "9:16"].map((value) => h("option", { value }, value === "project" ? "Project shape" : value)))
   const zoom = h("input", { type: "range", min: "1", max: "3", step: "0.05", value: "1", class: "zoom", "aria-label": "Zoom", oninput: () => monitor.setZoom(Number(zoom.value)) })
   const guides = h("input", { type: "checkbox", id: "guides", onchange: () => monitor.setGuides(guides.checked) })
+  const monitorFrame = h("div", { class: "monitor-frame" }, canvas)
+  const drawing = customOn
+    ? createDrawing({
+        frame: monitorFrame,
+        canvas,
+        timeNow: () => monitor.time,
+        zoomNow: () => Number(zoom.value),
+        // The box is in thousandths of the cut's own frame, so it is drawn on the cut, in the project's shape
+        usable: () => (source ? "Drawing marks the cut: show the cut on the monitor first." : shape.value !== "project" ? "Drawing marks the project's own frame: set the preview shape back to Project shape." : null),
+        pause: () => monitor.rate !== 0 && act({ type: "toggle" }),
+        onChange: () => {},
+      })
+    : null
+  if (drawing) zoom.addEventListener("input", () => drawing.redraw())
 
   function act(action) {
     if (!action) return
@@ -1406,6 +1712,56 @@ async function workspace(id) {
       else if (event.key === "Home") (event.preventDefault(), setSide(null))
     },
   })
+  /* The Kriya panel (redesign 2026-11-12): Brief, Chat and Activity as tabs over one docked panel, each scrolling on its
+     own, so the brief, a long Plan Card and the list of what was done no longer stack into one long column */
+  const briefPanel = h("div", { class: "brief-panel" }, makePanel)
+  // Ideas, worded so none reads like a button of its own (Plan, Send, Remove, Make it, Accept)
+  const SUGGESTIONS = ["A 30 second reel from this", "Cut the false starts", "A punchier start", "A name strap with my name and role"]
+  const chatEmpty = h(
+    "div",
+    { class: "chat-empty" },
+    h("p", { class: "empty-title" }, "Tell Kriya what you want"),
+    h("p", { class: "note small" }, "A change to this cut, or a plan for the whole film. Times like 0:05, a marked stretch or selected words are \"this\"."),
+    h("div", { class: "suggestions", role: "group", "aria-label": "Ideas to start from" }, SUGGESTIONS.map((text) => h("button", { type: "button", class: "btn suggestion", onclick: () => ((prompt.value = text), prompt.focus()) }, text))),
+  )
+  const chatPanel = h(
+    "div",
+    { class: "chat-panel" },
+    h("div", { class: "chat-scroll" }, chatEmpty, chatEl),
+    h("div", { class: "composer" }, chip, mentionThis, mentionBox?.el, promptForm, h("p", { class: "note small hint" }, "Enter sends. Shift+Enter is a new line. Mark a stretch with I and O.")),
+  )
+  const activityPanel = h("div", { class: "activity-panel" }, h("p", { class: "note small activity-empty" }, "Nothing yet. Changes you accept and the cuts Kriya makes are listed here, newest first."), did)
+  const inspector = createTabs(
+    [
+      { key: "brief", label: "Brief", panel: briefPanel },
+      { key: "chat", label: "Chat", panel: chatPanel },
+      { key: "activity", label: "Activity", panel: activityPanel, count: () => did.children.length || null },
+    ],
+    { label: "Kriya", selected: ["brief", "chat", "activity"].includes(remember("kriya-tab")) ? remember("kriya-tab") : "chat", className: "inspector-tabs", onSelect: (key) => remember("kriya-tab", key) },
+  )
+  showTab = (key) => inspector.select(key)
+  // Something new on a tab that isn't showing: a badge on it, until it's opened
+  let unread = 0
+  const chatEmptyNow = () => (chatEmpty.hidden = chatEl.children.length > 0)
+  new MutationObserver((records) => {
+    chatEmptyNow()
+    const fresh = records.flatMap((r) => [...r.addedNodes]).filter((n) => n.classList?.contains("kriya")).length
+    if (inspector.selected() === "chat") unread = 0
+    else if (fresh) inspector.mark("chat", (unread += fresh))
+  }).observe(chatEl, { childList: true })
+  chatEmptyNow()
+  let seenDone = did.children.length
+  new MutationObserver(() => {
+    inspector.refresh()
+    const fresh = did.children.length - seenDone
+    if (inspector.selected() === "activity") seenDone = did.children.length
+    else if (fresh > 0) inspector.mark("activity", fresh)
+  }).observe(did, { childList: true })
+  const watchTabs = inspector.strip
+  watchTabs.addEventListener("click", () => {
+    if (inspector.selected() === "chat") unread = 0
+    if (inspector.selected() === "activity") seenDone = did.children.length
+  })
   const root = h(
     "div",
     { class: "workspace" },
@@ -1419,10 +1775,18 @@ async function workspace(id) {
       h(
         "section",
         { class: "area-monitor panel", "aria-label": "Monitor" },
-        h("div", { class: "monitor-frame" }, canvas),
-        h("div", { class: "transport" }, play, time, which, shape, markButtons, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
+        monitorFrame,
+        // The transport in groups (redesign 2026-11-12): playing, marking, how the picture is shown, drawing on it
+        h(
+          "div",
+          { class: "transport" },
+          h("div", { class: "tgroup tplay" }, play, time, which),
+          h("div", { class: "tgroup" }, markButtons),
+          h("div", { class: "tgroup tview" }, shape, h("label", { class: "inline" }, guides, " Safe zones"), h("label", { class: "inline" }, "Zoom ", zoom)),
+        ),
+        ...(drawing ? [drawing.tools] : []),
       ),
-      h("aside", { class: "area-kriya panel", "aria-label": "Kriya" }, sideHandle, h("h2", {}, "Direct"), makePanel, h("h2", {}, "Chat with Kriya"), chatEl, chip, mentionThis, mentionBox?.el, promptForm, h("p", { class: "note small" }, "Say times like 0:05 or mark a stretch with I and O. Enter sends."), h("h2", {}, "What I did"), did),
+      h("aside", { class: "area-kriya panel inspector", "aria-label": "Kriya" }, sideHandle, inspector.strip, briefPanel, chatPanel, activityPanel),
       h("section", { class: "area-transcript panel", "aria-label": "Transcript" }, h("h2", {}, "Transcript"), h("p", { class: "note small hint" }, "Click a word to jump there. Double-click (or F2) to fix a misheard word."), transcriptEl),
       storyEl,
       h("div", { class: "area-strip" }, stripEl),
@@ -1465,8 +1829,10 @@ async function workspace(id) {
       job = JSON.parse(event.data)
     } catch {}
     if (job?.id) jobsNow.set(job.id, job)
+    styleJob(job)
     if (mode === "finish") finish.refresh().catch(() => {})
     makeProgress().catch(() => {})
+    openingsProgress().catch(() => {})
     // Progress alone redraws the bin; a job that ended reloads what it changed
     if (job && ["pending", "running"].includes(job.status)) renderBin()
     else reload().catch(() => {})

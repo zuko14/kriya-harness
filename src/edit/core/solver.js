@@ -4,7 +4,7 @@
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
 import { mapBox } from "./faces.js"
-import { isSceneBlock, safeZoneFor, sceneFrame, solveLayout } from "./layout.js"
+import { isSceneBlock, REGIONS, safeZoneFor, sceneFrame, solveLayout } from "./layout.js"
 import { flicksToFrames, frameAtTimestamp, framesToFlicks, scaleFlicks, snapToFrame } from "./time.js"
 
 const ms = (n) => n * 705_600
@@ -326,6 +326,8 @@ function placeRest(s) {
     const item = { clip: clip.id, role: spot.role, at: spot.at, end: spot.end }
     if (zoom) s.zooms.push({ ...item, scale: zoom.scale, ease: zoom.ease ?? null, ...(zoom.x === undefined ? {} : { x: zoom.x, y: zoom.y }) })
     else if (matte) s.mattes.push({ ...item, model: matte.model ?? "face-box" })
+    // An effect over a stretch of the cut (TP5): no picture of its own, the effect's window on the timeline
+    else if (!clip.source && clip.effects.some((e) => e.type === "fx")) s.adjustments.push({ ...item, fx: clip.effects.find((e) => e.type === "fx") })
     else if (AUDIO_ROLES.includes(spot.role)) {
       if (!s.tracks.get(clip.track).muted) s.audio.push({ ...item, asset: clip.source.asset, in: spot.from, out: spot.to, speed: clip.speed, effects: clip.effects, ...(clip.loop ? { loop: true } : {}), ...(clip.peak ? { peak: clip.peak } : {}) })
     } else if (block) s.overlays.push({ ...item, block: { blockId: block.blockId, version: block.version, variables: block.variables }, placement: null, ...(behind(clip) ? { behind: true } : {}) })
@@ -375,6 +377,9 @@ function holdCaptions(s) {
   })
 }
 
+/** A drawn box (thousandths of the frame) as whole pixels of a canvas. */
+export const markPixels = (mark, { width, height }) => ({ x: Math.round((mark.x * width) / 1000), y: Math.round((mark.y * height) / 1000), w: Math.max(1, Math.round((mark.w * width) / 1000)), h: Math.max(1, Math.round((mark.h * height) / 1000)) })
+
 /** Step 6: every caption and card gets a place, or a report. */
 function layOut(s) {
   holdCaptions(s)
@@ -385,7 +390,13 @@ function layOut(s) {
   const w = Math.min(Math.floor((width * rules.boxWidth) / 100), width - (safe.left ?? 0) - (safe.right ?? 0))
   const h = Math.floor((height * rules.boxHeight) / 100)
   // A scene takes its content box; what plays over it sits on the row below that, with no face to clear
-  const scenes = s.overlays.filter((o) => isSceneBlock(o.block))
+  // TP7: a full-frame card covers the frame as a scene does; a screen frame is drawn round all of it, with no text to place
+  const regionOf = (o) => (o.block?.blockId === "graphic" ? REGIONS[o.block.variables?.kind] : undefined)
+  const covers = (o) => isSceneBlock(o.block) || regionOf(o)?.region === "full"
+  for (const o of s.overlays) if (regionOf(o)?.region === "frame") o.placement = { x: 0, y: 0, w: width, h: height }
+  // TP9: a custom animation is drawn over the whole frame by its own design; the gates judge where its words land
+  for (const o of s.overlays) if (o.block?.blockId === "custom") o.placement = { x: 0, y: 0, w: width, h: height }
+  const scenes = s.overlays.filter(covers)
   const frame = sceneFrame({ width, height }, safe, { w, h })
   for (const scene of scenes) scene.placement = frame.content
   // A definition has its own place, above the caption row or at the top, wherever no face is; with none free
@@ -403,11 +414,26 @@ function layOut(s) {
   // Footage over the whole frame hides the speaker, so a caption there has no face to clear
   const footage = s.overlays.filter((o) => !o.block)
   const hidden = (item) => footage.some((o) => o.at <= item.at && item.end <= o.end)
-  const placeable = [...s.captions, ...s.overlays.filter((o) => o.block && !isSceneBlock(o.block) && o.block.blockId !== "term")]
+  const placeable = [...s.captions, ...s.overlays.filter((o) => o.block && !covers(o) && regionOf(o)?.region !== "frame" && o.block.blockId !== "term" && o.block.blockId !== "custom")]
+  // A caption look that sits in the middle or at the top (TP7) says so in look.caption.place; none, and the recipe's row as before
+  const place = s.project.look?.caption?.place
+  const captionPrefer = place === "middle" ? Math.round(((height - h) / 2 / height) * 100) : place === "top" ? 0 : undefined
+  const captionIds = new Set(s.captions.map((c) => c.clip))
   // Text behind the speaker may sit on the face: the matte puts the speaker in front of it
   const items = placeable.map((item) => {
     const covered = onScene(item)
-    return { id: item.clip, at: item.at, end: item.end, w, h, faces: item.behind || covered || hidden(item) ? [] : facesDuring(s, item.at, item.end), ...(item.placement ? { fixed: item.placement } : covered ? { fixed: frame.row } : {}) }
+    const region = regionOf(item)
+    const faces = item.behind || covered || hidden(item) ? [] : facesDuring(s, item.at, item.end)
+    if (region && !item.placement && !covered) {
+      const v = item.block.variables
+      // A callout marks a point the person gave, or else the first face it sees
+      // TP9: a box the person drew (thousandths of the frame) is placed exactly, as pixels of this canvas
+      if (region.region === "point" && v.mark) return { id: item.clip, at: item.at, end: item.end, w: 0, h: 0, region: "point", fixed: markPixels(v.mark, { width, height }), faces: [] }
+      const point = region.region === "point" ? (v.point ?? (faces[0] ? { x: Math.round(faces[0].x + faces[0].w / 2), y: Math.round(faces[0].y + faces[0].h / 2) } : undefined)) : undefined
+      const across = region.region === "corner" ? width : width - (safe.left ?? 0) - (safe.right ?? 0)
+      return { id: item.clip, at: item.at, end: item.end, w: Math.floor(across * region.w), h: Math.floor(height * region.h), region: region.region, ...(point ? { point } : {}), ...(v.corner ? { corner: v.corner } : {}), faces: region.region === "point" ? [] : faces }
+    }
+    return { id: item.clip, at: item.at, end: item.end, w, h, faces, ...(item.placement ? { fixed: item.placement } : covered ? { fixed: frame.row } : {}), ...(captionPrefer !== undefined && captionIds.has(item.clip) ? { prefer: captionPrefer } : {}) }
   })
   const { placements, issues } = solveLayout(items, { canvas: { width, height }, safe, prefer: rules.prefer })
   for (const item of placeable) item.placement = placements[item.clip]
@@ -449,6 +475,7 @@ export function solve(project, rawIndex = {}, overrides = {}) {
     zooms: [],
     captions: [],
     mattes: [],
+    adjustments: [],
     issues: [],
     duration: 0,
     issue(code, details) {
@@ -462,6 +489,7 @@ export function solve(project, rawIndex = {}, overrides = {}) {
   placeRest(s)
   layOut(s)
   checkBudget(s)
-  const { picture, audio, overlays, zooms, captions, mattes, issues, duration, fps } = s
-  return { fps, duration, picture, audio, overlays, zooms, captions, mattes, issues }
+  const { picture, audio, overlays, zooms, captions, mattes, issues, duration, fps, adjustments } = s
+  // An adjustment's key exists only when one is used, so today's timelines are the objects they were (EH-59)
+  return { fps, duration, picture, audio, overlays, zooms, captions, mattes, issues, ...(adjustments.length ? { adjustments } : {}) }
 }

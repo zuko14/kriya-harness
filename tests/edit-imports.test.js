@@ -58,7 +58,7 @@ test("ET-IMP-01: the Host reaches no coding-loop file, and src/edit adds no pack
 
 // The lazy lines behind the switch: `kriya edit`, the Studio row's route (ED6), and the
 // daemon's handover of a job from Kriya (ED14)
-const LAZY = new Set(["bin/kriya.js ../src/edit/runtime/cli.js", "plugins/edit/index.js ../../src/edit/host/client.js", "src/daemon.js ./edit/host/client.js", "src/daemon.js ./edit/host/watch.js"])
+const LAZY = new Set(["bin/kriya.js ../src/edit/runtime/cli.js", "plugins/edit/index.js ../../src/edit/host/client.js", "src/daemon.js ./edit/host/client.js", "src/daemon.js ./edit/host/watch.js", /* TP11: clip numbers and the features answer, only with KRIYA_EDIT on and editing advertised */ "src/daemon.js ./edit/host/clips.js", "src/daemon.js ./edit/runtime/fetch.js"])
 
 test("ET-IMP-01: only the lazy lines in bin/kriya.js, plugins/edit and the daemon reach src/edit from outside it", () => {
   for (const dir of ["src", "plugins", "scripts", "bin"]) {

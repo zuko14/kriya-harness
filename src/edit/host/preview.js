@@ -5,6 +5,7 @@
 
 import { busOf, duckEnvelope } from "../core/audio.js"
 import { compile, wholeSegment } from "../core/plan.js"
+import { EFFECTS as FX, valuesOf } from "../core/effects.js"
 import { captionComposition } from "../engine/captions.js"
 import { ENGINE_VERSION } from "../engine/index.js"
 import { compositionFor } from "../engine/motion.js"
@@ -25,13 +26,15 @@ const depthOf = (tile) => (tile.node.behind === true && !tile.front ? 0 : tile.k
  * @param {object} index
  * @param {{ runtimeVersion: string, tiles?: Map<string, object> }} options tiles: where to remember documents for tileDocument()
  */
-export function previewOf(project, index, { runtimeVersion, tiles }) {
-  const plan = compile(project, index, { engineVersion: ENGINE_VERSION, runtimeVersion })
+export function previewOf(project, index, { runtimeVersion, tiles, fonts }) {
+  const plan = compile(project, index, { engineVersion: ENGINE_VERSION, runtimeVersion, ...(fonts ? { fonts } : {}) })
   const whole = wholeSegment(plan)
   const picture = whole.node.picture.map((item) => {
     const frame = item.effects.find((e) => e.type === "frame")
     const grade = item.effects.find((e) => e.type === "grade")
     const lut = item.effects.some((e) => e.type === "lut") || grade?.match !== undefined
+    // TP5: each registry effect the monitor can approximate, as a CSS filter; the rest it leaves to the render
+    const css = cssOf(item.effects)
     return {
       asset: item.asset,
       at: item.at,
@@ -40,6 +43,7 @@ export function previewOf(project, index, { runtimeVersion, tiles }) {
       ...(grade ? { grade: Object.fromEntries(["gamma", "saturation", "lift", "gain", "ev", "temperature", "vibrance", "vignette"].filter((k) => grade[k] !== undefined).map((k) => [k, grade[k]])) } : {}),
       // A LUT or a colour match isn't drawn by the monitor; it says so
       ...(lut ? { lut: true } : {}),
+      ...(css.length ? { fx: css } : {}),
       ...(item.enter ? { enter: { kind: item.enter.kind, duration: item.enter.duration, asset: item.enter.from.asset, source: item.enter.from.in } } : {}),
     }
   })
@@ -83,11 +87,17 @@ export function previewOf(project, index, { runtimeVersion, tiles }) {
     canvas: plan.canvas,
     duration: plan.duration,
     picture,
+    ...(plan.adjustments?.length ? { adjust: plan.adjustments.map((a) => ({ at: a.at, end: a.end, fx: cssOf([a.fx]) })).filter((a) => a.fx.length) } : {}),
     tiles: drawn.map((tile) => ({ key: tile.key, kind: tile.kind, at: tile.at, end: tile.end, depth: depthOf(tile) })),
     audio: { items, ...(duck ? { duck: { rate: DUCK_RATE, curve: [...duckEnvelope(duck.speech, { duration: plan.duration, depth: duck.depth, attack: duck.attack, release: duck.release, rate: DUCK_RATE })].map((v) => Math.round(v * 1e4) / 1e4) } } : {}) },
     beats: [...new Set(beats)].sort((a, b) => a - b),
     keys: plan.keys,
   }
+}
+
+function cssOf(effects) {
+  // TP9: an effect inside a drawn region isn't a filter on the whole picture, so the monitor leaves it to the render
+  return effects.filter((e) => e.type === "fx" && FX[e.id] && !e.region).map((e) => FX[e.id].preview(valuesOf(e.id, e.params).values ?? {})).filter(Boolean)
 }
 
 /** A tile's own document, as the render draws it, with the monitor's time listener. Null when unknown. */
