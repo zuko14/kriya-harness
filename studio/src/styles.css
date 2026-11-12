@@ -465,3 +465,234 @@ label.style-label { cursor: pointer; }
 .proposal.plan.expanded .plan-actions { bottom: 0; margin: 4px -22px 0; padding: 12px 22px 16px; border-radius: 0; }
 /* A shorter box to write in, so a plan has room above it */
 .composer .chat-input { min-height: 56px; }
+
+/* "Watch the Director edit" and the craft upgrades (editing.livePreview): none of these elements exist with it off */
+.btn.small { font-size: 13px; padding: 0 12px; }
+.make-row { display: flex; gap: 8px; align-items: stretch; }
+.make-row > .btn.primary { flex: 1 1 auto; }
+.btn.replay-open { flex: 0 1 auto; font-size: 13px; white-space: normal; line-height: 1.2; text-align: center; padding: 4px 12px; }
+.director-strip { display: grid; gap: 8px; min-width: 0; }
+.director-strip .stages { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.director-strip .stage { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 9px 3px 7px; border-radius: 999px; color: var(--ink-2); background: var(--hover); transition: background-color 0.25s, color 0.25s; }
+.director-strip .stage .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--edge); flex: none; }
+.director-strip .stage[data-state="done"] { color: var(--ink); }
+.director-strip .stage[data-state="done"] .dot { background: var(--teal); }
+.director-strip .stage[data-state="active"] { color: var(--on-teal); background: var(--teal); font-weight: 600; }
+.director-strip .stage[data-state="active"] .dot { background: var(--on-teal); animation: kriya-pulse 1.1s ease-in-out infinite; }
+@keyframes kriya-pulse { 50% { opacity: 0.35; transform: scale(0.75); } }
+.director-strip .stage-line { margin: 0; font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.director-strip .stage-changes { margin: 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); display: grid; gap: 2px; overflow-wrap: anywhere; }
+.director-strip .stage-changes:empty, .director-strip .stage-gates:empty { display: none; }
+.director-strip .stage-gates { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.director-strip .gate { font: 11px/1 ui-monospace, "JetBrains Mono", monospace; padding: 4px 6px; border-radius: 6px; background: var(--hover); color: var(--ink-2); }
+.director-strip .gate.passed { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--ink); }
+.director-strip .gate.failed { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--ink); }
+.director-strip .gate.note { background: color-mix(in srgb, var(--saffron) 18%, transparent); color: var(--ink); }
+.director-strip .follow { justify-self: start; }
+.director-strip [hidden] { display: none; }
+
+.monitor-frame.live { position: relative; }
+.director-badge { position: absolute; top: 10px; left: 10px; z-index: 3; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; background: var(--saffron); color: #fff; box-shadow: 0 2px 10px rgb(0 0 0 / 0.35); pointer-events: none; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.director-badge[hidden] { display: none; }
+.wipe { position: absolute; z-index: 2; pointer-events: none; }
+.wipe[hidden] { display: none; }
+.wipe-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35); }
+.wipe-grip { position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; background: rgb(255 255 255 / 0.92); box-shadow: 0 2px 12px rgb(0 0 0 / 0.45); cursor: ew-resize; pointer-events: auto; touch-action: none; }
+.wipe-grip::before, .wipe-grip::after { content: ""; position: absolute; top: 50%; width: 0; height: 0; margin-top: -6px; border: 6px solid transparent; }
+.wipe-grip::before { left: 7px; border-right-color: #1f2a2b; }
+.wipe-grip::after { right: 7px; border-left-color: #1f2a2b; }
+.wipe-grip:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.wipe-tag { position: absolute; bottom: 10px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; background: rgb(0 0 0 / 0.55); color: #fff; }
+.wipe-tag.raw { left: 10px; }
+.wipe-tag.cut { right: 10px; }
+.level { display: inline-block; width: 52px; height: 10px; border-radius: 5px; background: rgb(255 255 255 / 0.16); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28); overflow: hidden; }
+.level-fill { display: block; height: 100%; width: 0; background: #6cc0b8; transition: width 0.08s linear; }
+.level.hot .level-fill { background: #e7a46d; }
+
+.replay { display: grid; gap: 8px; margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--sheet); color: var(--ink); box-shadow: inset 0 0 0 1px var(--edge); }
+.replay[hidden], .replay [hidden] { display: none; }
+.replay-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.replay-title { margin: 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.replay-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.replay-steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.replay-steps .step { flex: 1 1 auto; }
+.replay-detail { margin: 0; font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
+
+.look-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.look-card { display: grid; gap: 4px; padding: 4px 4px 6px; min-height: 44px; min-width: 44px; border: 0; border-radius: 10px; background: var(--sheet); color: var(--ink); box-shadow: inset 0 0 0 1px var(--edge); font: inherit; font-size: 12px; cursor: pointer; text-align: center; }
+.look-card[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--teal); background: color-mix(in srgb, var(--teal) 10%, var(--sheet)); }
+.look-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.look-sketch { width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 6px; display: block; background: #22302f; }
+
+.scorecard summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; cursor: pointer; }
+.score-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.score-sum { font-size: 14px; color: var(--ink); }
+.score-body { display: grid; gap: 8px; padding-top: 6px; }
+.score-gates, .score-repairs { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.score-row { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: baseline; padding: 6px 8px; border-radius: 8px; background: var(--hover); }
+.score-row .score-msg { grid-column: 1 / -1; font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.score-row .score-status { font-size: 12px; font-weight: 600; }
+.score-row.passed .score-status { color: var(--teal); }
+.score-row.failed .score-status { color: var(--error); }
+.score-row.note .score-status { color: var(--saffron); }
+.score-head { margin: 4px 0 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.score-repairs li { font-size: 13px; overflow-wrap: anywhere; }
+
+.timeline.rich .lanes-wrap { position: relative; }
+.tl-tip { position: absolute; top: 4px; display: grid; justify-items: center; gap: 2px; min-width: 70px; padding: 3px; border-radius: 8px; font: 11px/1.3 ui-monospace, "JetBrains Mono", monospace; background: var(--ink); color: var(--paper); box-shadow: 0 4px 14px rgb(0 0 0 / 0.3); pointer-events: none; z-index: 2; }
+.tl-frame { display: block; width: 96px; height: 54px; border-radius: 5px; background: #000; }
+.tl-frame[hidden] { display: none; }
+.tl-tip[hidden] { display: none; }
+
+/* The keyboard shortcuts sheet and the scorecard's "show me" (editing.livePreview) */
+.picker.shortcuts:not([open]) { display: none; }
+.shortcuts .keys-group { display: grid; gap: 4px; }
+.shortcuts .keys-head { margin: 4px 0 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.shortcuts .keys { display: grid; grid-template-columns: minmax(96px, auto) 1fr; gap: 6px 14px; margin: 0; align-items: baseline; }
+.shortcuts dd { margin: 0; font-size: 14px; }
+.shortcuts kbd { display: inline-block; min-width: 24px; padding: 1px 6px; border-radius: 6px; font: 12px/1.6 ui-monospace, "JetBrains Mono", monospace; text-align: center; background: var(--hover); box-shadow: inset 0 -1px 0 var(--edge), inset 0 0 0 1px var(--edge); }
+.score-row .score-show { grid-column: 1 / -1; justify-self: start; }
+.btn.keys-open { padding: 0; width: 44px; font-weight: 700; }
+
+
+/* ════════════ The Studio's material (2026-11-12, owner in chat): glass over cloth, the harness's own (plugins/brand/DESIGN.md) ════════════
+   Panes of tinted glass over a lit, grained ground, in the same colours. Not everything is glass: the monitor is a solid, neutral
+   grey bay, because a tinted or blurred surround shifts how a person judges colour; the timeline's lanes stay flat for reading.
+   Glass is drawn on a ::before behind each pane, never on the pane, so the Plan Card's fixed sheet keeps working.
+   Rules: no gradient but the ground's light; no all-caps labels; monospace only for data (timecodes, ids, keys). */
+@font-face { font-family: "KS Geist"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/geist.woff2") format("woff2"); }
+@font-face { font-family: "KS Fraunces"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/fraunces.woff2") format("woff2"); }
+@font-face { font-family: "KS JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/fonts/jetbrains-mono.woff2") format("woff2"); }
+:root {
+  --font-ui: "KS Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "KS Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-mono: "KS JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 16px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --glass: rgb(251 248 243 / 0.55);
+  --glass-thick: rgb(253 251 247 / 0.76);
+  --blur: blur(28px) saturate(170%);
+  --rim: inset 0 1px 0 0 rgb(255 255 255 / 0.9), inset 0 0 0 0.5px rgb(19 41 43 / 0.1);
+  --well: rgb(19 41 43 / 0.045);
+  --chip: rgb(255 255 255 / 0.7);
+  --chip-hover: rgb(255 255 255 / 0.92);
+  --shade: rgb(19 41 43 / 0.08);
+  --lift: 0 1px 1px rgb(19 41 43 / 0.03), 0 6px 16px -4px rgb(19 41 43 / 0.08), 0 22px 44px -18px rgb(19 41 43 / 0.14);
+  --lift-high: 0 2px 4px rgb(19 41 43 / 0.05), 0 18px 40px -10px rgb(19 41 43 / 0.2), 0 44px 88px -30px rgb(19 41 43 / 0.28);
+  --ground-a: rgb(31 99 98 / 0.12);
+  --ground-b: rgb(180 98 47 / 0.09);
+  --bay: #262626; /* the monitor's surround: neutral grey, no hue */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass: rgb(18 32 33 / 0.5);
+    --glass-thick: rgb(21 37 38 / 0.74);
+    --blur: blur(28px) saturate(140%);
+    --rim: inset 0 1px 0 0 rgb(255 255 255 / 0.075), inset 0 0 0 0.5px rgb(242 234 223 / 0.1);
+    --well: rgb(242 234 223 / 0.05);
+    --chip: rgb(242 234 223 / 0.075);
+    --chip-hover: rgb(242 234 223 / 0.11);
+    --shade: rgb(0 0 0 / 0.35);
+    --lift: 0 1px 1px rgb(0 0 0 / 0.25), 0 10px 28px -6px rgb(0 0 0 / 0.42), 0 28px 56px -22px rgb(0 0 0 / 0.5);
+    --lift-high: 0 2px 4px rgb(0 0 0 / 0.3), 0 20px 48px -10px rgb(0 0 0 / 0.55), 0 48px 96px -30px rgb(0 0 0 / 0.6);
+    --ground-a: rgb(108 192 184 / 0.1);
+    --ground-b: rgb(231 164 109 / 0.06);
+    --bay: #1f1f1f;
+  }
+}
+/* Where glass can't be drawn or isn't wanted, panes are solid; with more contrast, every pane gets a solid edge */
+@media (prefers-reduced-transparency: reduce) { :root { --glass: var(--sheet); --glass-thick: var(--sheet); --blur: none; } }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { :root { --glass: var(--sheet); --glass-thick: var(--sheet); } }
+@media (prefers-contrast: more) { :root { --rim: inset 0 0 0 1px var(--ink-2); --glass: var(--sheet); --glass-thick: var(--sheet); } }
+
+/* The ground: paper, a fine grain, a teal light from the top and saffron warmth from the bottom right */
+body {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background-color: var(--paper);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%27180%27%20height%3D%27180%27%3E%3Cfilter%20id%3D%27g%27%3E%3CfeTurbulence%20type%3D%27fractalNoise%27%20baseFrequency%3D%27.85%27%20numOctaves%3D%272%27%20stitchTiles%3D%27stitch%27%2F%3E%3CfeColorMatrix%20values%3D%270%200%200%200%20.5%200%200%200%200%20.5%200%200%200%200%20.5%20.09%200%200%200%200%27%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D%27100%25%27%20height%3D%27100%25%27%20filter%3D%27url%28%23g%29%27%2F%3E%3C%2Fsvg%3E"), radial-gradient(80vmax 60vmax at 30% -10%, var(--ground-a), transparent 62%), radial-gradient(70vmax 55vmax at 100% 100%, var(--ground-b), transparent 60%);
+  background-attachment: fixed;
+}
+h1 { font-family: var(--font-display); font-weight: 520; font-size: 34px; line-height: 1.15; letter-spacing: -0.022em; font-variation-settings: "opsz" 72, "SOFT" 50; }
+h2 { font-size: 13.5px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink-2); }
+:is(.sb-head, .style-head, .openings-head, .opening-tag, .replay-title, .score-title, .score-head, .keys-head, .msg .who, .sentence .tag, .wipe-tag) { text-transform: none; letter-spacing: 0.005em; }
+:is(.label-mono, .time, .time-link, .scene-time, .badge, .chip.mention, .director-strip .gate, .tl-tip, .shortcuts kbd, .score-id, .order-n) { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+
+/* The bar: a thin pane along the top, the name in Kriya's display face */
+.bar { position: sticky; top: 0; z-index: 20; background: transparent; border-bottom: 0; padding: 10px 16px; gap: 14px; }
+.bar::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: inset 0 -0.5px 0 var(--edge); pointer-events: none; }
+.bar .brand { font-family: var(--font-display); font-weight: 640; font-size: 19px; letter-spacing: -0.015em; font-variation-settings: "opsz" 36, "SOFT" 100; }
+.bar .title { font-weight: 600; letter-spacing: -0.01em; }
+.bar .project-name { padding-left: 14px; box-shadow: inset 1px 0 0 var(--edge); }
+/* Modes and tabs: a well, the chosen one a raised chip on it */
+.modes, .tabs { gap: 2px; padding: 3px; border-radius: 14px; background: var(--well); box-shadow: inset 0 0 0 0.5px var(--edge); }
+.modes .btn, .tab { border-radius: 11px; background: transparent; box-shadow: none; color: var(--ink-2); font-weight: 600; transition: background-color 0.2s var(--ease), color 0.2s var(--ease), box-shadow 0.2s var(--ease); }
+.modes .btn { min-width: 84px; }
+.modes .btn:hover, .tab:hover { background: var(--chip); color: var(--ink); }
+.modes .btn[aria-pressed="true"], .tab[aria-selected="true"] { background: var(--chip-hover); color: var(--ink); box-shadow: var(--rim), 0 1px 2px var(--shade), 0 6px 14px -8px var(--shade); }
+
+/* Panes */
+.panel { position: relative; background: transparent; box-shadow: none; border-radius: var(--radius); }
+.panel::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--glass-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--rim), var(--lift); pointer-events: none; }
+.grid { gap: 14px; padding: 14px; }
+.banner { padding: 14px 14px 0; }
+.banner > .note { border-radius: 14px; padding: 11px 16px; background: var(--glass-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--rim), inset 3px 0 0 var(--teal), var(--lift); }
+/* The monitor's bay: solid neutral grey, never glass; the picture sits on it with a soft shadow, its corners whole */
+.panel.area-monitor { background: var(--bay); color: #ececec; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), inset 0 0 0 0.5px rgb(255 255 255 / 0.06), var(--lift); }
+.panel.area-monitor::before { content: none; }
+.monitor { border-radius: 2px; box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 24px 48px -20px rgb(0 0 0 / 0.8); }
+.transport { margin-top: 14px; padding: 8px; border-radius: 14px; background: rgb(255 255 255 / 0.035); box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.08); }
+.area-monitor .time { font-size: 13px; color: #f2f2f2; letter-spacing: 0.01em; }
+.area-monitor .chip { background: rgb(255 255 255 / 0.1); color: #d8d8d8; }
+.area-monitor :is(.btn:not(.primary), .marks .btn) { background: rgb(255 255 255 / 0.07); color: #efefef; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07), inset 0 0 0 0.5px rgb(255 255 255 / 0.14); }
+.area-monitor :is(.btn:not(.primary), .marks .btn):hover { background: rgb(255 255 255 / 0.13); }
+.area-monitor .btn[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px #6cc0b8, 0 0 0 3px rgb(108 192 184 / 0.22); }
+.area-monitor .field { background-color: rgb(255 255 255 / 0.07); color: #efefef; box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.14); }
+.area-monitor .inline { color: #dcdcdc; }
+
+/* Controls: chips with a rim; teal is action; a press gives a little */
+.btn { border-radius: 12px; background: var(--chip); box-shadow: var(--rim), 0 1px 2px var(--shade); font-weight: 560; letter-spacing: -0.005em; transition: background-color 0.2s var(--ease), box-shadow 0.2s var(--ease), color 0.2s var(--ease), transform 0.14s var(--ease); }
+.btn:hover { background: var(--chip-hover); }
+.btn:active:not(:disabled) { transform: translateY(0.5px) scale(0.985); }
+.btn.primary { background: var(--teal); color: var(--on-teal); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22), 0 1px 2px var(--shade), 0 10px 22px -12px var(--teal); }
+.btn.primary:hover { background: color-mix(in srgb, var(--teal) 88%, var(--on-teal)); }
+.btn.primary:disabled { box-shadow: none; }
+.btn.ghost { background: transparent; box-shadow: none; }
+.btn[aria-pressed="true"] { box-shadow: var(--rim), inset 0 0 0 1.5px var(--teal), 0 0 0 3px color-mix(in srgb, var(--teal) 16%, transparent); }
+.field { border-radius: 12px; background-color: var(--well); box-shadow: inset 0 0 0 0.5px var(--edge), inset 0 1px 2px var(--shade); transition: box-shadow 0.2s var(--ease), background-color 0.2s var(--ease); }
+.field:hover { background-color: var(--chip); }
+.field:focus, .field:focus-visible { outline: none; background-color: var(--chip-hover); box-shadow: inset 0 0 0 1px var(--teal), 0 0 0 4px color-mix(in srgb, var(--teal) 18%, transparent); }
+.chip { font-weight: 560; }
+.progress { background: var(--well); }
+
+/* The Kriya panel: its footer and the box to write in are thicker glass over what scrolls under them */
+.make-footer, .composer, .plan-actions { background: var(--glass-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: inset 0 0.5px 0 var(--edge); }
+.make-footer { border-radius: 0 0 var(--radius) var(--radius); }
+.composer { border-radius: 0 0 var(--radius) var(--radius); }
+.msg { border-radius: 14px; background: var(--chip); box-shadow: var(--rim); padding: 10px 12px; }
+.msg.you { background: color-mix(in srgb, var(--teal) 15%, var(--chip)); border-bottom-right-radius: 4px; }
+.toggles .inline { background: var(--chip); box-shadow: var(--rim), 0 1px 2px var(--shade); }
+.look-card, .clip-list button, .sb-card { background: var(--chip); box-shadow: var(--rim), 0 1px 2px var(--shade); border-radius: 12px; transition: background-color 0.2s var(--ease), box-shadow 0.2s var(--ease); }
+.look-card:hover, .clip-list button:hover { background: var(--chip-hover); }
+.look-card[aria-pressed="true"], .clip-list button[aria-pressed="true"] { box-shadow: var(--rim), inset 0 0 0 1.5px var(--teal), 0 0 0 3px color-mix(in srgb, var(--teal) 16%, transparent); }
+.director-strip .stage { background: var(--well); }
+.score-row { background: var(--well); border-radius: 10px; }
+.replay { background: var(--glass-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--rim), var(--lift); border-radius: 14px; }
+.picker { border-radius: 20px; background: var(--glass-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--rim), var(--lift-high); padding: 22px; }
+.picker::backdrop { background: rgb(10 18 19 / 0.38); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.mention-list { background: var(--glass-thick); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--rim), var(--lift); }
+.scope { background: #141414; border-radius: 10px; }
+.final-film { border-radius: 10px; }
+/* The timeline: flat lanes inside the pane, rounded so they sit in it */
+.lanes { border-radius: 8px; }
+.lane-labels { font-weight: 550; }
+.home h1 { margin-top: 24px; }
+/* Edit mode: the bay fills its row beside the bin and transcript, the picture centred in it, the transport at its foot */
+@media (min-width: 761px) {
+  .workspace[data-mode="edit"] .area-monitor { align-self: stretch; display: flex; flex-direction: column; }
+  .workspace[data-mode="edit"] .area-monitor > .monitor-frame { flex: 1 1 auto; }
+}

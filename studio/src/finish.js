@@ -4,6 +4,7 @@
 // Handoff writes the cut for another editor (OTIO, FCPXML, EDL, SRT) beside the project.
 
 import { api, clear, h } from "./dom.js"
+import { timecode } from "./time.js"
 
 const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b
 
@@ -26,12 +27,51 @@ export function scopesOf(image, columns = 128) {
  */
 const VERDICT = { delivered: "Checked", delivered_with_notes: "Checked, with notes", blocked: "Needs you: a check failed", not_checked: "Not checked" }
 
+// The gates' names (QUALITY_GATES §2), for the scorecard: the Host sends ids, statuses and its own messages
+export const GATE_NAMES = {
+  "QG-01": "Playable and to spec",
+  "QG-02": "Length",
+  "QG-03": "Sync",
+  "QG-04": "Round-trip speech",
+  "QG-05": "Cut hygiene",
+  "QG-06": "Loudness",
+  "QG-07": "Picture health",
+  "QG-08": "Layout",
+  "QG-09": "Legibility",
+  "QG-10": "Copy",
+  "QG-11": "Motion",
+  "QG-12": "Brief",
+  "QG-13": "Rights",
+  "QG-14": "Blind reviewer",
+  "QG-15": "Assembly",
+  "QG-16": "Reference fit",
+}
+const SAID = { passed: "Passed", failed: "Failed", not_checked: "Not checked", not_applicable: "Not applicable" }
+
+/**
+ * The scorecard of a finished make, from its own result: each gate as it ran, the ladder's repairs and the
+ * Director's watch rounds. Nothing is counted that the make didn't report.
+ * @returns {{ summary: string, gates: { id: string, name: string, said: string, status: string, message: string }[], repairs: string[] } | null}
+ */
+export function scorecardOf(result) {
+  if (!result || !Array.isArray(result.gates) || !result.gates.length) return null
+  const gates = result.gates.map((g) => ({ id: String(g.id), name: GATE_NAMES[g.id] ?? String(g.id), status: g.status === "failed" && g.severity === "note" ? "note" : String(g.status), said: g.status === "failed" && g.severity === "note" ? "Note" : (SAID[g.status] ?? String(g.status)), message: typeof g.message === "string" ? g.message : "", ...(Number.isFinite(g.at) && g.at >= 0 && g.status === "failed" ? { at: g.at } : {}) }))
+  const passed = gates.filter((g) => g.status === "passed").length
+  const failed = gates.filter((g) => g.status === "failed").length
+  const repairs = [
+    ...(result.repairs ?? []).map((a) => `Repair round ${a.round}: ${(a.fixes ?? []).map((f) => f.why ?? f.kind).join("; ") || "no fix"}${a.accepted ? ", kept" : `, not kept${a.reason ? ` (${a.reason})` : ""}`}.`),
+    ...(result.watch?.rounds ?? []).map((r) => `Watch round ${r.round}: ${(r.fixes ?? []).join(", ") || "no fix"}${r.kept ? ", kept" : `, not kept${r.reason ? ` (${r.reason})` : ""}`}.`),
+  ]
+  const rest = gates.length - passed - failed
+  return { summary: `${passed} passed, ${failed} failed${rest ? `, ${rest} not checked or not applicable` : ""}`, gates, repairs }
+}
+
 /**
  * The final cut (2026-11-09, from use): the real rendered film, captions, look, music and sound
  * included, watched here before downloading. The preview monitor shows only the picture.
  * @param {{ root: HTMLElement, finalRoot: HTMLElement, pixels: () => ImageData | null, project: () => object, onAdjust: () => void }} options
  */
-export function createFinish({ root, finalRoot, pixels, project, onAdjust = () => {} }) {
+export function createFinish({ root, finalRoot, pixels, project, onAdjust = () => {}, scorecard = false, head = () => null, onShow = () => {} }) {
   const film = h("video", { class: "final-film", controls: true, preload: "metadata", playsinline: true, "aria-label": "The final cut" })
   const filmNote = h("p", { class: "note", role: "status" })
   const filmPick = h("select", { id: "final-pick", class: "field select", "aria-label": "Which film", onchange: () => showFilm() })
@@ -117,7 +157,31 @@ export function createFinish({ root, finalRoot, pixels, project, onAdjust = () =
       handoffStatus.textContent = error.message
     }
   }
+  // The quality scorecard (editing.livePreview): the latest make's checks and repairs, as it reported them
+  const card = scorecard ? h("details", { class: "panel scorecard" }, h("summary", {}, h("span", { class: "score-title" }, "Quality checks"), h("span", { class: "score-sum" }, "No make yet"))) : null
+  const cardBody = scorecard ? h("div", { class: "score-body" }) : null
+  card?.append(cardBody)
+  function showCard(all) {
+    if (!card) return
+    const made = all.filter((j) => j.project === project().id && j.kind === "make" && j.status === "done").at(-1)
+    let result = null
+    try {
+      result = made ? JSON.parse(made.output) : null
+    } catch {}
+    const score = scorecardOf(result)
+    // A check's moment is a time in the film that make rendered: offered only while the cut is still that one
+    const current = result?.head != null && result.head === head()
+    card.querySelector(".score-sum").textContent = score ? score.summary : "No make yet"
+    clear(cardBody)
+    if (!score) return cardBody.append(h("p", { class: "note" }, "Make it in Brief and each check the film went through is listed here."))
+    cardBody.append(
+      h("ul", { class: "score-gates" }, score.gates.map((g) => h("li", { class: `score-row ${g.status}` }, h("span", { class: "score-id label-mono" }, g.id), h("span", { class: "score-name" }, g.name), h("span", { class: "score-status" }, g.said), g.message ? h("span", { class: "score-msg" }, g.message) : null, current && g.at !== undefined ? h("button", { type: "button", class: "btn small score-show", onclick: () => onShow(g.at) }, `Show ${g.id} at ${timecode(g.at, project().canvas.fps)}`) : null))),
+      ...(score.repairs.length ? [h("p", { class: "score-head" }, "Repairs"), h("ul", { class: "score-repairs" }, score.repairs.map((line) => h("li", {}, line)))] : []),
+      h("p", { class: "note small" }, "Measured on the rendered master by code, never by a model's say-so."),
+    )
+  }
   root.append(
+    ...(card ? [card] : []),
     h("section", { class: "panel scopes", "aria-label": "Scopes" }, h("h2", {}, "Scopes"), h("div", { class: "scope-row" }, h("figure", {}, histogram, h("figcaption", {}, "Histogram")), h("figure", {}, waveform, h("figcaption", {}, "Waveform"))), h("p", { class: "note" }, "Measured on the preview: 8-bit, from the proxy.")),
     h(
       "section",
@@ -166,6 +230,7 @@ export function createFinish({ root, finalRoot, pixels, project, onAdjust = () =
   async function refresh() {
     refreshFilms().catch((error) => (filmNote.textContent = error.message))
     const { jobs: all } = await api("GET", "/jobs")
+    showCard(all)
     clear(jobs)
     for (const job of all.filter((j) => j.project === project().id && j.kind === "render").reverse().slice(0, 8)) {
       const name = job.output ? job.output.split(/[\\/]/).at(-1) : null

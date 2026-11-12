@@ -4,7 +4,7 @@
 // alternate pieces, so the next piece is already seeked when a cut arrives. Nothing
 // is rendered: this is a preview of the plan, and it says so.
 
-import { createSound, createTileLayer } from "./live.js"
+import { createMeter, createSound, createTileLayer } from "./live.js"
 import { blurFilter, frameRects, gainOf, gradeFilter, itemAt, PLATE, transitionAt, transitionMix } from "./preview.js"
 import { pieceAt, sourceAt } from "./program.js"
 import { FLICKS, frameFlicks, snap } from "./time.js"
@@ -32,7 +32,10 @@ export function createMonitor({ canvas, urlOf, assetOf, onTime, onRate, tileUrl 
   // The live preview (TP3): the draft plan's picture, tiles and sound, or null as before
   let live = null
   const tiles = tileUrl ? createTileLayer({ canvas, urlOf: tileUrl }) : null
-  const sound = tileUrl ? createSound({ urlOf }) : null
+  // The level meter (editing.livePreview): the take's sound and the plan's sounds on their way out
+  const meter = tileUrl ? createMeter() : null
+  const sound = tileUrl ? createSound({ urlOf, meter }) : null
+  let wipe = null // the compare wipe: the raw frame left of this fraction of the width, the cut right of it
   const scratch = tileUrl ? [document.createElement("canvas"), document.createElement("canvas")] : null
   const held = new Map() // "<asset>@<source>" → the held frame under a transition, at the file's own size
 
@@ -174,6 +177,16 @@ export function createMonitor({ canvas, urlOf, assetOf, onTime, onRate, tileUrl 
     ctx.fillRect(0, 0, width, height)
     if (live && video?.videoWidth && liveFits()) {
       drawLive(video, at)
+      // Compare: the same frame as it was shot, covering the frame with no look, framing or text, left of the handle
+      if (wipe !== null) {
+        const cover = Math.max(width / video.videoWidth, height / video.videoHeight) * zoom
+        ctx.save()
+        ctx.beginPath()
+        ctx.rect(0, 0, width * wipe, height)
+        ctx.clip()
+        ctx.drawImage(video, (width - video.videoWidth * cover) / 2, (height - video.videoHeight * cover) / 2, video.videoWidth * cover, video.videoHeight * cover)
+        ctx.restore()
+      }
       shown = { asset: piece.asset, source }
     } else if (video?.videoWidth) {
       // Cover the frame, as the render crops to the canvas; zoom from the centre
@@ -190,7 +203,10 @@ export function createMonitor({ canvas, urlOf, assetOf, onTime, onRate, tileUrl 
       for (const inset of [0.05, 0.1]) ctx.strokeRect(width * inset, height * inset, width * (1 - 2 * inset), height * (1 - 2 * inset))
       ctx.setLineDash([])
     }
-    if (tiles) tiles.sync(liveFits() ? live.tiles : [], at, live?.output)
+    if (tiles) {
+      tiles.sync(liveFits() ? live.tiles : [], at, live?.output)
+      tiles.clipLeft(wipe !== null && liveFits() ? wipe : null)
+    }
   }
 
   const blank = () => {
@@ -252,6 +268,7 @@ export function createMonitor({ canvas, urlOf, assetOf, onTime, onRate, tileUrl 
       video.currentTime = seconds(piece, sourceAt(piece, from))
       video.playbackRate = rate
       video.muted = false
+      meter?.join(video)
       // The voice at its level from the plan (TP3); a level above the take's own can't be played louder
       const voice = live?.audio.items.find((item) => item.bus === "dialogue" && item.asset === piece.asset && item.at < piece.end && piece.at < item.end)
       if (live) video.volume = voice?.db === undefined ? 1 : Math.min(1, gainOf(voice.db))
@@ -358,6 +375,17 @@ export function createMonitor({ canvas, urlOf, assetOf, onTime, onRate, tileUrl 
       guides = on
       return show(t)
     },
+    /** The compare wipe at a fraction of the width (0…1), or null for none. Only the live preview draws it. */
+    setWipe(next) {
+      if (!tiles) return Promise.resolve()
+      wipe = next === null ? null : Math.min(1, Math.max(0, next))
+      return rate === 0 ? show(t) : Promise.resolve()
+    },
+    get wipe() {
+      return wipe
+    },
+    /** The sound's level now in dBFS (−Infinity when silent or off). */
+    level: () => (meter && rate !== 0 ? meter.level() : -Infinity),
     /** The live preview's state, for tests: the tile frames showing and the sound's gains at the playhead. */
     get live() {
       return tiles ? { on: Boolean(live && liveFits()), tiles: [...tiles.frames.keys()], sound: sound.state(t), held: held.size } : null

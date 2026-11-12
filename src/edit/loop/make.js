@@ -40,15 +40,22 @@ export function planVerdict(project, index, recipe, { engineVersion = "f0", runt
  *   sourcePath: (asset: string) => string, signal?: AbortSignal, onStage?: (stage: string) => void, run?: Function,
  *   gateKit?: { tilePath?: Function, motion?: object, work?: string }, the Engine's tiles and Chrome, for QG-08 and QG-09
  *   watch?: { view: (attempt: object) => Promise<{ report: object, timeline: object }> } | null, the Director's watch-and-fix (TP8, editing.directorLoop); absent, the make as before
+ *   onLive?: (event: object) => void, the make's real state as it happens (editing.livePreview): each planned candidate, each render, gate results, repairs and watch rounds. Never written to history; a throw here is ignored
  * }} input
  */
-export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null, edits = [], watch = null }) {
+export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null, edits = [], watch = null, onLive = null }) {
   // edits: what the person did to the last cut, replayed on each candidate before it is rendered and gated
   // planner: a recipe with no variants to try (a programme, a montage), instead of the reel
   const recipe = plannerRecipe ?? recipeFor(brief)
   let calls = 0
   const notes = []
   const slots = {}
+  const live = (event) => {
+    if (!onLive) return
+    try {
+      onLive(event)
+    } catch {}
+  }
 
   const variantOf = async (variant) => {
     onStage("story")
@@ -56,7 +63,9 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
     calls += made.calls
     Object.assign(slots, made.slots)
     for (const note of made.notes) if (!notes.includes(note)) notes.push(note)
-    return { ...carryEdits(made, edits, { before: project, index }), variant }
+    const candidate = { ...carryEdits(made, edits, { before: project, index }), variant }
+    live({ stage: "plan", before: project, ops: candidate.ops, round: variant.tighter ? 2 : variant.noHook ? 3 : 1 })
+    return candidate
   }
 
   const evaluate = async (candidate) => {
@@ -66,14 +75,18 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
     onStage("check")
     const deliverable = candidate.project.deliverables.find((d) => d.preset === recipe.deliverable.preset)
     const check = (file, plan, project) => runGates({ file, plan, project, index, sourcePath, thresholds: recipe.thresholds, ...gateKit, ...(run ? { run } : {}) })
+    live({ stage: "render", project: candidate.project })
     const { file, plan } = await render(candidate.project, deliverable.id, signal)
     let attempt = { project: candidate.project, ops: candidate.ops, file, plan, checked: await check(file, plan, candidate.project) }
+    live({ stage: "check", gates: attempt.checked.gates })
     // The repair ladder (QUALITY_GATES §4): code's fixes first, never a looser threshold, never a must-keep cut
     if (attempt.checked.blocking > 0 || attempt.checked.briefMisses > 0) {
       onStage("repair")
       const mustKeeps = (project) => planVerdict({ ...project, brief: { ...project.brief, targetDuration: undefined } }, index, recipe).briefMisses === 0
-      const ladder = await repairLadder(attempt, { index, render: (project) => render(project, deliverable.id, signal), check, keepsMustKeeps: mustKeeps, signal })
+      const ladder = await repairLadder(attempt, { index, render: (project) => (live({ stage: "render", repair: true, project }), render(project, deliverable.id, signal)), check, keepsMustKeeps: mustKeeps, signal })
       attempt = ladder.best
+      live({ stage: "repair", attempts: ladder.attempts, project: attempt.project })
+      live({ stage: "check", gates: attempt.checked.gates })
       candidate.repairs = ladder.attempts
       candidate.person = ladder.person
     }
@@ -83,6 +96,8 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
       onStage("watch")
       const watched = await watchAndFix(attempt, { index, view: watch.view, render: (project) => render(project, deliverable.id, signal), check, rounds: left, signal })
       attempt = watched.best
+      live({ stage: "watch", rounds: watched.rounds, project: attempt.project })
+      live({ stage: "check", gates: attempt.checked.gates })
       candidate.watched = { rounds: watched.rounds, left: watched.left, score: watched.best.report?.score ?? null }
     }
     Object.assign(candidate, { project: attempt.project, ops: attempt.ops, file: attempt.file, plan: attempt.plan, gates: attempt.checked })

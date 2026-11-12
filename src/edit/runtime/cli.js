@@ -1,5 +1,7 @@
 // `kriya edit setup` and `kriya edit doctor`, loaded only with the switch on.
 
+import { spawn } from "node:child_process"
+
 import { KriyaError } from "../../api.js"
 import { kriyaHome } from "../../paths.js"
 import { readDevice } from "../../store.js"
@@ -9,7 +11,7 @@ import { RuntimeError } from "./manifest.js"
 import { install, installPack, removePack, rollback } from "./setup.js"
 
 const USAGE = `Usage:
-  kriya edit                      start the Edit Host and print the Studio's link
+  kriya edit [--no-open]          open the Editing Studio in your browser (--no-open: only print its link)
   kriya edit setup [--rollback]   install the Media Runtime, or go back to the last one
   kriya edit setup --pack <name>  add a capability pack (color, voice-clean, depth)
   kriya edit setup --remove-pack <name>
@@ -22,12 +24,31 @@ const USAGE = `Usage:
                                   with no folder, list them. Nothing runs until you tap the card
   kriya edit unwatch <folder>     stop`
 
-export async function editCommand([action, ...rest], { say = (line) => process.stdout.write(`${line}\n`) } = {}) {
+/** The Studio's one-time link in the person's own browser, as `kriya login` opens its page. No browser: the printed link is enough. */
+export function openInBrowser(url, { platform = process.platform, run = spawn } = {}) {
+  const [command, args] = platform === "darwin" ? ["open", [url]] : platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]]
   try {
-    if (action === undefined) {
-      const { ensureHost, hostCall } = await import("../host/client.js")
+    run(command, args, { stdio: "ignore", detached: true }).on("error", () => {}).unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function editCommand([action, ...rest], { say = (line) => process.stdout.write(`${line}\n`), open = openInBrowser, interactive = process.stdout.isTTY === true, host = () => import("../host/client.js") } = {}) {
+  try {
+    // Typed in a terminal, `kriya edit` opens the Studio itself, never the harness's Web UI. Piped (a script)
+    // or with --no-open, it prints only the link, as it always did
+    if (action === undefined || (action === "--no-open" && rest.length === 0)) {
+      const { ensureHost, hostCall } = await host()
       await ensureHost()
-      say((await hostCall(kriyaHome(), "POST", "/internal/launch")).url)
+      const { url } = await hostCall(kriyaHome(), "POST", "/internal/launch")
+      if (action === "--no-open" || !interactive) {
+        say(url)
+        return 0
+      }
+      say(`Opening the Kriya Editing Studio in your browser. If it didn't open, this link works once, for a short while:\n${url}`)
+      open(url)
       return 0
     }
     if ((action === "watch" && rest.length <= 1) || (action === "unwatch" && rest.length === 1)) {
