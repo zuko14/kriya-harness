@@ -87,7 +87,7 @@ async function onceMore(work) {
  *   motion: HyperFrames and Chrome for the motion layer, from the Media Runtime
  *   cacheBytes: the cache's cap (ES-17); KRIYA_EDIT_CACHE_BYTES, else 20 GB
  */
-export function createEngine({ folder, roots, cache, exports: exportsDir, journal, toolVersion, capabilities, scheduler, free = defaultFree, run, onTool, motion = () => motionRuntime(activeRuntime()), cacheBytes = Number(process.env.KRIYA_EDIT_CACHE_BYTES) || 20 * GB }) {
+export function createEngine({ folder, roots, cache, exports: exportsDir, journal, toolVersion, capabilities, scheduler, free = defaultFree, run, onTool, motion = () => motionRuntime(activeRuntime()), customMotion = () => false, cacheBytes = Number(process.env.KRIYA_EDIT_CACHE_BYTES) || 20 * GB }) {
   const tool = (command, args, options) => {
     onTool?.(command, args)
     return (run ?? runTool)(command, args, options)
@@ -135,6 +135,8 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
     const effects = node.picture.flatMap((item) => item.effects)
     const luts = effects.filter((effect) => effect.type === "lut").map((effect) => effect.asset)
     const paths = await inputsFor([...node.picture, ...node.overlays].map((item) => item.asset).concat(luts), useProxy, need)
+    // TP7: the type kit's logo, always its own file: a draft proxy would lose its transparency
+    if (node.brand?.bug) paths.set(node.brand.bug.asset, sourcePath(assetOf(node.brand.bug.asset)))
     for (const key of new Set(effects.filter((effect) => effect.type === "grade" && effect.match).map((effect) => effect.match.key))) paths.set(key, (await need("match", key)).file)
     return paths
   }
@@ -420,12 +422,17 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
     thumbs: async (id, options) => (await graph.demand("thumbs", id, options)).file,
 
     /**
-     * @param {{ quality: "draft" | "master", deliverable?: string, job?: number, signal?: AbortSignal, onStep?: (done: number, total: number) => void, project?: object }} request
+     * @param {{ quality: "draft" | "master", deliverable?: string, job?: number, signal?: AbortSignal, onStep?: (done: number, total: number) => void, project?: object, partial?: boolean }} request
+     * partial (editing.livePreview, TP3): each draft segment's input names only the tiles it draws, so a
+     * change re-renders only the segments it touched. The picture only: the sound is always one mix of the
+     * whole film (QG-06) and a master one encode (ET-TR-M2), EH-66
      * @returns {Promise<{ file: string, plan: object }>}
      */
-    async render({ quality, deliverable, job, signal, onStep = () => {}, project: candidate }) {
+    async render({ quality, deliverable, job, signal, onStep = () => {}, project: candidate, partial = false }) {
       // A candidate version (the Edit Loop's attempt) renders without becoming the project
-      const plan = compile(candidate ?? project, index, { engineVersion: ENGINE_VERSION, runtimeVersion: toolVersion, quality, deliverable })
+      // TP7: which of the pack's fonts this computer has, so a type kit's tiles are keyed by what they draw with
+      const fonts = motion().fonts
+      const plan = compile(candidate ?? project, index, { engineVersion: ENGINE_VERSION, runtimeVersion: toolVersion, quality, deliverable, filters: capabilities.filters, ...(fonts ? { fonts: [...fonts.keys()] } : {}), ...(customMotion() === true ? { customMotion: true } : {}) })
       if (!plan.duration) throw new EngineFailure("plan", "empty", "There's nothing on the timeline to render.")
       preflight(plan)
       const shared = { canvas: plan.canvas, output: plan.output, input: plan.input, tiles: plan.tiles }
@@ -449,7 +456,9 @@ export function createEngine({ folder, roots, cache, exports: exportsDir, journa
           step(1)
         } else {
           const total = plan.segments.length + 1
-          for (const segment of plan.segments) graph.set(`segment:${segment.key}`, { plan: shared, segment })
+          // Off, every segment reads the whole plan's tiles, as before: a caption change re-renders them all
+          const tilesOf = (segment) => (partial === true ? plan.tiles.filter((tile) => segment.node.tiles.some((part) => part.key === tile.key)) : plan.tiles)
+          for (const segment of plan.segments) graph.set(`segment:${segment.key}`, { plan: { ...shared, tiles: tilesOf(segment) }, segment })
           graph.set(`join:${key}`, { segments: plan.segments.map((s) => s.key), audio: plan.audio.key })
           // Demanded here, not only by the join, so progress can be seen and slots shared
           await Promise.all(plan.segments.map((segment) => graph.demand("segment", segment.key, options).then(() => step(total))))

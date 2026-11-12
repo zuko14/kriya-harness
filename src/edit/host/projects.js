@@ -2,32 +2,45 @@
 // person's folder; its history and cache stay in ~/.kriya/edit/<id>/, never synced.
 
 import { randomBytes } from "node:crypto"
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs"
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs"
 import { dirname, extname, isAbsolute, join, relative, sep } from "node:path"
 
 import { checkout, commit, createLog, parseEntry, undo, versions } from "../core/history.js"
+import { apply } from "../core/ops.js"
 import { canonical, newProject, parseProject, serialize, sha256 } from "../core/project.js"
 import { createEngine, ENGINE_VERSION, guardPath } from "../engine/index.js"
-import { blockComposition, motionRuntime } from "../engine/motion.js"
+import { blockComposition, customDocument, motionRuntime } from "../engine/motion.js"
+import { confinement as osConfinement } from "../engine/confine.js"
+import { CUSTOM_BLOCK, CUSTOM_VERSION, partsProblems } from "../engine/custom.js"
+import { motionLength, nearestKit, writeMotion } from "../director/custom-motion.js"
+import { gateCustomTile } from "../gates/tile.js"
 import { cleanScene, SCENE_BLOCK, SCENE_KINDS, SCENE_THEMES, SCENE_VERSION, swapsFor } from "../engine/scenes.js"
 import { parseCube } from "../engine/color.js"
 import { fingerprint } from "../engine/media.js"
 import { probe } from "../engine/probe.js"
 import { EngineFailure, runTool } from "../engine/tool.js"
 import { openJournal } from "../graph/journal.js"
-import { DEFAULT_RULES, solve } from "../core/solver.js"
+import { DEFAULT_RULES, markPixels, solve } from "../core/solver.js"
 import { safeZoneFor, sceneFrame } from "../core/layout.js"
 import { revealWords } from "../director/beats.js"
 import { termId } from "../director/lookups.js"
 import { allowedMediaUrl, downloadMedia, MEDIA_TYPES, stillClipArgs } from "../engine/found-media.js"
+import { measureLoudness } from "../engine/loudness.js"
+import { planAssembly } from "../recipes/assembly.js"
 import { planMontage } from "../recipes/montage.js"
 import { analyseMulticam, PODCAST_MULTICAM } from "../recipes/multicam.js"
 import { planProgramme, programmeRecipe } from "../recipes/programme.js"
 import { defineTerms, fetchFeatures, searchMedia } from "../runtime/fetch.js"
 import { readDevice } from "../../store.js"
+import { models } from "../../api.js"
+import { measureDraft, timelineOf, viewerReport } from "../director/viewer.js"
+import { sayWatch } from "../director/watch-fix.js"
+import { planOpenings } from "../recipes/openings.js"
 import { createAsk } from "../director/ask.js"
 import { LOOKS } from "../engine/captions.js"
 import { cleanSelection, cleanWord, describe, noteWord, revise } from "../director/revise.js"
+import { clipList, decideAssembly, isAssembly } from "../director/assembly.js"
+import { cleanMentions, mentionsView } from "../director/mentions.js"
 import { openIndexDb } from "../index/db.js"
 import { makeReel, rebase } from "../loop/make.js"
 import { runGates } from "../gates/index.js"
@@ -35,17 +48,25 @@ import { FORMATS, REEL_TALKING_HEAD } from "../recipes/reel.js"
 import { compareRuns, replayAsk } from "../loop/replay.js"
 import { verifiedRecogniser, writeDelivery, writeHandoff } from "./deliver.js"
 import { createIndexer, layersFor } from "../index/index.js"
-import { activeRuntime } from "../runtime/setup.js"
+import { activeRuntime, childEnv } from "../runtime/setup.js"
+import { readWords, recogniser, speechArgs, transcribeArgs } from "../index/layers/words.js"
 import { editHome } from "./paths.js"
 import { createTaste } from "./taste.js"
 import { ASPECTS, analyseReference, cleanRefs, takeFrom } from "../engine/reference.js"
+import { checkDna2, extractDna2, readDna2 } from "../engine/dna2.js"
+import { referenceMatch } from "../engine/reference2.js"
+import { applyStyleBrief, cleanOff, styleBrief } from "../core/style-brief.js"
+import { SAFE_ZONES } from "../core/layout.js"
+import { ALL_LOOKS } from "../engine/captions.js"
 import { briefOf, planCut } from "../director/plan.js"
 import { editsSince, planDiff, storyFor } from "../director/continuity.js"
-import { cleanGraphic, GRAPHIC_ACCENTS, GRAPHIC_BLOCK, GRAPHIC_FONTS, GRAPHIC_KINDS, GRAPHIC_TONES, GRAPHIC_VERSION, graphicLength, STYLE_LABELS } from "../engine/graphics.js"
-import { MOODS, writeMusicBed } from "../engine/music-bed.js"
-import { SFX, writeSfx } from "../engine/sfx.js"
+import { ALL_GRAPHIC_KINDS, cleanGraphic, GRAPHIC_ACCENTS, GRAPHIC_BLOCK, GRAPHIC_FONTS, GRAPHIC_KINDS, GRAPHIC_TONES, GRAPHIC_VERSION, graphicLength, REGIONS, STYLE_LABELS, STYLE_LABELS_2 } from "../engine/graphics.js"
+import { ALL_MOODS, MOODS, writeAccent, writeMusicBed } from "../engine/music-bed.js"
+import { SFX, SOUNDS, writeSfx } from "../engine/sfx.js"
 
 // "start over", "from scratch": the one way a request after a make isn't a change to that cut
+// "callout this", "circle it", "put an arrow on this": a drawn box asked to be marked (TP9)
+const CALLOUT_ASKED = /\b(?:call ?out|circle|ring|highlight|arrow|point (?:at|to)|mark (?:this|it|that|here))\b/i
 const STARTS_OVER = /\b(?:start (?:over|again|afresh)|from scratch|fresh (?:cut|edit|start)|brand[- ]new (?:cut|edit))\b/i
 
 function atomicWrite(file, text) {
@@ -98,9 +119,43 @@ const askServer = async () => {
   const device = readDevice()
   return device ? fetchFeatures(device) : { visuals: false, playbooks: false, mediaSearch: false }
 }
+// The tiers this person's plan lists, exactly as Kriya says (GET /models): never a guess, so a slot is
+// only ever sent on one of them (EH-65). Signed out or unanswered: none, and nothing escalates
+const askTiers = async () => {
+  const device = readDevice()
+  if (!device) return null
+  const answer = await models(device.url, device.token)
+  return Array.isArray(answer?.data) ? answer.data.map((m) => m?.id).filter((id) => typeof id === "string") : null
+}
 const NOTHING_FOUND = { items: {}, definitions: {} }
 
-export function createProjects({ home, roots, scheduler, tools, governor = null, features = askServer }) {
+/** Where the Plan Card shows a motion kit 2 graphic (EH-92): its region's box, as core/layout.js shapes it, on an empty frame. */
+function regionPlacement(graphic, { width, height }) {
+  const region = REGIONS[graphic.kind]
+  if (!region) return null
+  if (region.region === "full" || region.region === "frame") return { x: 0, y: 0, w: width, h: height }
+  const margin = Math.round(Math.min(width, height) * 0.05)
+  const w = Math.floor((region.region === "corner" ? width : width - 2 * margin) * region.w)
+  const h = Math.floor(height * region.h)
+  if (region.region === "third") return { x: Math.round((width - w) / 2), y: height - h - Math.round(height * 0.12), w, h }
+  if (region.region === "corner") {
+    const corner = graphic.corner ?? "tr"
+    return { x: corner.endsWith("l") ? margin : width - w - margin, y: corner.startsWith("t") ? margin : height - h - margin, w, h }
+  }
+  const side = Math.min(w, h)
+  const p = graphic.point ?? { x: Math.round(width / 2), y: Math.round(height / 2) }
+  return { x: Math.min(Math.max(0, Math.round(p.x - side / 2)), width - side), y: Math.min(Math.max(0, Math.round(p.y - side / 2)), height - side), w: side, h: side }
+}
+
+/** TP9: the custom animations a project holds, by clip, so chat can place one again with no model call. */
+function customBlocksOf(project) {
+  return project.sequences.flatMap((q) => q.clips).flatMap((clip) => {
+    const block = clip.effects.find((e) => e.type === "block" && e.blockId === CUSTOM_BLOCK && e.version === CUSTOM_VERSION)
+    return block && !partsProblems(block.variables).problems.length ? [{ clip: clip.id, ...(block.variables.name ? { name: block.variables.name } : {}), variables: block.variables }] : []
+  })
+}
+
+export function createProjects({ home, roots, scheduler, tools, governor = null, features = askServer, tiers = askTiers, confinement = osConfinement, gateTile = gateCustomTile }) {
   const base = editHome(home)
   let known = null
   const taste = createTaste({ home })
@@ -141,7 +196,8 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     const folder = dirname(file)
     const journaled = openOrSetAside(join(dir, "journal.sqlite"), openJournal)
     const journal = journaled.value
-    const engine = createEngine({ folder, roots: [...roots, folder], cache: join(dir, "cache"), exports: join(folder, "exports"), journal, toolVersion: version, capabilities, scheduler, motion: () => motionRuntime(activeRuntime(home)) })
+    // TP9: a custom animation is drawn only while Kriya says editing.customMotion is on and the OS confines Chrome
+    const engine = createEngine({ folder, roots: [...roots, folder], cache: join(dir, "cache"), exports: join(folder, "exports"), journal, toolVersion: version, capabilities, scheduler, motion: () => motionRuntime(activeRuntime(home)), customMotion: () => known?.value?.customMotion === true && !!confinement().kind })
     engine.load(log.current, index)
     const state = { id, file, folder, log, journal, engine, indexDb, index, proposals: new Map(), damaged: [...(opened.damaged ? ["index"] : []), ...(journaled.damaged ? ["journal"] : [])] }
     open.set(id, state)
@@ -279,10 +335,11 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     },
 
     /** The Director for one job: the Governor's queue, the job's call budget, the journal's record. */
-    askFor(state, job = 0) {
+    askFor(state, job = 0, { tiers: listed = null } = {}) {
       if (!governor) throw new EngineFailure("environment", "no_director", "This Host has no Director.")
       let left = JOB_CALLS
-      const ask = createAsk({ governor, record: (row) => state.journal.call({ job, ...row }), budget: { take: () => left-- > 0 } })
+      // listed: the plan's tiers, only with editing.directorLoop on (TP8); absent, no slot escalates
+      const ask = createAsk({ governor, record: (row) => state.journal.call({ job, ...row }), budget: { take: () => left-- > 0 }, ...(listed ? { tiers: listed } : {}) })
       // Each slot's final answer, so the job can be replayed with no model call
       return async (slot) => {
         const answer = await ask(slot)
@@ -291,19 +348,111 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       }
     },
 
+    /** Whether this computer can turn speech into text locally: the Media Runtime's recogniser and its weights (EB-11). */
+    canDictate: () => !recogniser(activeRuntime(home)).missing,
+
+    /**
+     * Hold to talk (TP4, ASSEMBLY_AND_INTENT §7.4): a few seconds of the person's microphone to text, by the local
+     * recogniser only; no audio leaves the computer. It waits for the recogniser's slot behind an index job (EH-75).
+     * @param {Buffer} audio what the Studio recorded
+     */
+    async dictate(state, audio, { signal } = {}) {
+      const engine = recogniser(activeRuntime(home))
+      if (engine.missing) throw new EngineFailure("environment", "no_recogniser", engine.missing)
+      const dir = join(dirOf(state.id), "cache", "dictation", randomBytes(6).toString("hex"))
+      mkdirSync(dir, { recursive: true })
+      const release = scheduler ? await scheduler.acquire(["gpu"], { signal }) : () => {}
+      try {
+        const input = join(dir, "said.media")
+        writeFileSync(input, audio)
+        const wav = join(dir, "said.wav")
+        await runTool("ffmpeg", speechArgs(input, wav), { signal, timeoutMs: 60_000 })
+        const env = { ...childEnv(), HF_HUB_OFFLINE: "1", HF_HUB_DISABLE_TELEMETRY: "1" }
+        const words = readWords(await runTool(engine.python, transcribeArgs(engine, wav, state.log.current.brief?.language ?? "en"), { signal, env, timeoutMs: 120_000 }))
+        return { text: words.map((w) => w.text).join(" ").replace(/[\u0000-\u001f<>]/g, " ").slice(0, 2000) }
+      } finally {
+        release()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+
     /** The console: words → a proposal, applied to a copy, nothing landing yet (UX_SPEC §4, §5). */
-    async ask(state, { text, selection, history = [], job = 0 }) {
+    async ask(state, { text, selection, history = [], mentions, mark, job = 0 }) {
       const chosen = cleanSelection(selection, state.log.current, state.index)
-      const { motion } = await this.features()
-      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history, motion: motion && !state.engine.motion().missing })
+      const { motion, intent, craft, typeKit, customMotion } = await this.features()
+      // TP9: a drawn box and custom motion only with editing.customMotion on; off, the request is asked as it always was
+      const pointing = customMotion === true ? { customMotion: true, ...(mark ? { mark } : {}), customBlocks: customBlocksOf(state.log.current) } : {}
+      const result = await revise({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, selection: chosen, history, motion: motion && !state.engine.motion().missing, pointed: await this.pointed(state, mentions, text), intent, craft, ...(typeKit ? { typeKit } : {}), ...pointing })
+      // A custom animation the console asked for: written by its own slot, gated on its rendered tile, then proposed
+      let motionOf = null
+      if (result.custom?.length) {
+        const made = await this.customMotionOp(state, result.custom[0], { text, history, job })
+        if (made.op) {
+          const tried = apply(state.log.current, [...result.ops, made.op], { index: state.index, author: "agent" })
+          if (tried.applied) {
+            result.ops = [...result.ops, made.op]
+            result.changes = [...result.changes, describe(made.op, state.index)]
+            result.project = tried.project
+            motionOf = { op: result.ops.length - 1, ...(made.gates ? { gates: made.gates } : {}) }
+          } else result.say = `${result.say ? `${result.say} ` : ""}The custom animation couldn't go there: ${tried.diagnostics[0].message}.`.trim()
+        } else result.say = `${result.say ? `${result.say} ` : ""}${made.say}`.trim()
+      }
+      // TP4: what the change couldn't do, in the person's words; only with editing.intent on
+      const cannot = result.cannot?.length ? { cannot: result.cannot } : {}
       // A request about the whole video goes to the Director's make job; the Studio offers it
       const direct = result.direct ? { brief: { ...(result.direct.seconds ? { seconds: result.direct.seconds } : {}), ...(result.direct.captions ? { captions: result.direct.captions } : {}) } } : null
-      if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, say: result.say, source: result.source, reason: direct || result.say ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way.") }
+      if (!result.ops.length && !result.corrections.length) return { proposal: null, direct, say: result.say, source: result.source, reason: direct || result.say || cannot.cannot ? null : (result.reason ?? "Kriya couldn't turn that into an edit. Try saying it another way."), ...cannot }
       const id = randomBytes(6).toString("hex")
       state.proposals.set(id, { ops: result.ops, corrections: result.corrections, head: state.log.head })
       const { picture, duration } = solve(result.project ?? state.log.current, state.index)
       // Changes in one list, operations first, then corrections: "Only this" counts across both
-      return { proposal: { id, ops: result.ops, changes: [...result.changes, ...result.corrections.map((c) => c.change)], timeline: result.ops.length ? { picture, duration } : null }, direct, say: result.say, source: result.source, ...(result.reason ? { reason: result.reason } : {}) }
+      return { proposal: { id, ops: result.ops, changes: [...result.changes, ...result.corrections.map((c) => c.change)], timeline: result.ops.length ? { picture, duration } : null, ...(motionOf ? { motion: motionOf } : {}) }, direct, say: result.say, source: result.source, ...(result.reason ? { reason: result.reason } : {}), ...cannot }
+    },
+
+    /**
+     * MG2 (TP9): one custom animation for a proposal. A saved one is placed again with no model call; a new
+     * one is written on `balanced` only when Kriya lists it (EH-65), at most two calls, then its tile is
+     * rendered confined and must pass QG-08…11 before the person sees it. Refused, it says why and names
+     * the nearest kit graphic; it never loops and never falls back to unchecked code.
+     * @returns {Promise<{ op: object, gates?: object[] } | { say: string }>}
+     */
+    async customMotionOp(state, request, { text, history = [], job = 0 }) {
+      const project = state.log.current
+      const duration = motionLength(request.duration)
+      if (request.reuse !== undefined) {
+        const saved = customBlocksOf(project).find((b) => b.clip === request.reuse)
+        if (!saved) return { say: "That saved animation isn't in this project any more." }
+        return { op: { op: "add_motion", block: CUSTOM_BLOCK, version: CUSTOM_VERSION, variables: saved.variables, at: request.at, duration } }
+      }
+      const person = [...history.filter((h) => h.who === "you").map((h) => h.text), text].join("\n")
+      const words = state.index.words ?? []
+      const runtime = state.engine.motion()
+      const which = confinement()
+      const nearestSay = (why, nearest) => `${why} The nearest the kit has is a ${nearest.label.toLowerCase()}: ask for one if it would do.`
+      if (runtime.missing) return { say: nearestSay("A custom animation needs the Media Runtime's Chrome to be checked before you see it.", nearestKit(person)) }
+      const canvas = { width: project.canvas.width, height: project.canvas.height }
+      const made = await writeMotion({ ask: this.askFor(state, job), tiers: await this.allowedTiers(), allowed: (await this.features()).customMotion === true, which, person, describe: request.text, spoken: words.map((w) => w.text).join(" "), canvas, duration })
+      if (!made.node) return { say: nearestSay(`I couldn't make that custom animation: ${made.reason.replace(/\.$/, "")}.`, made.nearest) }
+      const fps = project.canvas.fps
+      const zone = safeZoneFor(project)
+      const work = join(dirOf(state.id), "cache", "custom", randomBytes(6).toString("hex"))
+      try {
+        const gated = await gateTile({ node: made.node, output: { ...canvas, fps }, canvas, safe: { top: zone.top ?? 0, right: zone.right ?? 0, bottom: zone.bottom ?? 0, left: zone.left ?? 0 }, runtime, work, which, binDir: join(base, "bin") })
+        const failed = gated.results.find((r) => r.status === "failed")
+        if (failed) return { say: nearestSay(`I wrote a custom animation, but its check failed (${failed.id}: ${failed.failures[0]?.kind?.replaceAll("_", " ") ?? "failed"}), so it isn't offered.`, made.nearest) }
+        return { op: { op: "add_motion", block: CUSTOM_BLOCK, version: CUSTOM_VERSION, variables: made.node.variables, at: request.at, duration }, gates: gated.results.map(({ id, status }) => ({ id, status })).sort((a, b) => (a.id < b.id ? -1 : 1)) }
+      } finally {
+        rmSync(work, { recursive: true, force: true })
+      }
+    },
+
+    /** A proposal's custom animation as the render will draw it, for its sandboxed preview. @returns {string} a document */
+    customPreview(state, proposalId, n) {
+      const op = state.proposals.get(proposalId)?.ops?.[n]
+      if (!op || op.op !== "add_motion" || op.block !== CUSTOM_BLOCK) throw new EngineFailure("input", "no_preview", "That proposal has no custom animation to show.")
+      const canvas = { width: state.log.current.canvas.width, height: state.log.current.canvas.height }
+      const html = customDocument({ blockId: CUSTOM_BLOCK, version: CUSTOM_VERSION, variables: op.variables, duration: op.duration }, { output: canvas, canvas }, { allowed: true, which: confinement() })
+      return html.replace("html,body{margin:0;background:transparent", "html,body{margin:0;background:linear-gradient(160deg,#6b7b80,#2a3437)")
     },
 
     /** Accept all, accept some, or reject a proposal. Rebased onto HEAD; the person's own edits never move. */
@@ -325,22 +474,46 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       return { applied: ops.length + fixes.length, dropped: dropped.map((d) => ({ change: describe(d.op, state.index), reason: d.reason })) }
     },
 
+    /**
+     * The clips a message points at, as the Director reads them (mentions.js). With
+     * editing.assembly off no mention resolves: the message is asked as it always was.
+     * @returns {Promise<string>} empty when there are none
+     */
+    async pointed(state, mentions, text) {
+      if (mentions === undefined || !(await this.features()).assembly) return ""
+      const clean = cleanMentions(state.log.current, mentions, text)
+      if (!clean) throw new EngineFailure("input", "bad_mention", "That message points at a clip that isn't in this project. Pick the clip again.")
+      return mentionsView(state.log.current, clean)
+    },
+
     /** What this Kriya allows now. A failed question means off. */
     async features() {
       if (!known || Date.now() - known.at > FEATURES_MS) known = { at: Date.now(), value: await features().catch(() => ({ visuals: false, playbooks: false, mediaSearch: false })) }
-      // A server from before editing.motion says nothing of it: off
-      return { motion: false, customMotion: false, ...known.value }
+      // A server from before editing.motion, editing.assembly or editing.livePreview says nothing of it: off
+      return { motion: false, customMotion: false, assembly: false, livePreview: false, intent: false, craft: false, typeKit: false, referenceIntent: false, directorLoop: false, taviOrder: false, ...known.value }
+    },
+
+    /** The tiers Kriya lists for this person now, or null when it can't say: then nothing escalates. */
+    async allowedTiers() {
+      try {
+        return await tiers()
+      } catch {
+        return null
+      }
     },
 
     /** One motion graphic as the render will draw it, for the Plan Card. @returns {string} a complete document */
-    graphicPreview(state, raw, format) {
-      const graphic = cleanGraphic(raw)
+    graphicPreview(state, raw, format, { typeKit = false, drawn = false } = {}) {
+      // EH-92: motion kit 2 with editing.typeKit on; TP9: a callout round a drawn box with editing.customMotion on. Else MG1's kinds
+      const graphic = cleanGraphic(raw, typeKit || (drawn && raw?.kind === "callout" && raw?.mark) ? ALL_GRAPHIC_KINDS : undefined)
       if (!graphic) throw new EngineFailure("input", "bad_graphic", "That isn't a graphic from this project's plan.")
       const shape = FORMATS[format] ?? FORMATS["9:16"]
       const canvas = { width: shape.width, height: shape.height }
+      if (graphic.mark) return blockComposition({ blockId: GRAPHIC_BLOCK, version: GRAPHIC_VERSION, variables: graphic, placement: markPixels(graphic.mark, canvas), duration: graphicLength(graphic) }, { output: canvas, canvas }).replace("html,body{margin:0;background:transparent", "html,body{margin:0;background:linear-gradient(160deg,#6b7b80,#2a3437)")
       // Where a strap or a title usually lands; the make places each clear of the face and the captions
       const low = graphic.kind === "lower" || graphic.kind === "end"
-      const placement = { x: Math.round(canvas.width * 0.1), y: Math.round(canvas.height * (low ? 0.66 : 0.42)), w: Math.floor((canvas.width * DEFAULT_RULES.boxWidth) / 100), h: Math.floor((canvas.height * DEFAULT_RULES.boxHeight) / 100) }
+      // EH-92: a motion kit 2 graphic in the place its region gives it (the make's solver places it clear of the face)
+      const placement = regionPlacement(graphic, canvas) ?? { x: Math.round(canvas.width * 0.1), y: Math.round(canvas.height * (low ? 0.66 : 0.42)), w: Math.floor((canvas.width * DEFAULT_RULES.boxWidth) / 100), h: Math.floor((canvas.height * DEFAULT_RULES.boxHeight) / 100) }
       // A graphic sits over footage; the card shows it on a plain backdrop so a light or dark plate both read
       return blockComposition({ blockId: GRAPHIC_BLOCK, version: GRAPHIC_VERSION, variables: graphic, placement, duration: graphicLength(graphic) }, { output: canvas, canvas }).replace("html,body{margin:0;background:transparent", "html,body{margin:0;background:linear-gradient(160deg,#6b7b80,#2a3437)")
     },
@@ -457,7 +630,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
     },
 
     /** The Director's plan for the whole cut: proposed, never made until the person approves it. */
-    async plan(state, { text, history = [], previous = null, choices = {}, job = 0, signal } = {}) {
+    async plan(state, { text, history = [], previous = null, choices = {}, mentions, mark, job = 0, signal } = {}) {
       // With a cut already made, a request changes that cut: the plan it was made from is the one revised
       const fresh = STARTS_OVER.test(text)
       const last = fresh ? null : this.lastMake(state)
@@ -472,27 +645,70 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         if (!found) continue
         const taken = takeFrom(found, aspect)
         const name = `${ref.path.split(/[\\/]/).at(-1)}${aspect === "all" ? "" : ` (only for: ${ASPECTS[aspect]})`}`
+        // TP6: a reference whose style was read gives the plan its brief's lines (code's own sentences over numbers),
+        // less what the person unticked. The same one call as before: no slot, no extra call (EH-64)
+        const style = aspect === "all" && (await this.features()).referenceIntent === true ? await this.styleBriefFor(state, id, choices.format) : null
+        if (style) {
+          const off = choices.styleBrief?.ref === id ? cleanOff(choices.styleBrief.off) : []
+          references.push({ name, lines: style.lines.filter((line) => line.state !== "cannot" && !off.includes(line.id)).map((line) => `${line.text}${line.why ? ` (${line.why})` : ""}`) })
+          continue
+        }
         references.push({ name, lines: taken.lines.length ? taken.lines : [`nothing measured for ${ASPECTS[aspect].toLowerCase()}`] })
       }
-      const { visuals, playbooks, mediaSearch, motion } = await this.features()
+      const { visuals, playbooks, mediaSearch, motion, assembly, intent, craft, typeKit } = await this.features()
       const device = mediaSearch ? readDevice() : null
       // What was found is kept here, so an approval names an id and never carries a URL or a licence from the browser
       const lookups = device ? { search: (queries) => searchMedia(device, queries), define: (terms) => defineTerms(device, terms), keep: (found) => this.keepFound(state, found) } : null
-      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, motion: motion && !state.engine.motion().missing, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, signal })
+      const plan = await planCut({ ask: this.askFor(state, job), project: state.log.current, index: state.index, text, history, previous, references, choices, motion: motion && !state.engine.motion().missing, visuals: visuals && !state.engine.motion().missing, playbooks, lookups, pointed: await this.pointed(state, mentions, text), intent, craft, ...(typeKit ? { typeKit } : {}), signal })
+      // The film's order (TP2, ASSEMBLY_AND_INTENT §4, §5), only with editing.assembly on: this message's mentions and
+      // words, then the storyboard, then earlier messages, then the plan being revised, then the Director, then the
+      // default. The Director's slot is asked only when something is open
+      const ordered = assembly ? await this.order(state, { text, history, previous, mentions, job, signal, targetDuration: plan.settings.seconds ? Math.round(plan.settings.seconds * FLICKS) : undefined }) : null
+      if (ordered?.assembly) plan.settings.assembly = ordered.assembly
+      else delete plan.settings.assembly
+      // TP9: a box drawn on the frame with a request to mark it becomes a callout among the plan's graphics, placed by
+      // code where it was drawn, on the word under it; only with editing.customMotion and editing.motion on
+      if (mark && motion && (await this.features()).customMotion === true && CALLOUT_ASKED.test(text)) {
+        const word = noteWord(state.log.current, state.index, mark.at)
+        const graphic = word ? cleanGraphic({ kind: "callout", style: mark.kind, mark: { x: mark.x, y: mark.y, w: mark.w, h: mark.h }, at: word }, ALL_GRAPHIC_KINDS) : null
+        if (graphic) plan.settings.graphics = [...(plan.settings.graphics ?? []).filter((g) => !g.mark), graphic]
+      }
       const scenes = plan.settings.scenes ?? []
       const brief = briefOf(plan.settings)
       // The exact brief an approval makes, so the Studio sends back what was shown
       return {
         ...plan,
+        // The Order section of the card: each part as the person knows it, and each decision that wasn't theirs
+        ...(ordered?.assembly ? { order: { source: ordered.source, lines: ordered.lines, parts: this.orderView(state, ordered.assembly) } } : ordered?.lines.length ? { order: { source: null, lines: ordered.lines, parts: [] } } : {}),
         brief: { ...brief, ...(fresh ? { fresh: true } : {}) },
         // Said by code from the two briefs, so the card shows what an approval changes in the cut that's there,
         // and whether its story stays (the same test the make route applies, in the make's own units)
         ...(last ? { revises: true, differs: last.plan ? planDiff(briefOf(last.plan.settings ?? {}), brief) : [], keepsStory: !!storyFor(last, { ...(brief.seconds ? { targetDuration: Math.round(brief.seconds * FLICKS) } : {}), ...(brief.cuts ? { cuts: brief.cuts.map((c) => ({ from: Math.round(c.from * FLICKS), to: Math.round(c.to * FLICKS) })) } : {}) }) } : {}),
         // What the card may restyle each graphic to: labels only, the colours and fonts stay in code
-        ...(plan.settings.graphics?.length ? { graphicChoices: { kinds: Object.fromEntries(Object.entries(GRAPHIC_KINDS).map(([id, kind]) => [id, { label: kind.label, styles: kind.styles }])), styles: STYLE_LABELS, accents: Object.keys(GRAPHIC_ACCENTS), tones: Object.keys(GRAPHIC_TONES), fonts: Object.keys(GRAPHIC_FONTS) } } : {}),
+        // EH-92: with editing.typeKit on, the card knows motion kit 2's kinds and styles too
+        ...(plan.settings.graphics?.length ? { graphicChoices: { kinds: Object.fromEntries(Object.entries(typeKit ? ALL_GRAPHIC_KINDS : GRAPHIC_KINDS).map(([id, kind]) => [id, { label: kind.label, styles: kind.styles }])), styles: typeKit ? { ...STYLE_LABELS, ...STYLE_LABELS_2 } : STYLE_LABELS, accents: Object.keys(GRAPHIC_ACCENTS), tones: Object.keys(GRAPHIC_TONES), fonts: Object.keys(GRAPHIC_FONTS) } } : {}),
         // What the card may swap each scene to; code says, so it can't offer what won't draw
         ...(scenes.length ? { sceneChoices: { kinds: Object.fromEntries(Object.entries(SCENE_KINDS).map(([id, kind]) => [id, kind.label])), themes: Object.fromEntries(Object.entries(SCENE_THEMES).map(([id, theme]) => [id, theme.label])), swaps: scenes.map(swapsFor) } } : {}),
       }
+    },
+
+    /** The film's order for a plan (director/assembly.js). The storyboard stored on the project is the Studio's own to read here. */
+    async order(state, { text, history = [], previous = null, mentions, job = 0, signal, targetDuration }) {
+      const project = state.log.current
+      const pointed = mentions === undefined ? [] : (cleanMentions(project, mentions, text) ?? [])
+      const storyboard = project.sequences.find((q) => q.id === project.active)?.assembly ?? null
+      return decideAssembly({ project, index: state.index, text, mentions: pointed, storyboard, history, previous: previous?.settings?.assembly ?? null, ask: this.askFor(state, job), targetDuration, signal })
+    },
+
+    /** An assembly's parts as the card shows them: number, label, stretch in seconds, use, who decided. Labels are data. */
+    orderView(state, assembly) {
+      const clips = clipList(state.log.current, state.index)
+      const words = new Map(state.index.words.map((w) => [w.id, w]))
+      const edge = (ref, side) => (ref === undefined ? null : typeof ref === "number" ? ref : (words.get(ref.word)?.[ref.edge ?? side] ?? null))
+      return assembly.parts.map((part) => {
+        const clip = clips.find((c) => c.asset === part.asset)
+        return { id: part.id, asset: part.asset, number: clip?.n ?? null, label: clip?.label || clip?.name || "", from: edge(part.from, "start"), to: edge(part.to, "end"), duration: clip?.duration ?? null, use: part.use, why: part.why ?? null, ...(part.at ? { at: part.at } : {}), ...(part.fit ? { fit: part.fit } : {}) }
+      })
     },
 
     /** A reference's classified analysis (reference.js), kept by its fingerprint so it's measured once. */
@@ -507,6 +723,56 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       mkdirSync(dir, { recursive: true })
       atomicWrite(file, JSON.stringify(found))
       return found
+    },
+
+    /* TP6 (CRAFT_UPGRADE §4, EDD-65), behind editing.referenceIntent: Edit DNA 2 and the style brief */
+
+    /** Where a reference's Edit DNA 2 is kept: its own name, so an older analysis is never read as this shape (EH-73). */
+    dna2File(state, asset) {
+      return join(dirOf(state.id), "cache", "refs", `${asset.fingerprint}.dna2.json`)
+    },
+
+    /**
+     * A reference's measured Edit DNA 2, or null when it hasn't been measured. Never measures: a plan
+     * and a make only read what the measuring job kept (EH-73). A file that isn't this version's
+     * shape, or isn't numbers and fixed words, counts as not measured.
+     */
+    referenceDna(state, assetId) {
+      const asset = state.log.current.assets.find((a) => a.id === assetId && a.kind === "reference")
+      if (!asset) return null
+      const file = this.dna2File(state, asset)
+      return existsSync(file) ? readDna2(readFileSync(file, "utf8")) : null
+    },
+
+    /**
+     * Measures a reference's Edit DNA 2 and keeps it. Only ever a job's work: it has progress and a
+     * cancel, and anything without a job number is refused, so a plan or a make can't start it (EH-73).
+     */
+    async measureReference(state, assetId, { job, signal, onStep = () => {}, measure = extractDna2 } = {}) {
+      if (!Number.isInteger(job) || job <= 0) throw new EngineFailure("input", "refused", "A reference is measured as its own job, never inside a plan or a make.")
+      const asset = state.log.current.assets.find((a) => a.id === assetId && a.kind === "reference")
+      if (!asset) throw new EngineFailure("input", "unknown_asset", "There is no such reference in this project.")
+      if (!asset.facts.width || !asset.facts.duration) throw new EngineFailure("input", "refused", "Only a video reference has a style to read: an image gives its colour, music its tempo.")
+      const dna = checkDna2(await measure(sourcesOf(state)(assetId), { signal, onStep }))
+      const file = this.dna2File(state, asset)
+      mkdirSync(dirname(file), { recursive: true })
+      atomicWrite(file, JSON.stringify(dna))
+      return { asset: assetId, traits: Object.values(dna).filter((v) => v?.read === "yes").length }
+    },
+
+    /** What this server and computer can do with a reference, for a cut of this shape. */
+    async styleCan(state, format) {
+      const { motion, craft, typeKit } = await this.features()
+      const { width, height } = FORMATS[format] ?? state.log.current.canvas
+      const tall = height > width
+      const looks = typeKit ? ALL_LOOKS : LOOKS
+      return { looks, lookLabels: Object.fromEntries(Object.keys(looks).map((id) => [id, `${id.charAt(0).toUpperCase()}${id.slice(1)}`])), moods: craft ? ALL_MOODS : MOODS, motion: motion && !state.engine.motion().missing, craft, tall, ...(tall ? { safe: { top: SAFE_ZONES["reel-9x16"].top, bottom: SAFE_ZONES["reel-9x16"].bottom } } : {}) }
+    },
+
+    /** A measured reference's style brief, or null when it hasn't been measured yet. */
+    async styleBriefFor(state, assetId, format) {
+      const dna = this.referenceDna(state, assetId)
+      return dna ? styleBrief(dna, await this.styleCan(state, format)) : null
     },
 
     /** The person's fix of a misheard word; captions, the transcript and the Director read it from now on. */
@@ -526,21 +792,55 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
      */
     async make(state, request, { job = 0, signal, onStep = () => {}, replay, beforeStory } = {}) {
       const video = state.log.current.assets.filter((a) => a.kind === "video")
-      const asset = request.asset ?? video[0]?.id
+      // The film's order, only from this make's own brief (EH-63): never the storyboard stored on the project
+      const order = isAssembly(request.brief?.assembly?.parts) ? request.brief.assembly : null
+      const asset = request.asset ?? order?.parts.find((p) => ["story", "whole"].includes(p.use) && video.some((a) => a.id === p.asset))?.asset ?? video[0]?.id
       if (!asset || !video.some((a) => a.id === asset)) throw new EngineFailure("input", "no_take", "Add a video first.")
       if (!state.index.words.some((w) => w.asset === asset)) await this.indexAsset(state, asset, { signal })
+      // An assembly's files: each is where it was, or it is left out; one asked for by name ends the make for the person (§8)
+      const there = (id) => {
+        try {
+          return existsSync(sourcesOf(state)(id))
+        } catch {
+          return false
+        }
+      }
+      const offline = order ? [...new Set(order.parts.map((p) => p.asset))].filter((id) => !there(id)) : []
+      if (order && !replay) {
+        const numbers = clipList(state.log.current, state.index)
+        const asked = order.parts.filter((p) => offline.includes(p.asset) && (p.why === "person" || p.why === "storyboard"))
+        if (asked.length) return { verdict: "needs_you", notes: [`${[...new Set(asked.map((p) => `Clip ${numbers.find((c) => c.asset === p.asset)?.n ?? "?"}`))].join(" and ")} ${asked.length === 1 ? "is" : "are"} in the order you gave, and ${asked.length === 1 ? "its file isn't" : "their files aren't"} where ${asked.length === 1 ? "it was" : "they were"}. Put ${asked.length === 1 ? "it" : "them"} back, or take ${asked.length === 1 ? "it" : "them"} out of the storyboard, and make it again.`], calls: 0, stop: "needs_you", changes: [], dropped: [], attempts: [], gates: [] }
+        // Each part's file is read once, so its words and shots are there to cut by
+        for (const id of new Set(order.parts.map((p) => p.asset))) if (!offline.includes(id) && !state.index.words.some((w) => w.asset === id) && !state.index.shots.some((s) => s.asset === id)) await this.indexAsset(state, id, { signal })
+      }
       // References, classified (reference.js), numbers only and never placed on a track
       // (EDD-23): a video's pace and captions, an image's or video's colour, music's tempo and mood
       const styled = []
+      // TP7: the type kit this make's own brief carries (the person's, or an approved plan's), stored as theirs;
+      // a brief without one leaves the project's look alone (EH-69, audit §6 rule 4)
+      const kit = request.brief?.typeKit
+      if (kit && JSON.stringify(state.log.current.look.brand?.type ?? null) !== JSON.stringify(kit)) {
+        const stored = change(state, { ops: [{ op: "set_type_kit", ...kit }], author: "person" })
+        if (!stored.ok) styled.push(`The type kit wasn't used: ${stored.diagnostics[0]?.message ?? "it doesn't fit this project"}.`)
+      }
+      styled.push(...(request.brief?.packNotes ?? []))
       let captionsFromReference = false
       const fromRefs = {}
       // Each reference gives only what the person took it for (editing, sound, colour, graphics, or
       // all); one taken for an aspect goes first, so it wins that aspect over one taken for everything
       const refs = cleanRefs([request.brief?.reference, ...(request.brief?.references ?? [])].filter(Boolean)).sort((a, b) => (a.aspect === "all") - (b.aspect === "all"))
       const aspectOf = new Map()
+      // TP6: the style brief this make's own brief carries (editing.referenceIntent; the Host drops the key without it).
+      // Read from what the measuring job kept, never measured here (EH-73); unmeasured, the reference works as it did
+      const styleOf = !replay && request.brief?.styleBrief ? { ...request.brief.styleBrief, dna: this.referenceDna(state, request.brief.styleBrief.ref) } : null
+      if (styleOf && !styleOf.dna) styled.push("That reference's style hasn't been read yet (Read its style, in References), so this cut took only what a quick look gives.")
+      // The key is the Host's own: no recipe, record or replay sees it
+      if (styleOf) request = { ...request, brief: (({ styleBrief: _brief, ...rest }) => rest)(request.brief) }
+      let fit = null
       for (const { id, aspect } of replay ? [] : refs) {
         const ref = state.log.current.assets.find((a) => a.id === id && a.kind === "reference")
         if (!ref) continue
+        if (styleOf?.dna && id === styleOf.ref) continue
         const name = ref.path.split(/[\\/]/).at(-1)
         try {
           const found = takeFrom(await this.referenceAnalysis(state, id, { signal }), aspect)
@@ -583,9 +883,37 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
           styled.push(`${name} couldn't be measured (${error.message}), so its style wasn't used.`)
         }
       }
+      if (styleOf?.dna) {
+        const seconds = (request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS
+        const style = styleBrief(styleOf.dna, await this.styleCan(state, request.brief.format))
+        const applied = applyStyleBrief(request.brief, style, styleOf.off, { seconds })
+        request = { ...request, brief: applied.brief }
+        styled.push(...applied.notes)
+        // Its colour, measured against this take and matched within limits: a LUT Kriya writes from two sets of numbers
+        const take = state.log.current.assets.find((a) => a.id === asset)
+        if (applied.colourMatch && (await tools()).capabilities.filters?.has("lut3d")) {
+          try {
+            const match = await referenceMatch(sourcesOf(state)(asset), (take.facts.duration ?? 0) / FLICKS, styleOf.dna.colour, { signal })
+            const media = join(state.folder, "media")
+            mkdirSync(media, { recursive: true })
+            const name = `kriya-look-${sha256(match.cube).slice(0, 12)}.cube`
+            const file = join(media, name)
+            if (!existsSync(file)) atomicWrite(file, match.cube)
+            const lut = state.log.current.assets.find((a) => a.kind === "lut" && a.path.endsWith(name)) ?? (await this.addAsset(state, file, { rights: "own", rightsNote: "A colour match Kriya computed from measurements: no one else's picture." }))
+            request = { ...request, brief: { ...request.brief, lut: lut.id } }
+            styled.push(`From your reference: its colour, matched to your footage by measurement${match.limited ? ". Your footage is further from it than a match may move, so it went part of the way" : ""}.`)
+          } catch (error) {
+            if (signal?.aborted) throw error
+            styled.push(`The reference's colour wasn't matched (${error.message}).`)
+          }
+        } else if (applied.colourMatch) styled.push("The reference's colour wasn't matched: this computer's FFmpeg has no lut3d.")
+        fit = { kept: applied.kept.map(({ id, text, target }) => ({ id, text, ...(target ? { target } : {}) })) }
+      }
       // "generated:<mood>": a bed Kriya writes itself (music-bed.js), so a cut can have music with no file to find
       const mood = /^generated:(\w+)$/.exec(request.brief?.music ?? "")?.[1]
-      if (mood && Object.hasOwn(MOODS, mood) && !replay) {
+      // TP10: seven more moods and twenty sounds only with editing.craft on; off, the three moods and four sounds as before
+      const crafted = (await this.features()).craft === true
+      if (mood && Object.hasOwn(crafted ? ALL_MOODS : MOODS, mood) && !replay) {
         const seconds = Math.ceil((request.brief.targetDuration ?? REEL_TALKING_HEAD.target.default) / FLICKS) + 15
         const media = join(state.folder, "media")
         mkdirSync(media, { recursive: true })
@@ -596,7 +924,16 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         if (!existsSync(file)) writeMusicBed(file, { mood, seconds, bpm })
         const bed = known ?? (await this.addAsset(state, file, { rights: "own", rightsNote: "Made by Kriya's music generator: no one else's recording." }))
         request = { ...request, brief: { ...request.brief, music: bed.id } }
-      }
+        // An accent in the bed's own key for every join (TP10), written by code like the bed
+        if (crafted && request.brief.arrange) {
+          const name = `kriya-sfx-accent-${mood}.wav`
+          const accentFile = join(media, name)
+          const made = writeAccent(accentFile, mood, { fps: state.log.current.canvas.fps })
+          const had = state.log.current.assets.find((a) => a.kind === "audio" && a.path.endsWith(name))
+          const accent = had ?? (await this.addAsset(state, accentFile, { rights: "own", rightsNote: "Made by Kriya's sound generator: no one else's recording.", extraFacts: { peak: Math.round(made.peak * FLICKS) } }))
+          request = { ...request, brief: { ...request.brief, accent: accent.id } }
+        }
+      } else if (crafted && request.brief?.arrange && !replay) styled.push("No accents on the joins: they are written in the key of a bed Kriya makes, and this cut has none.")
       // The pictures the person approved, downloaded now and not before, and their definitions as found
       if (request.brief?.pictures?.length || request.brief?.terms?.length) {
         const resolved = replay ? { pictures: [], terms: [] } : await this.resolveFound(state, request.brief, { signal, say: (line) => styled.push(line) })
@@ -616,7 +953,7 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         mkdirSync(media, { recursive: true })
         const sfx = {}
         for (const [slot, kind] of Object.entries(wanted)) {
-          if (!kind || !Object.hasOwn(SFX, kind)) continue
+          if (!kind || !(crafted ? SOUNDS.includes(kind) : Object.hasOwn(SFX, kind))) continue
           const file = join(media, `kriya-sfx-${kind}.wav`)
           const made = writeSfx(file, kind)
           const known = state.log.current.assets.find((a) => a.kind === "audio" && a.path.endsWith(`kriya-sfx-${kind}.wav`))
@@ -667,8 +1004,27 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       } else if (!replay && direct.montage && direct.music) {
         planner = () => planMontage({ project: state.log.current, index: state.index, brief: direct })
       }
+      // The assembly make (TP2): its own recipe, the same render and gates. A replay follows it too:
+      // each part's story is answered from the recording, in the order it was asked
+      if (order) {
+        // shortcut: a file's speech is measured over the whole file, not only the stretch a part uses
+        const loudness = {}
+        for (const id of new Set(order.parts.filter((p) => ["story", "whole"].includes(p.use)).map((p) => p.asset))) {
+          if (offline.includes(id) || state.log.current.assets.find((a) => a.id === id)?.facts.hasAudio === false) continue
+          loudness[id] = (await measureLoudness(sourcePath(id), { run }).catch(() => ({ integrated: null }))).integrated
+        }
+        const { capabilities } = await tools()
+        planner = () => planAssembly({ project: state.log.current, index: state.index, brief: direct, ask, signal, loudness, filters: capabilities.filters, offline })
+        plannerRecipe = null
+      }
       const runtime = activeRuntime(home)
-      const ask = replay ? replayAsk(replay.answers) : this.askFor(state, job)
+      // TP8 (editing.directorLoop): escalation only to a tier the plan lists, the Director's watch-and-fix and B-roll by
+      // meaning. Off, or a replay: the make as it was, with the same slots and calls (ET-DL-REG-01, EH-58)
+      const directed = !replay && (await this.features()).directorLoop === true
+      const ask = replay ? replayAsk(replay.answers) : this.askFor(state, job, directed ? { tiers: await this.allowedTiers() } : {})
+      if (directed) stages.splice(2, 0, "watch")
+      const genre = request.plan?.settings?.genre ?? null
+      const watch = directed ? { view: async (attempt) => { const timeline = timelineOf(attempt.project, state.index); return { timeline, report: viewerReport({ timeline, measured: await measureDraft(attempt.file, { run, duration: attempt.plan.duration }), ...(genre ? { genre } : {}) }) } } } : null
       const parent = state.log.head
       // The person's edits to the last cut go onto this one, unless they asked to start over
       const last = replay || request.brief?.fresh ? null : this.lastMake(state)
@@ -678,8 +1034,9 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         head: state.log.head,
         index: state.index,
         asset,
-        brief: { ...extra, ...request.brief },
+        brief: { ...extra, ...request.brief, ...(directed && (extra.broll ?? request.brief?.broll) === "own" ? { brollByMeaning: true } : {}) },
         ask,
+        ...(watch ? { watch } : {}),
         render: (project, deliverable, abort) => state.engine.render({ quality: "master", deliverable, project, job, signal: abort }),
         sourcePath,
         signal,
@@ -694,6 +1051,10 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
           binDir: join(base, "bin"),
           recognise: verifiedRecogniser(runtime, { run, work, language: state.log.current.brief?.language ?? "en" }),
           ask,
+          // QG-15 runs only on a make that followed an assembly (EH-70)
+          ...(order ? { assembly: { ...order, left: order.parts.filter((p) => offline.includes(p.asset)).map((p) => p.id) } } : {}),
+          // QG-16 runs only on a make that followed a reference's style brief (TP6)
+          ...(fit ? { referenceFit: fit } : {}),
         },
       })
       // Each attempt as ranked, for the report: never the model's words
@@ -705,7 +1066,9 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       const person = result.best.person ?? []
       const carried = result.best.carried ?? []
       const lost = result.best.dropped ?? []
-      const notes = [...result.notes, ...(carried.length ? [`Kept ${carried.length} of your own edit${carried.length === 1 ? "" : "s"} to the last cut.`] : []), ...(lost.length ? [`${lost.length} of your edits no longer fit this cut and ${lost.length === 1 ? "was" : "were"} left out: ${lost.map((d) => describe(d.op, state.index)).join("; ")}.`] : []), ...person.map((p) => `${p.gate}: ${p.message} This is yours to decide.`)]
+      // What the Director's watch did: a kept fix as a change, a dropped one as a note with its reason
+      const watched = result.best.watched ? sayWatch(result.best.watched.rounds) : []
+      const notes = [...result.notes, ...watched.filter((line) => line.includes("kept the cut as it was")), ...(carried.length ? [`Kept ${carried.length} of your own edit${carried.length === 1 ? "" : "s"} to the last cut.`] : []), ...(lost.length ? [`${lost.length} of your edits no longer fit this cut and ${lost.length === 1 ? "was" : "were"} left out: ${lost.map((d) => describe(d.op, state.index)).join("; ")}.`] : []), ...person.map((p) => `${p.gate}: ${p.message} This is yours to decide.`), ...(gates?.gates.find((g) => g.id === "QG-16")?.message ? [gates.gates.find((g) => g.id === "QG-16").message] : [])]
       if (replay) return { replayOf: replay.of, verdict: gates?.verdict ?? "not_checked", gates: gates?.gates ?? [], planHash, notes, repairs, calls: result.calls, stop: result.outcome.stop }
       const { ops, dropped } = state.log.head === result.head ? { ops: result.best.ops, dropped: [] } : rebase(state.log.current, result.best.ops, state.index)
       const landed = change(state, { ops, author: "agent" })
@@ -714,7 +1077,10 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
       atomicWrite(join(dirOf(state.id), "last-make.json"), JSON.stringify({ head: state.log.head, brief: request.brief ?? {}, story: result.best.story ?? null, carried, plan: request.plan ?? (request.brief?.fresh ? null : (last?.plan ?? null)) }))
       // A caption per spoken line is one change to a person: said once, with the count
       const captioned = ops.filter((op) => op.op === "caption_style" && op.words?.length)
-      const changes = [...usedRules, ...ops.filter((op) => !["ripple_delete", "reframe", "caption_style"].includes(op.op) || (op.op === "caption_style" && !op.words?.length)).map((op) => describe(op, state.index)), ...(captioned.length ? [`Captioned ${captioned.length} line${captioned.length === 1 ? "" : "s"} (${captioned[0].look})`] : [])]
+      // A cutaway the Director's watch took out again isn't something this make did: only what is in the cut is listed
+      const final = result.best.watched ? state.log.current.sequences.find((q) => q.id === state.log.current.active).clips : null
+      const stays = (op) => op.op !== "place_broll" || !final || final.some((c) => c.source?.asset === op.asset && c.source.in === (op.in ?? 0) && JSON.stringify(c.at) === JSON.stringify(op.at))
+      const changes = [...usedRules, ...watched.filter((line) => !line.includes("kept the cut as it was")), ...ops.filter((op) => stays(op) && (!["ripple_delete", "reframe", "caption_style", "apply_lut"].includes(op.op) || (op.op === "caption_style" && !op.words?.length))).map((op) => describe(op, state.index)), ...(captioned.length ? [`Captioned ${captioned.length} line${captioned.length === 1 ? "" : "s"} (${captioned[0].look})`] : [])]
       const { version } = await tools()
       const delivery = result.best.file
         ? await writeDelivery({ file: result.best.file, title: state.log.current.name, project: result.best.project, parent, plan: result.best.plan, sourcePath, tools: { engine: ENGINE_VERSION, ffmpeg: version, runtime: runtime?.version ?? null }, gates: gates?.gates ?? [], verdict: gates?.verdict ?? "not_checked", calls: state.journal.calls(job), changes, notes, repairs, beforeFrom: sourcePath(asset), run, work })
@@ -737,7 +1103,44 @@ export function createProjects({ home, roots, scheduler, tools, governor = null,
         stop: result.outcome.stop,
         attempts,
         dropped: [...dropped, ...lost].map((d) => ({ change: describe(d.op, state.index), reason: d.reason })),
+        ...(result.best.watched ? { watch: { score: result.best.watched.score, rounds: result.best.watched.rounds.map(({ round, kept, was, score, reason, fixes }) => ({ round, kept, was: was ?? null, score: score ?? null, ...(reason ? { reason } : {}), fixes: fixes.map((f) => f.kind) })), left: result.best.watched.left.map((f) => f.kind) } } : {}),
       }
+    },
+
+    /**
+     * "Give me three openings" (TP8, editing.directorLoop): three low-fidelity drafts of the first eight seconds,
+     * each opening on a different line, chosen by code. Nothing lands on the project: the person's pick becomes
+     * the next make's hook. Each film is in the project's exports, named by what it shows.
+     */
+    async openings(state, request, { job = 0, signal, onStep = () => {} } = {}) {
+      if ((await this.features()).directorLoop !== true) throw new EngineFailure("input", "refused", "Openings to choose from aren't switched on.")
+      const video = state.log.current.assets.filter((a) => a.kind === "video")
+      const asset = request.asset ?? video[0]?.id
+      if (!asset || !video.some((a) => a.id === asset)) throw new EngineFailure("input", "no_take", "Add a video first.")
+      if (!state.index.words.some((w) => w.asset === asset)) await this.indexAsset(state, asset, { signal })
+      const planned = await planOpenings({ project: state.log.current, index: state.index, asset, brief: request.brief ?? {}, signal })
+      if (!planned.length) throw new EngineFailure("input", "no_lines", "There aren't enough spoken lines in this take to open on.")
+      const openings = []
+      for (const [n, { hook, project }] of planned.entries()) {
+        onStep(n, planned.length)
+        const deliverable = project.deliverables.find((d) => d.preset === REEL_TALKING_HEAD.deliverable.preset) ?? project.deliverables[0]
+        const { file, plan } = await state.engine.render({ quality: "draft", deliverable: deliverable.id, project, job, signal })
+        openings.push({ n, hook: hook.id, words: hook.words, seconds: Math.round((plan.duration / FLICKS) * 10) / 10, file: file.split(/[\\/]/).at(-1) })
+      }
+      return { asset, openings }
+    },
+
+    /** One opening's film, only by the job's own record and only from this project's exports: never a path the browser names. */
+    openingFile(state, number, n) {
+      const row = state.journal.job(number)
+      if (row?.kind !== "openings" || row.status !== "done") return null
+      let found = null
+      try {
+        found = JSON.parse(row.dispatch ?? "{}").openings?.[n]?.file ?? null
+      } catch {}
+      if (typeof found !== "string" || /[\\/]/.test(found)) return null
+      const file = join(state.folder, "exports", found)
+      return existsSync(file) ? file : null
     },
 
     /**

@@ -7,9 +7,9 @@ again from Kriya and update the hash below in the same change.
 
 | Field | Value |
 | --- | --- |
-| Copied | 2026-11-10 (again: `motion` and `customMotion` in `GET /editing/features`, for the motion kit) |
-| From | Kriya repository `main` (uncommitted) on `3a0c769` |
-| sha256 | `b6fa9d2424249e8fd9e8b3ab806f7178ef5977bbd4b9d11f12ef85b385f0d6fb` |
+| Copied | 2026-11-12 (again: `taviOrder` in `GET /editing/features`, `DaemonProject.clips` and the `order` card kind, for TP11 of the top-tier plan) |
+| From | Kriya repository branch `feat/editing-live-preview-tp3` (uncommitted, on `2047db8`) |
+| sha256 | `9fd143888fa4b2f5cd3ae78c3e677c0ee62ebbbd6e742e9ebc759fd44ea57111` |
 
 When the Kriya side commits the file, replace "From" with that commit.
 `tests/contract.test.js` checks the hash, so a hand edit fails.

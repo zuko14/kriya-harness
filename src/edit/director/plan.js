@@ -6,9 +6,10 @@
 // engine renders, and a cold open must be a short stretch of one take.
 
 import { FORMATS, GRADES } from "../recipes/reel.js"
-import { MOODS } from "../engine/music-bed.js"
-import { LOOKS } from "../engine/captions.js"
-import { SFX } from "../engine/sfx.js"
+import { ALL_MOODS, MOODS } from "../engine/music-bed.js"
+import { ALL_LOOKS, LOOKS } from "../engine/captions.js"
+import { STYLE_PACKS } from "../core/style-packs.js"
+import { CUT_SOUNDS, INTRO_SOUNDS, SFX, SOUNDS } from "../engine/sfx.js"
 import { paperEdit, shotDigest } from "../index/views.js"
 import { planScenes, visualsIn } from "./beats.js"
 import { graphicLine, graphicsIn, planGraphics } from "./graphics.js"
@@ -16,6 +17,7 @@ import { picturesRefused, planLookups } from "./lookups.js"
 import { applyPlaybook, footageFacts, GENRES, PLAYBOOKS, playbookPrompt } from "./playbooks.js"
 import { timesIn } from "./revise.js"
 import { TRANSITIONS } from "../core/transitions.js"
+import { fieldsOf, INTENT_PROMPT, intentSchema, readIntent, tidyIntent } from "./intent.js"
 
 const FLICKS = 705_600_000
 // The highlight colours a plan may choose; hex stays in code
@@ -80,18 +82,25 @@ export function briefOf(settings = {}) {
     ...(settings.seconds ? { seconds: settings.seconds } : {}),
     ...(settings.captions && settings.captions !== "none" ? { captions: settings.captions } : {}),
     ...(settings.grade && settings.grade !== "natural" ? { grade: settings.grade } : {}),
-    ...(settings.music && Object.hasOwn(MOODS, settings.music) ? { music: `generated:${settings.music}` } : {}),
+    ...(settings.music && Object.hasOwn(ALL_MOODS, settings.music) ? { music: `generated:${settings.music}` } : {}),
     ...(settings.cleanVoice ? { cleanVoice: true } : {}),
     ...(settings.hook ? { hook: settings.hook } : {}),
     ...(settings.coldOpen ? { coldOpen: settings.coldOpen } : {}),
-    ...(settings.cutSound && Object.hasOwn(SFX, settings.cutSound) ? { cutSound: settings.cutSound } : {}),
-    ...(settings.introSound && Object.hasOwn(SFX, settings.introSound) ? { introSound: settings.introSound } : {}),
+    ...(settings.cutSound && SOUNDS.includes(settings.cutSound) ? { cutSound: settings.cutSound } : {}),
+    ...(settings.introSound && SOUNDS.includes(settings.introSound) ? { introSound: settings.introSound } : {}),
+    // TP10: the sound arranged to the cut, present only when a plan made with editing.craft set it
+    ...(settings.arrange ? { arrange: true } : {}),
+    ...(settings.ambience ? { ambience: true } : {}),
+    ...(settings.splits ? { splits: true } : {}),
+    ...(settings.beatJoins ? { beatJoins: true } : {}),
     ...(Number.isInteger(settings.punches) ? { punches: settings.punches } : {}),
     ...(settings.angles ? { angles: true } : {}),
     ...(settings.broll === "own" ? { broll: "own" } : {}),
     ...(settings.titles ? { titles: true } : {}),
     ...(settings.ramps ? { ramps: true } : {}),
     ...(Array.isArray(settings.cuts) && settings.cuts.length ? { cuts: mergeCuts(settings.cuts) } : {}),
+    // TP7: a style pack, present only when a plan made with editing.typeKit chose one
+    ...(typeof settings.stylePack === "string" && Object.hasOwn(STYLE_PACKS, settings.stylePack) ? { stylePack: settings.stylePack } : {}),
     ...(typeof settings.song === "string" ? { music: settings.song } : {}),
     ...(settings.montage ? { montage: true } : {}),
     ...(settings.multicam ? { multicam: settings.multicam } : {}),
@@ -102,6 +111,8 @@ export function briefOf(settings = {}) {
     ...(Array.isArray(settings.scenes) && settings.scenes.length ? { scenes: settings.scenes, sceneSound: settings.sceneSound !== false } : {}),
     ...(Array.isArray(settings.graphics) && settings.graphics.length ? { graphics: settings.graphics } : {}),
     ...(Object.hasOwn(TRANSITIONS, settings.transition ?? "") ? { transition: settings.transition, ...(settings.transitionAll ? { transitionAll: true } : {}) } : {}),
+    // The film's order (TP2), present only when one was decided
+    ...(settings.assembly?.parts?.length ? { assembly: settings.assembly } : {}),
   }
 }
 
@@ -281,12 +292,15 @@ export function planProblems(settings, index) {
  * @param {{ ask: Function, project: object, index: object, text: string, history?: object[], previous?: object, references?: { name: string, lines: string[] }[], choices?: object, visuals?: boolean, playbooks?: boolean, signal?: AbortSignal }} input
  *   visuals, playbooks, motion: the server's editing.visuals, editing.playbooks and editing.motion; off, this plan is what it always was
  *   lookups: { search, define, keep } with editing.mediaSearch on; null, no search word leaves the computer
+ *   intent: editing.intent (TP4): the same call also returns what the person asked for, each with its words,
+ *   checked by code; off, the schema, the prompt and the plan are the objects they were (ET-NL-REG-01)
  * @returns {Promise<{ say: string, steps: string[], settings: object, source: string, reason?: string }>}
  */
-export async function planCut({ ask, project, index, text, history = [], previous = null, references = [], choices = {}, visuals = false, playbooks = false, motion = false, lookups = null, signal }) {
+export async function planCut({ ask, project, index, text, history = [], previous = null, references = [], choices = {}, visuals = false, playbooks = false, motion = false, lookups = null, pointed = "", intent = false, craft = false, typeKit = false, signal }) {
   const assets = project.assets.filter((a) => a.kind === "video" || a.kind === "audio").map((a) => a.id)
   const refs = references.length ? `References the person added, measured by code:\n${references.map((r) => `- ${r.name}: ${r.lines.join("; ")}`).join("\n")}` : "No references added."
-  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`].join("\n\n")
+  // pointed: the clips the person mentioned (mentions.js), fenced as data; empty, the view is what it was
+  const view = [paperEdit(index, { assets }), shotDigest(index, { assets }), refs, `The person's current choices in the Studio: ${JSON.stringify(choices)}`, ...(pointed ? [pointed] : [])].join("\n\n")
   const asked = formatAsked(text, history, previous)
   // Trims are the person's, read by code from their words (this message and earlier ones) and kept through revisions
   const take = project.assets.find((a) => a.kind === "video" && (index.words ?? []).some((w) => w.asset === a.id)) ?? project.assets.find((a) => a.kind === "video")
@@ -301,6 +315,7 @@ export async function planCut({ ask, project, index, text, history = [], previou
   const earlier = history.length ? `Earlier in this chat:\n${history.map((h) => `${h.who === "you" ? "Person" : "Kriya"}: ${JSON.stringify(h.text)}`).join("\n")}\n\n` : ""
   const request = [
     `${earlier}The person says (their own words, trusted): ${JSON.stringify(String(text).slice(0, 2000))}`,
+    pointed ? "A place like ⟦1⟧ in their words is a clip they pointed at; the list above says which clip each is. Code puts the files in the order they asked, and shows it on the card: don't choose an order yourself." : "",
     cuts.length ? `The person asked to trim ${cuts.map((c) => `${at(c.from)} to ${at(c.to)}`).join(", ")} of the take (${take.id}); code cuts exactly that, between words. Plan around it: no hook or cold open inside a trimmed stretch, and say the trim in your pitch.` : "",
     asked ? `The person wants the ${asked} format: settings.format is "${asked}", and your pitch says ${asked}.` : "",
     previous ? `Your previous plan, which they want changed: ${JSON.stringify(previous.settings ? { ...previous, settings: previousSettings } : previous).slice(0, 3000)}. Revise it by what they say now; keep what they didn't ask to change.` : "",
@@ -321,7 +336,18 @@ export async function planCut({ ask, project, index, text, history = [], previou
   const schema = playbooks ? { ...PLAN_SCHEMA, properties: { ...PLAN_SCHEMA.properties, genre: { type: "string", enum: GENRES }, settings: { ...PLAN_SCHEMA.properties.settings, properties: { ...PLAN_SCHEMA.properties.settings.properties, captions: { type: "string", enum: ["none", ...Object.keys(LOOKS)] }, accent: { type: "string", enum: Object.keys(ACCENTS) }, song: { type: "string", maxLength: 64 } } } }, required: [...PLAN_SCHEMA.required, "genre"] } : PLAN_SCHEMA
   // With editing.motion the Director may also choose a transition; off, the schema is the object it was
   const asked_ = motion ? { ...schema, properties: { ...schema.properties, settings: { ...schema.properties.settings, properties: { ...schema.properties.settings.properties, transition: { type: "string", enum: ["none", ...Object.keys(TRANSITIONS)] } } } } } : schema
-  const answer = await ask({ task: "plan", tier: "budget", schema: asked_, view, request: motion ? `${request}\nYou may also set \`transition\` (${Object.keys(TRANSITIONS).join(", ")}): how the picture arrives where the story changes moment, such as out of a cold open or into a reordered line. Code puts it only at those joins, never on a filler cut. Choose none unless it suits the video.` : request, maxOutput: 2500, check, fallback, signal, priority: 0 })
+  // With editing.craft (TP10) the plan may also choose from more moods and sounds and arrange the sound to the cut
+  const crafted = craft ? { ...asked_, properties: { ...asked_.properties, settings: { ...asked_.properties.settings, properties: { ...asked_.properties.settings.properties, music: { type: "string", enum: ["none", "reference", ...Object.keys(ALL_MOODS)] }, cutSound: { type: "string", enum: ["none", ...CUT_SOUNDS] }, introSound: { type: "string", enum: ["none", ...INTRO_SOUNDS] }, arrange: { type: "boolean" }, ambience: { type: "boolean" }, splits: { type: "boolean" }, beatJoins: { type: "boolean" } } } } } : asked_
+  // With editing.typeKit (TP7) the plan may also choose one of the fourteen caption looks and a style pack; off, the object it was
+  const typed = typeKit ? { ...crafted, properties: { ...crafted.properties, settings: { ...crafted.properties.settings, properties: { ...crafted.properties.settings.properties, captions: { type: "string", enum: ["none", ...Object.keys(ALL_LOOKS)] }, stylePack: { type: "string", enum: ["none", ...Object.keys(STYLE_PACKS)] } } } } } : crafted
+  // With editing.intent the same call reads what was asked, field by field (no second call, EH-64); off, the objects they were
+  // The settings a person can ask for; a playbook's accent colour is the Director's, not a request
+  const fields = intent ? Object.fromEntries(Object.entries(fieldsOf(typed.properties.settings)).filter(([key]) => key !== "accent")) : null
+  const framed = intent ? { ...typed, properties: { ...typed.properties, intent: intentSchema(fields) }, required: [...typed.required, "intent"] } : typed
+  const told = motion ? `${request}\nYou may also set \`transition\` (${Object.keys(TRANSITIONS).join(", ")}): how the picture arrives where the story changes moment, such as out of a cold open or into a reordered line. Code puts it only at those joins, never on a filler cut. Choose none unless it suits the video.` : request
+  const sounded = craft ? `${told}\nYou may also arrange the sound to the cut: \`arrange\` (an accent in the bed's key on every join; with a music mood), \`ambience\` (a room tone from the take's own quiet), \`splits\` (J and L cuts at the talking joins) and \`beatJoins\` (B-roll on the music's beat). Use them when the person asks for better sound or sound design.` : told
+  const styled = typeKit ? `${sounded}\nYou may also set \`stylePack\`, one name for a whole look (${Object.entries(STYLE_PACKS).map(([id, pack]) => `${id}: ${pack.does}`).join("; ")}), and \`captions\` to any of ${Object.keys(ALL_LOOKS).join(", ")}. Choose a pack only when the person asks for a style or the video plainly wants one; none keeps the film's look.` : sounded
+  const answer = await ask({ task: "plan", tier: "budget", schema: framed, view, request: intent ? `${styled}\n${INTENT_PROMPT}` : styled, maxOutput: intent ? 3500 : 2500, check, fallback, signal, priority: 0, ...(intent ? { clean: (value) => (value && typeof value === "object" ? { ...value, intent: tidyIntent(value.intent, fields) } : value) } : {}) })
   const clean = (value) => String(value ?? "").replace(/[\u0000-\u001f<>]/g, " ").trim()
   // The frame is always set, and set by what the person said, never left to a default
   // The fallback plan keeps the person's choices: no model read the speech, so no genre was found
@@ -340,6 +366,11 @@ export async function planCut({ ask, project, index, text, history = [], previou
     if (key === "coldOpen") value ? (promised.coldOpen = true) : (settings.coldOpen = null)
     else settings[key] = value
   }
+  // The intent frame: kept fields where their words are in this message, code's reading over the model's, answers over both
+  const understood = intent
+    ? readIntent(answer.source === "default" ? undefined : answer.value.intent, { message: text, fields, code: { ...Object.fromEntries(Object.entries(person).filter(([key]) => key !== "coldOpen" && key !== "format")), ...(asked ? { format: asked } : {}) }, answers: previous?.intent?.answers ?? {} })
+    : null
+  if (understood) for (const [key, value] of Object.entries(understood.apply)) settings[key] = value
   if (cuts.length) settings.cuts = cuts
   else delete settings.cuts
   if (promised.coldOpen && !settings.coldOpen && take) settings.coldOpen = pickColdOpen(index, take.id, cuts)
@@ -400,11 +431,12 @@ export async function planCut({ ask, project, index, text, history = [], previou
   // Motion graphics from the kit, after the scenes so none is planned under one; each is checked by code
   delete settings.graphics
   if (motion && take) {
-    const planned = await planGraphics({ ask, index, asset: take.id, text, history, previous, cuts, scenes: sceneList, signal })
+    const planned = await planGraphics({ ask, index, asset: take.id, text, history, previous, cuts, scenes: sceneList, ...(typeKit ? { typeKit } : {}), signal })
     if (planned.graphics.length) {
       settings.graphics = planned.graphics
       steps.unshift(`Add ${planned.graphics.length} motion graphic${planned.graphics.length === 1 ? "" : "s"}: ${planned.graphics.map(graphicLine).join("; ")}. You can restyle or remove each below.`.slice(0, 240))
     } else if (graphicsIn(text) === "on") steps.push(`No motion graphics this time${planned.dropped[0] ? `: ${planned.dropped[0].reason}` : ": the words for one must be the speaker's or yours, so say what a title or name strap should read"}.`.slice(0, 240))
   }
-  return { say: clean(answer.value.say).slice(0, 900), steps: steps.slice(0, 13), settings, source: answer.source, ...(genre ? { genreLabel: PLAYBOOKS[genre].label } : {}), ...(answer.reason ? { reason: answer.reason } : {}) }
+  const frame = understood ? { intent: { understood: understood.understood, cannot: understood.cannot, questions: understood.questions, defaulted: understood.defaulted, answers: { ...(previous?.intent?.answers ?? {}) } } } : {}
+  return { say: clean(answer.value.say).slice(0, 900), steps: steps.slice(0, 13), settings, source: answer.source, ...(genre ? { genreLabel: PLAYBOOKS[genre].label } : {}), ...(answer.reason ? { reason: answer.reason } : {}), ...frame }
 }

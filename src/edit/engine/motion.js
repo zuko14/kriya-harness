@@ -9,9 +9,11 @@ import { join } from "node:path"
 
 import { childEnv } from "../runtime/setup.js"
 import { confine, confinement, installOf } from "./confine.js"
+import { installedFonts, withFonts } from "./fonts.js"
 import { buildScene, SCENE_VERSION } from "./scenes.js"
 import { buildGraphic, GRAPHIC_VERSION } from "./graphics.js"
 import { EngineFailure, runTool } from "./tool.js"
+import { CUSTOM_BLOCK, CUSTOM_VERSION, partsProblems } from "./custom.js"
 
 const FLICKS = 705_600_000
 
@@ -70,15 +72,19 @@ export function tileSeconds(flicks, fps) {
  *   fit.box: the element measured against the box, when it isn't the one whose font shrinks (a plate around the text)
  */
 export function tileDocument({ width, height, duration, css, body, animations, fit }) {
+  // TP7: a tile with shipped fonts fits and starts once they are in, and says so (data-ready); one without is the document it was
+  const fonts = css.includes("kriya-font:")
   const fitting = fit ? `{const t=document.getElementById(${scriptJson(fit.id)}),a=document.getElementById(${scriptJson(fit.within)}),b=document.getElementById(${scriptJson(fit.box ?? fit.id)});let s=parseFloat(getComputedStyle(t).fontSize);while((b.offsetHeight>a.clientHeight||b.scrollWidth>a.clientWidth)&&s>${Number(fit.min)}){s-=1;t.style.fontSize=s+"px"}}` : ""
   const seconds = (duration / FLICKS).toFixed(6)
   return [
     "<!doctype html>",
-    `<html><head><meta charset="utf-8">${CSP_META}`,
+    `<html${fonts ? " data-fonts" : ""}><head><meta charset="utf-8">${CSP_META}`,
     `<style>html,body{margin:0;background:transparent;overflow:hidden}#stage{position:relative;width:${width}px;height:${height}px;overflow:hidden}${css}</style></head>`,
     `<body><div id="stage" data-composition-id="kriya" data-no-timeline data-start="0" data-duration="${seconds}" data-width="${width}" data-height="${height}">`,
     `<div id="clip" class="clip" data-start="0" data-duration="${seconds}" data-track-index="0">${body}</div></div>`,
-    `<script>${fitting}for (const a of ${scriptJson(animations)}) document.getElementById(a.id).animate(a.keyframes, a.options)</script>`,
+    fonts
+      ? `<script>Promise.all([...document.fonts].map((f)=>f.load().catch(()=>null))).then(()=>{${fitting}for (const a of ${scriptJson(animations)}) document.getElementById(a.id).animate(a.keyframes, a.options);document.documentElement.dataset.ready="1"})</script>`
+      : `<script>${fitting}for (const a of ${scriptJson(animations)}) document.getElementById(a.id).animate(a.keyframes, a.options)</script>`,
     "</body></html>",
   ].join("")
 }
@@ -150,7 +156,7 @@ export function blockComposition(node, { output, canvas }) {
   const box = node.placement ?? { x: Math.round(canvas.width * 0.1), y: Math.round(canvas.height * 0.4), w: Math.round(canvas.width * 0.8), h: Math.round(canvas.height * 0.12) }
   const area = { x: Math.round(box.x * sx), y: Math.round(box.y * sy), w: Math.round(box.w * sx), h: Math.round(box.h * sy) }
   const size = Math.round(output.height * 0.03)
-  return tileDocument({ width: output.width, height: output.height, duration: node.duration, ...block.build({ variables: node.variables, area, size, output, duration: node.duration }) })
+  return tileDocument({ width: output.width, height: output.height, duration: node.duration, ...block.build({ variables: node.variables, area, size, output, duration: node.duration, ...(node.type ? { type: node.type } : {}) }) })
 }
 
 /* ─────────────────────────────── model-written code ─────────────────────────────── */
@@ -190,9 +196,29 @@ export function customComposition(html, { allowed, which = confinement() }) {
   return `${html.slice(0, head.index + head[0].length)}${CSP_META}${html.slice(head.index + head[0].length)}`
 }
 
-/** The composition for any tile in a plan. */
+/**
+ * A custom block's tile (MG2, TP9): the stored parts checked again (a project is read back from disk),
+ * set in Kriya's own document at the canvas's size and scaled to the output, passed through
+ * customComposition (the lint over the whole document; Kriya's CSP first), and only then each slot
+ * filled with its words, escaped. Words go in last so a word the speaker said ("fetch", "Date") is never
+ * read as code, and can never be code: escaped text has no markup.
+ * @param {{ allowed: boolean, which?: ReturnType<typeof confinement> }} gate allowed: editing.customMotion
+ */
+export function customDocument(node, { output, canvas }, gate) {
+  if (node.blockId !== CUSTOM_BLOCK || node.version !== CUSTOM_VERSION) throw new EngineFailure("plan", "unknown_block", `There is no motion block "${node.blockId}" version ${node.version}.`)
+  const checked = partsProblems(node.variables)
+  if (checked.problems.length) throw new EngineFailure("plan", "bad_composition", `This custom animation was refused: ${checked.problems[0]}.`)
+  const sx = (output.width / canvas.width).toFixed(6)
+  const sy = (output.height / canvas.height).toFixed(6)
+  const css = `#mg{position:absolute;left:0;top:0;width:${canvas.width}px;height:${canvas.height}px;transform:scale(${sx},${sy});transform-origin:0 0;overflow:hidden}${node.variables.css}`
+  const html = customComposition(tileDocument({ width: output.width, height: output.height, duration: node.duration, css, body: `<div id="mg">${checked.parsed.html}</div>`, animations: node.variables.animations }), gate)
+  return html.replace(/⟦(\d)⟧/g, (_, i) => escapeText(checked.texts[Number(i)]))
+}
+
+/** The composition for any tile in a plan. A custom tile is in a plan only when editing.customMotion was on at compile. */
 export function compositionFor(tile, frame, captions) {
   if (tile.kind === "caption") return captions(tile.node, frame)
+  if (tile.kind === "block" && tile.node.blockId === CUSTOM_BLOCK) return customDocument(tile.node, frame, { allowed: true })
   if (tile.kind === "block") return blockComposition(tile.node, frame)
   throw new EngineFailure("plan", "unknown_tile", `This render can't draw a ${tile.kind} tile.`)
 }
@@ -214,9 +240,11 @@ export function motionRuntime(runtime, platform = `${process.platform}-${process
   const chromePath = chrome ? join(runtime.dir, chrome.id, chrome.entry) : null
   if (!chromePath || !existsSync(chromePath)) return { missing: "This Media Runtime has no Chrome for the motion layer." }
   // Without HyperFrames, Kriya draws tiles in the runtime's own Chrome, frame by frame (renderTileInChrome)
-  if (!existsSync(cli)) return { cli: null, chrome: chromePath, dir: runtime.dir, reads: [runtime.dir, realpathSync(join(runtime.dir, chrome.id))] }
+  // TP7: the pack's fonts, put into each tile as data by the renderer; none installed is an empty map
+  const fonts = installedFonts(runtime, platform)
+  if (!existsSync(cli)) return { cli: null, chrome: chromePath, dir: runtime.dir, reads: [runtime.dir, realpathSync(join(runtime.dir, chrome.id))], fonts }
   // The runtime's own folders, after links: all a confined render may read of it
-  return { cli, chrome: chromePath, dir: runtime.dir, reads: [runtime.dir, realpathSync(join(runtime.dir, "hyperframes")), realpathSync(join(runtime.dir, chrome.id))] }
+  return { cli, chrome: chromePath, dir: runtime.dir, reads: [runtime.dir, realpathSync(join(runtime.dir, "hyperframes")), realpathSync(join(runtime.dir, chrome.id))], fonts }
 }
 
 /** The environment for a confined render: built from scratch, telemetry off (EH-43), home in the work folder. */
@@ -235,7 +263,7 @@ export async function renderTile({ html, work, output, fps, runtime, run = runTo
   const comp = join(work, "comp")
   mkdirSync(join(work, "tmp"), { recursive: true })
   mkdirSync(comp, { recursive: true })
-  writeFileSync(join(comp, "index.html"), html)
+  writeFileSync(join(comp, "index.html"), withFonts(html, runtime.fonts))
   const outDir = output.slice(0, output.lastIndexOf("/"))
   const args = [runtime.cli, "render", comp, "--format", "mov", "--prores-profile", "4444", "--fps", `${fps.n}/${fps.d}`, "--workers", "1", "--quiet", "--no-wait", "--no-browser-gpu", "-o", output]
   const { command, args: wrapped } = confine(process.execPath, args, { read: [installOf(process.execPath), ...runtime.reads, ...ffmpegHome()], write: [work, outDir] }, which)
@@ -254,8 +282,9 @@ export async function renderTileInChrome({ html, work, output, fps, runtime, run
   const dir = join(work, "frames")
   mkdirSync(dir, { recursive: true })
   await withChrome({ work, runtime, which, launch }, async (page) => {
-    writeFileSync(join(work, "index.html"), html)
+    writeFileSync(join(work, "index.html"), withFonts(html, runtime.fonts))
     await page.goto(`file://${join(work, "index.html")}`)
+    await fontsIn(page)
     const [width, height] = await page.evaluate(() => {
       const stage = document.getElementById("stage")
       return [Number(stage.dataset.width), Number(stage.dataset.height)]
@@ -277,6 +306,9 @@ export async function renderTileInChrome({ html, work, output, fps, runtime, run
   if (!existsSync(output)) throw new EngineFailure("render", "failed", "The caption renderer finished without writing its tile.")
 }
 
+// A tile with shipped fonts starts its animations once they are in (tileDocument); one without is ready at load
+const fontsIn = (page) => page.waitForFunction(() => !document.documentElement.hasAttribute("data-fonts") || document.documentElement.hasAttribute("data-ready"), null, { timeout: 30_000 })
+
 /** The runtime's Chrome, started confined by playwright through a sandbox wrapper; one page. */
 async function withChrome({ work, runtime, which, launch }, use) {
   const { chromium } = launch ? {} : await import("playwright-core")
@@ -284,10 +316,22 @@ async function withChrome({ work, runtime, which, launch }, use) {
   if ([work, runtime.chrome].some((path) => path.includes("'"))) throw new EngineFailure("environment", "bad_path", "A folder name with a quote can't hold the motion layer's work.")
   mkdirSync(join(work, "tmp"), { recursive: true })
   // Playwright starts this script; the script starts Chrome inside the sandbox
-  const { args } = confine(runtime.chrome, [], { read: [...runtime.reads, work], write: [work] }, which)
-  writeFileSync(join(work, "chrome.sb"), args[1])
-  const wrapper = join(work, "chrome.sh")
-  writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/sandbox-exec -f '${join(work, "chrome.sb")}' '${runtime.chrome}' "$@"\n`, { mode: 0o755 })
+  const confined = confine(runtime.chrome, [], { read: [...runtime.reads, work], write: [work] }, which)
+  let wrapper
+  if (which.kind === "sandbox-exec") {
+    writeFileSync(join(work, "chrome.sb"), confined.args[1])
+    wrapper = join(work, "chrome.sh")
+    writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/sandbox-exec -f '${join(work, "chrome.sb")}' '${runtime.chrome}' "$@"\n`, { mode: 0o755 })
+  } else if (which.kind === "appcontainer") {
+    // TP11 seam: the Windows runner, as a batch file Playwright can start (paths are plain: confine.js checked them)
+    wrapper = join(work, "chrome.cmd")
+    writeFileSync(wrapper, `@echo off\r\n${[confined.command, ...confined.args].map((a) => `"${a}"`).join(" ")} %*\r\n`)
+  } else {
+    // TP11: bubblewrap on Linux, every argument quoted for the shell
+    wrapper = join(work, "chrome.sh")
+    const quote = (a) => `'${String(a).replace(/'/g, "'\\''")}'`
+    writeFileSync(wrapper, `#!/bin/sh\nexec ${[confined.command, ...confined.args].map(quote).join(" ")} "$@"\n`, { mode: 0o755 })
+  }
   const context = await open(join(work, "profile"), { executablePath: wrapper, headless: true, offline: true, env: { HOME: work, TMPDIR: join(work, "tmp") } })
   try {
     return await use(context.pages()[0] ?? (await context.newPage()))
@@ -331,14 +375,105 @@ export async function measureText({ items, work, runtime, which = confinement(),
   const files = items.map((item, i) => {
     const dir = join(work, `c${i}`)
     mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, "index.html"), item.html)
+    writeFileSync(join(dir, "index.html"), withFonts(item.html, runtime.fonts))
     return join(dir, "index.html")
   })
   return withChrome({ work, runtime, which, launch }, async (page) => {
     const out = new Map()
     for (const [i, item] of items.entries()) {
       await page.goto(`file://${files[i]}`)
+      await fontsIn(page)
       out.set(item.id, await page.evaluate(readBoxes, item.times))
+    }
+    return out
+  })
+}
+
+// Run in the page by Kriya: each text element's drawn clusters (a range per grapheme with a box of its own),
+// and its missing ones: a cluster drawn on a canvas in its own font the same, pixel for pixel, as a
+// noncharacter (U+FDD0, which no font maps) is the font's empty box, however the stack fell back
+function readClusters() {
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  const canvas = document.createElement("canvas")
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })
+  const pixels = (text, font, px) => {
+    canvas.width = Math.ceil(px * 4)
+    canvas.height = Math.ceil(px * 2)
+    ctx.font = font
+    ctx.textBaseline = "middle"
+    ctx.fillStyle = "#000"
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.fillText(text, px * 0.5, px)
+    return ctx.getImageData(0, 0, canvas.width, canvas.height).data
+  }
+  const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+  return [...document.querySelectorAll("[data-text]")].map((el) => {
+    let drawn = 0
+    let missing = 0
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const style = getComputedStyle(node.parentElement)
+      const px = parseFloat(style.fontSize)
+      const font = `${style.fontStyle} ${style.fontWeight} ${px}px ${style.fontFamily}`
+      const empty = pixels("\uFDD0", font, px)
+      for (const { segment, index } of segmenter.segment(node.data)) {
+        if (!/\S/u.test(segment)) continue
+        const range = document.createRange()
+        range.setStart(node, index)
+        range.setEnd(node, index + segment.length)
+        const box = range.getBoundingClientRect()
+        if (box.width > 0 && box.height > 0) drawn++
+        if (same(pixels(segment, font, px), empty)) missing++
+      }
+    }
+    return { text: el.textContent, drawn, missing }
+  })
+}
+
+/**
+ * QG-10's check for scripts no reader reads (TP7, CRAFT §5.1): each composition at rest in
+ * the runtime's Chrome, inside the sandbox, and per text element the fonts Chrome drew its
+ * glyphs with (DevTools' platform fonts) and the clusters it drew.
+ * @param {{ items: { id: string, html: string, at: number }[], work: string, runtime: object, which?: object, launch?: Function }} input at: ms
+ * @returns {Promise<Map<string, { text: string, drawn: number, fonts: { family: string, custom: boolean, glyphs: number }[] }[]>>}
+ */
+export async function checkGlyphs({ items, work, runtime, which = confinement(), launch }) {
+  if (runtime.missing) throw new EngineFailure("environment", "missing_feature", runtime.missing)
+  mkdirSync(join(work, "tmp"), { recursive: true })
+  return withChrome({ work, runtime, which, launch }, async (page) => {
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send("DOM.enable")
+    await cdp.send("CSS.enable")
+    const out = new Map()
+    for (const [i, item] of items.entries()) {
+      const file = join(work, `g${i}.html`)
+      writeFileSync(file, withFonts(item.html, runtime.fonts))
+      await page.goto(`file://${file}`)
+      await fontsIn(page)
+      await page.evaluate((t) => {
+        for (const animation of document.getAnimations()) {
+          animation.pause()
+          animation.currentTime = t
+        }
+      }, item.at)
+      const clusters = await page.evaluate(readClusters)
+      const { root } = await cdp.send("DOM.getDocument", { depth: -1 })
+      const { nodeIds } = await cdp.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: "[data-text]" })
+      const fonts = []
+      // A node reports only its own text children, and a caption's words sit in spans: the element and all inside it
+      for (const nodeId of nodeIds) {
+        const inside = (await cdp.send("DOM.querySelectorAll", { nodeId, selector: "*" })).nodeIds
+        const used = new Map()
+        for (const id of [nodeId, ...inside]) {
+          for (const f of (await cdp.send("CSS.getPlatformFontsForNode", { nodeId: id })).fonts) {
+            const seen = used.get(f.familyName) ?? { family: f.familyName, custom: f.isCustomFont, glyphs: 0 }
+            seen.glyphs += f.glyphCount
+            used.set(f.familyName, seen)
+          }
+        }
+        fonts.push([...used.values()])
+      }
+      out.set(item.id, clusters.map((c, k) => ({ ...c, fonts: fonts[k] ?? [] })))
     }
     return out
   })

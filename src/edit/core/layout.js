@@ -54,13 +54,58 @@ export function sceneFrame(canvas, safe, caption) {
 
 const overlaps =(a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
+/**
+ * TP7 (CRAFT_UPGRADE §5.4): the boxes motion kit 2 needs, by the graphic's kind. "full" covers
+ * the frame like a scene; "frame" is a border round the whole picture, with no text; "third",
+ * "corner" and "point" are placed by the solver, still clear of faces (a point marks one), safe
+ * zones and captions. A kind not here is a caption-sized row, as before.
+ * size: shares of the frame (w of the safe width or the frame's width, h of its height)
+ */
+export const REGIONS = {
+  card: { region: "full" },
+  frame: { region: "frame" },
+  list: { region: "third", w: 0.9, h: 0.36 },
+  count: { region: "third", w: 0.7, h: 0.16 },
+  cta: { region: "third", w: 0.86, h: 0.15 },
+  handle: { region: "corner", w: 0.5, h: 0.075 },
+  callout: { region: "point", w: 0.26, h: 0.26 },
+}
+const CORNER_ORDER = ["tr", "tl", "br", "bl"]
+
+/** A kit-2 item's own places, cheapest first; faces are cleared, except by a callout, which points at one. */
+function regionCandidates(item, { canvas, safe }) {
+  const { top = 0, right = 0, bottom = 0, left = 0 } = safe
+  const W = canvas.width - left - right
+  const H = canvas.height - top - bottom
+  const w = Math.min(item.w, W)
+  const h = Math.min(item.h, H)
+  let boxes = []
+  if (item.region === "third") {
+    const x = left + Math.floor((W - w) / 2)
+    boxes = [top + H - h, top + Math.floor((H - h) / 2), top].map((y) => ({ x, y, w, h }))
+  } else if (item.region === "corner") {
+    const at = { tl: { x: left, y: top }, tr: { x: left + W - w, y: top }, bl: { x: left, y: top + H - h }, br: { x: left + W - w, y: top + H - h } }
+    const order = [item.corner, ...CORNER_ORDER.filter((c) => c !== item.corner)].filter(Boolean)
+    boxes = order.map((c) => ({ ...at[c], w, h }))
+  } else if (item.region === "point") {
+    const side = Math.min(w, h)
+    const p = item.point ?? { x: Math.round(canvas.width / 2), y: Math.round(canvas.height / 2) }
+    const x = Math.min(Math.max(left, Math.round(p.x - side / 2)), left + W - side)
+    const y = Math.min(Math.max(top, Math.round(p.y - side / 2)), top + H - side)
+    return [{ box: { x, y, w: side, h: side }, cost: 0 }]
+  }
+  return boxes.map((box, i) => ({ box, cost: i * Math.round(canvas.height / 4) })).filter(({ box }) => !(item.faces ?? []).some((face) => overlaps(box, face)))
+}
+
 function candidates(item, { canvas, safe, prefer }) {
   if (item.fixed) return [{ box: item.fixed, cost: 0 }]
+  if (item.region) return regionCandidates(item, { canvas, safe })
   const { top = 0, right = 0, bottom = 0, left = 0 } = safe
   const width = canvas.width - left - right
   const last = canvas.height - bottom - item.h
   if (item.w > width || last < top) return []
-  const wanted = Math.round((canvas.height * prefer) / 100)
+  // A look that sits higher (TP7's caption looks) asks for its own row; others use the recipe's
+  const wanted = Math.round((canvas.height * (item.prefer ?? prefer)) / 100)
   const rows = new Set([Math.min(last, Math.max(top, wanted))])
   for (let i = 0; i < ROWS; i++) rows.add(top + Math.floor(((last - top) * i) / (ROWS - 1)))
   const x = left + Math.floor((width - item.w) / 2)

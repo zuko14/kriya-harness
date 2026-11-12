@@ -1,0 +1,72 @@
+[
+  {
+    "id": "font-inter",
+    "name": "Inter",
+    "notice": "Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)"
+  },
+  {
+    "id": "font-oswald",
+    "name": "Oswald",
+    "notice": "Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)"
+  },
+  {
+    "id": "font-montserrat",
+    "name": "Montserrat",
+    "notice": "Copyright 2024 The Montserrat.Git Project Authors (https://github.com/JulietaUla/Montserrat.git)"
+  },
+  {
+    "id": "font-lora",
+    "name": "Lora",
+    "notice": "Copyright 2011 The Lora Project Authors (https://github.com/cyrealtype/Lora-Cyrillic), with Reserved Font Name \"Lora\"."
+  },
+  {
+    "id": "font-jetbrains-mono",
+    "name": "JetBrains Mono",
+    "notice": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
+  },
+  {
+    "id": "font-caveat",
+    "name": "Caveat",
+    "notice": "Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat)"
+  },
+  {
+    "id": "font-noto-sans-devanagari",
+    "name": "Noto Sans Devanagari",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/devanagari)"
+  },
+  {
+    "id": "font-noto-sans-telugu",
+    "name": "Noto Sans Telugu",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/telugu)"
+  },
+  {
+    "id": "font-noto-sans-tamil",
+    "name": "Noto Sans Tamil",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/tamil)"
+  },
+  {
+    "id": "font-noto-sans-kannada",
+    "name": "Noto Sans Kannada",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/kannada)"
+  },
+  {
+    "id": "font-noto-sans-malayalam",
+    "name": "Noto Sans Malayalam",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/malayalam)"
+  },
+  {
+    "id": "font-noto-sans-bengali",
+    "name": "Noto Sans Bengali",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/bengali)"
+  },
+  {
+    "id": "font-noto-sans-gujarati",
+    "name": "Noto Sans Gujarati",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/gujarati)"
+  },
+  {
+    "id": "font-noto-sans-gurmukhi",
+    "name": "Noto Sans Gurmukhi",
+    "notice": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/gurmukhi)"
+  }
+]

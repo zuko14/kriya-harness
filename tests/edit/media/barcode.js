@@ -17,10 +17,10 @@ function frame(n) {
   return data
 }
 
-/** Encodes `frames` barcode frames with a steady tone. */
-export async function barcodeVideo(file, { frames = 300, fps = 30 } = {}) {
+/** Encodes `frames` barcode frames with a steady tone. `start`: the first frame's number, so two clips never show the same one. */
+export async function barcodeVideo(file, { frames = 300, fps = 30, start = 0 } = {}) {
   const child = spawn("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "gray", "-s", `${W}x${H}`, "-r", String(fps), "-i", "pipe:0", "-f", "lavfi", "-i", `sine=frequency=440:sample_rate=48000:duration=${frames / fps}`, "-map", "0:v", "-map", "1:a", "-vf", "format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv", "-c:v", "libx264", "-crf", "12", "-g", "15", "-c:a", "aac", "-y", file], { stdio: ["pipe", "ignore", "inherit"] })
-  for (let n = 0; n < frames; n++) if (!child.stdin.write(frame(n))) await once(child.stdin, "drain")
+  for (let n = 0; n < frames; n++) if (!child.stdin.write(frame(start + n))) await once(child.stdin, "drain")
   child.stdin.end()
   await once(child, "exit")
 }

@@ -390,6 +390,8 @@ test("the console in Chrome: a selection is \"this\"; Proposal mode shows ghost 
     assert.ok(ghost > 50, `ghost outline pixels: ${ghost}`)
     await page.keyboard.press("1")
     await page.getByRole("button", { name: "Accept", exact: true }).click()
+    // What I did is on the Activity tab (redesign 2026-11-12), which says something new is there
+    await page.getByRole("tab", { name: /^Activity/ }).click()
     await page.getByRole("list", { name: "What I did" }).getByText('Punched in 1.2× at "friends."').waitFor()
     const after = await w.call("GET", `/projects/${w.id}`)
     assert.notEqual(after.head, before, "accepted: one new entry")
@@ -399,6 +401,7 @@ test("the console in Chrome: a selection is \"this\"; Proposal mode shows ghost 
     // Nothing selected and nothing it can do: says so, proposes nothing
     await page.keyboard.press("Escape")
     assert.equal(await page.getByText("Selected: friends.").isVisible(), false, "Escape lets go of the selection")
+    await page.getByRole("tab", { name: /^Chat/ }).click()
     await page.locator("#prompt").fill("make it sparkle")
     await page.getByRole("button", { name: "Send", exact: true }).click()
     await page.getByText("Kriya couldn't turn that into an edit", { exact: false }).waitFor({ timeout: 30_000 })
@@ -583,6 +586,8 @@ test("ET-MG-UI: the Plan Card shows the plan's motion graphics playing, restyles
     await page.locator("#prompt").fill("edit this with motion graphics")
     await page.getByRole("button", { name: "Plan", exact: true }).click()
     const card = page.locator(".proposal.plan")
+    // The plan's parts are tabs (redesign 2026-11-12): its graphics, with their count, on their own
+    await card.getByRole("tab", { name: /^Graphics/ }).click({ timeout: 30_000 })
     await card.getByText("Motion graphics", { exact: true }).waitFor({ timeout: 30_000 })
     assert.equal(await card.locator(".graphic-picture").count(), 2, "the graphic the speaker never said isn't offered")
     assert.ok(await card.getByText("2 motion graphics", { exact: false }).first().isVisible())
@@ -605,6 +610,7 @@ test("ET-MG-UI: the Plan Card shows the plan's motion graphics playing, restyles
         assert.ok(edge.x >= 0 && edge.x + edge.width <= width + 1, `${width}: the card is ${Math.round(edge.width)} px wide at ${Math.round(edge.x)}`)
         for (const control of await card.locator("button, select").all()) {
           const box = await control.boundingBox()
+          if (!box) continue // on a part of the plan that isn't showing
           assert.ok(box.height >= 44, `${width}: a ${Math.round(box.height)} px control`)
           assert.ok(box.x + box.width <= edge.x + edge.width + 1, `${width}: a control runs off the card`)
         }

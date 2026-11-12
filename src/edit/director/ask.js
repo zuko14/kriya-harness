@@ -106,7 +106,16 @@ export const SLOT_WAIT_MS = 150_000
 // Room for a reasoning model's thinking on top of the answer's own budget
 export const THINKING = 1500
 
-export function createAsk({ governor, record = () => {}, budget = { take: () => true }, slotWaitMs = SLOT_WAIT_MS }) {
+// The one stronger tier a slot may be asked on, once (CRAFT_UPGRADE §6.4, TP8)
+export const ESCALATION_TIER = "balanced"
+
+/**
+ * tiers: the tiers this person's plan lists (GET /models), given only with editing.directorLoop on. A
+ * budget slot whose answer fit its schema and failed its code check twice is asked once more on
+ * `balanced`, only when that tier is in this list; refused, failed or still wrong, the slot ends as it
+ * would have without it (EH-65, ET-DL-08). Absent: no escalation, as before.
+ */
+export function createAsk({ governor, record = () => {}, budget = { take: () => true }, slotWaitMs = SLOT_WAIT_MS, tiers = null }) {
   // The gateway has been refusing this job for as long as a slot will wait: its other slots
   // take their defaults at once, so it finishes (TOOLS_AND_CONTRACTS §9) instead of crawling
   // through the Governor's backoff for half an hour
@@ -114,14 +123,35 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
   /**
    * @param {{ task: string, tier?: string, schema: object, recipe?: string, view: string, request: string, maxOutput: number, check?: (value: any) => string[], clean?: (value: any) => any, fallback: () => any, priority?: number, signal?: AbortSignal }} slot
    *   clean: tidies a parsed answer before the schema sees it (a model's nulls for absent fields)
-   * @returns {Promise<{ value: any, source: "model" | "repaired" | "default", reason?: string, calls: number }>}
+   * @returns {Promise<{ value: any, source: "model" | "repaired" | "escalated" | "default", reason?: string, calls: number }>}
    */
+  // One call on the stronger tier, with the slot's own question: an answer that fits and passes, or null
+  async function escalate({ task, schema, messages, maxOutput, check, clean, priority, signal }) {
+    const started = Date.now()
+    const limit = AbortSignal.timeout(slotWaitMs)
+    let reply
+    try {
+      reply = await governor.call({ model: ESCALATION_TIER, messages, response_format: { type: "json_schema", json_schema: { name: task, strict: false, schema } }, reasoning: { effort: "low" } }, { maxTokens: maxOutput + THINKING, priority, signal: signal ? AbortSignal.any([signal, limit]) : limit })
+    } catch (error) {
+      if (signal?.aborted) throw error
+      record({ task, tier: ESCALATION_TIER, ms: Date.now() - started, result: `error:${limit.aborted ? "model_unavailable" : (error.code ?? error.status ?? "unknown")}` })
+      return null
+    }
+    const parsed = parseReply(reply?.choices?.[0]?.message?.content, reply?.choices?.[0]?.finish_reason)
+    if (!parsed.problem) parsed.value = clean(parsed.value)
+    const problems = parsed.problem ? [parsed.problem] : schemaErrors(schema, parsed.value).length ? ["schema"] : check(parsed.value)
+    const usage = reply?.usage ?? {}
+    record({ task, tier: ESCALATION_TIER, input_tokens: usage.prompt_tokens ?? null, cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? null, output_tokens: usage.completion_tokens ?? null, ms: Date.now() - started, result: problems.length ? "invalid:escalated" : "escalated" })
+    return problems.length ? null : { value: parsed.value, source: "escalated" }
+  }
+
   return async function ask({ task, tier = "budget", schema, recipe = "", view, request, maxOutput, check = () => [], clean = (value) => value, fallback, priority = PRIORITY.job, signal }) {
     const messages = [
       { role: "system", content: `${DIRECTOR_CORE}\n\n${recipe}`.trim() },
       { role: "user", content: `${view}\n\n${request}` },
     ]
     let calls = 0
+    const refusals = []
     for (let attempt = 0; attempt < 2; attempt++) {
       if (unavailable) return { value: fallback(), source: "default", reason: "The model wasn't available for this job.", calls }
       if (!budget.take()) return { value: fallback(), source: "default", reason: "The job's model budget is spent.", calls }
@@ -151,6 +181,7 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
       const problems = parsed.problem ? [parsed.problem] : [...shape, ...(shape.length ? [] : check(parsed.value))]
       // Why it was refused, never what it said: the journal holds no answer (ES-12)
       const why = parsed.kind ?? (shape.length ? "schema" : "meaning")
+      refusals.push(why)
       record({ task, tier, input_tokens: usage.prompt_tokens ?? null, cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? null, output_tokens: usage.completion_tokens ?? null, ms: Date.now() - started, result: problems.length ? `invalid:${why}` : attempt ? "repaired" : "ok" })
       if (!problems.length) return { value: parsed.value, source: attempt ? "repaired" : "model", calls }
       if (attempt === 0) {
@@ -158,7 +189,10 @@ export function createAsk({ governor, record = () => {}, budget = { take: () => 
         messages.push({ role: "assistant", content: String(content ?? "") }, { role: "user", content: `That answer was refused: ${problems.slice(0, 5).join("; ")}. Answer again with only the JSON that fits the schema, shorter if you can, using only ids you were shown. No explanation, no thinking aloud.` })
         continue
       }
-      return { value: fallback(), source: "default", reason: `The model's answer didn't fit, twice: ${problems[0]}.`, calls }
+      const ended = { value: fallback(), source: "default", reason: `The model's answer didn't fit, twice: ${problems[0]}.`, calls }
+      if (!refusals.every((w) => w === "meaning") || tier !== "budget" || !Array.isArray(tiers) || !tiers.includes(ESCALATION_TIER) || !budget.take()) return ended
+      const stronger = await escalate({ task, schema, messages: messages.slice(0, 2), maxOutput, check, clean, priority, signal })
+      return stronger ? { ...stronger, calls: calls + 1 } : { ...ended, calls: calls + 1 }
     }
     return { value: fallback(), source: "default", reason: "unreachable", calls }
   }

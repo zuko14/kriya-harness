@@ -2,23 +2,35 @@
 // every request, and an owner-only socket with the same routes. Typed requests only:
 // no route runs a command, and every path passes guardPath.
 
-import { createHash, createHmac, randomBytes } from "node:crypto"
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, join } from "node:path"
 import { pipeline } from "node:stream/promises"
 
+import { apply, CRAFT_OP_NAMES, TYPE_OP_NAMES } from "../core/ops.js"
 import { compile } from "../core/plan.js"
+import { clipNumbers } from "../core/project.js"
 import { solve } from "../core/solver.js"
-import { LOOKS } from "../engine/captions.js"
+import { ALL_LOOKS, LOOKS, MORE_CAPTION_LOOKS } from "../engine/captions.js"
 import { ENGINE_VERSION, guardPath } from "../engine/index.js"
 import { cleanRefs } from "../engine/reference.js"
+import { cleanOff } from "../core/style-brief.js"
 import { cleanScene } from "../engine/scenes.js"
-import { cleanGraphic } from "../engine/graphics.js"
+import { ALL_GRAPHIC_KINDS, cleanGraphic, GRAPHIC_BLOCK, GRAPHIC_KINDS } from "../engine/graphics.js"
 import { TRANSITIONS } from "../core/transitions.js"
+import { regionOf } from "../core/effects.js"
 import { EngineFailure } from "../engine/tool.js"
 import { activeRuntime } from "../runtime/setup.js"
 import { recogniser } from "../index/layers/words.js"
+import { assemblyProblems, isAssembly } from "../director/assembly.js"
 import { FORMATS, GRADES } from "../recipes/reel.js"
+import { previewOf, tileDocument } from "./preview.js"
+import { TOKEN_HEADER } from "./paths.js"
+import { withFonts } from "../engine/fonts.js"
+import { applyStylePack, STYLE_PACKS } from "../core/style-packs.js"
+import { cleanTypeKit, PAIRS } from "../core/type-kit.js"
+import { ALL_MOODS, MOODS } from "../engine/music-bed.js"
+import { CUT_SOUNDS, INTRO_SOUNDS } from "../engine/sfx.js"
 
 const HEADERS = {
   "cross-origin-opener-policy": "same-origin",
@@ -59,6 +71,30 @@ const backOf = (value, port) => {
   }
 }
 
+// TP9: the longest cut a drawn box can point into (a day, in flicks); the Host checks it against the cut itself
+const MARK_AT_MAX = 24 * 3600 * 705_600_000
+const MARK_KINDS = ["box", "ring", "arrow"]
+
+/**
+ * A box, ring or arrow drawn on the monitor (TP9, CRAFT_UPGRADE §7): never trusted as sent. Whole thousandths
+ * of the frame, inside it, each side at least 10; `at` whole flicks on the cut. @returns {object | null | undefined}
+ *   undefined: none sent; null: sent and refused
+ */
+export function cleanMark(raw) {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).some((key) => !["kind", "x", "y", "w", "h", "at"].includes(key))) return null
+  if (!MARK_KINDS.includes(raw.kind) || !Number.isSafeInteger(raw.at) || raw.at < 0 || raw.at > MARK_AT_MAX) return null
+  const box = regionOf({ x: raw.x, y: raw.y, w: raw.w, h: raw.h })
+  return box ? { kind: raw.kind, ...box, at: raw.at } : null
+}
+
+/** A secret compared in constant time; anything but one string of the same length is no. */
+export function sameSecret(given, secret) {
+  if (typeof given !== "string" || typeof secret !== "string") return false
+  const [a, b] = [Buffer.from(given), Buffer.from(secret)]
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 function studioFile(res, pathname) {
   const [name, type] = STUDIO_FILES[pathname]
   const file = join(STUDIO, name)
@@ -80,7 +116,21 @@ function page(res, type, body) {
 
 const refuse = (res, status, message) => json(res, status, { error: status, message })
 /** A plan as the Studio sends it back (one being revised, or the one just approved): bounded text and a settings object the Director re-checks. */
-const cleanPlan = (plan) => (plan && typeof plan === "object" ? { say: String(plan.say ?? "").slice(0, 900), steps: Array.isArray(plan.steps) ? plan.steps.slice(0, 10).map((s) => String(s).slice(0, 240)) : [], settings: plan.settings && typeof plan.settings === "object" && !Array.isArray(plan.settings) && JSON.stringify(plan.settings).length <= 20_000 ? plan.settings : {} } : null)
+// A plan's answered questions (TP4), so a revision doesn't ask again: up to 8 plain values, each checked again by readIntent
+const cleanAnswers = (answers) => (answers && typeof answers === "object" && !Array.isArray(answers) ? Object.fromEntries(Object.entries(answers).filter(([key, value]) => /^[A-Za-z]{1,32}$/.test(key) && ["string", "number", "boolean"].includes(typeof value) && String(value).length <= 64).slice(0, 8)) : null)
+const cleanPlan = (plan) => (plan && typeof plan === "object" ? { say: String(plan.say ?? "").slice(0, 900), steps: Array.isArray(plan.steps) ? plan.steps.slice(0, 10).map((s) => String(s).slice(0, 240)) : [], settings: plan.settings && typeof plan.settings === "object" && !Array.isArray(plan.settings) && JSON.stringify(plan.settings).length <= 20_000 ? plan.settings : {}, ...(cleanAnswers(plan.intent?.answers) ? { intent: { answers: cleanAnswers(plan.intent.answers) } } : {}) } : null)
+
+/** A request's raw bytes, up to MAX_BODY. */
+async function readBody(req) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > MAX_BODY) throw new EngineFailure("input", "too_large", "That request is too large.")
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
 
 async function readJson(req) {
   const chunks = []
@@ -126,7 +176,7 @@ const statusOf = (error) => ({ outside_project: 403, missing_file: 404, exists: 
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenTtlMs, port, onActivity, onStop, onLive = () => {}, sse, log, pid, stamp = null, busy = () => 0 }) {
+export function createHandler({ home, ipcToken = null, roots, projects, jobs, tavi, tools, tokenTtlMs, port, onActivity, onStop, onLive = () => {}, sse, log, pid, stamp = null, busy = () => 0 }) {
   const tokens = new Map() // sha256 of a launch token → { expires, back }
   const sessions = new Set()
   const mediaSecret = randomBytes(32)
@@ -140,8 +190,23 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
 
   // offline: the file isn't where the project says, so the Studio asks to relink it (EG-3)
   const withMedia = (state, asset) => ({ ...asset, media: mediaId(state.id, asset.id), ...(existsSync(isAbsolute(asset.path) ? asset.path : join(state.folder, asset.path)) ? {} : { offline: true }) })
+  // TP1, only with editing.assembly on: each clip's computed number (never stored, EH-54) and the
+  // day its file was last written, for the bin's sort and groups. Off, the view is what it was
+  // shortcut: the file's own date stands in for "recorded" (a copied file gets the day it was copied); read the container's creation time when that matters
+  const withHandle = (state, numbers) => (asset) => {
+    const view = withMedia(state, asset)
+    if (!numbers.has(asset.id)) return view
+    const recorded = view.offline ? null : statSync(isAbsolute(asset.path) ? asset.path : join(state.folder, asset.path)).mtime.toISOString()
+    return { ...view, number: numbers.get(asset.id), ...(recorded ? { recorded } : {}) }
+  }
+  const assemblyOn = async () => (await projects.features()).assembly === true
+  const livePreviewOn = async () => (await projects.features()).livePreview === true
+  // Hold to talk (TP4): editing.intent on and the local recogniser's weights installed; otherwise no button and no route
+  const dictationOn = async () => (await projects.features()).intent === true && projects.canDictate()
   const NOTICES = { index: "This project's index was damaged and set aside. Index the footage again.", journal: "This project's job record was damaged and set aside. Finished renders will be made again." }
-  const projectView = (state) => ({ project: state.log.current, head: state.log.head, assets: state.log.current.assets.map((asset) => withMedia(state, asset)), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
+  // TP7: the type kit's choices, only with editing.typeKit on (labels only: fonts and colours stay in code), and whether this computer has the fonts
+  const typeKitView = async (state) => ((await projects.features()).typeKit === true ? { typeKit: { packs: Object.fromEntries(Object.entries(STYLE_PACKS).map(([id, pack]) => [id, { label: pack.label, does: pack.does }])), pairs: Object.fromEntries(Object.entries(PAIRS).map(([id, pair]) => [id, pair.label])), looks: Object.keys(MORE_CAPTION_LOOKS), shipped: (state.engine.motion().fonts?.size ?? 0) > 0, chosen: state.log.current.look.brand?.type ?? null } } : {})
+  const projectView = async (state) => ({ project: state.log.current, head: state.log.head, ...(await typeKitView(state)), ...((await livePreviewOn()) ? { livePreview: true } : {}), ...((await projects.features()).referenceIntent === true ? { referenceIntent: true } : {}), ...((await projects.features()).directorLoop === true ? { directorLoop: true } : {}), ...((await projects.features()).customMotion === true ? { customMotion: true } : {}), ...((await projects.features()).intent === true ? { intent: true, ...(projects.canDictate() ? { dictation: true } : {}) } : {}), ...((await assemblyOn()) ? { assembly: true, assets: state.log.current.assets.map(withHandle(state, clipNumbers(state.log.current))) } : { assets: state.log.current.assets.map((asset) => withMedia(state, asset)) }), ...(state.damaged?.length ? { notices: state.damaged.map((part) => ({ kind: part === "index" ? "reindex" : "rerender", message: NOTICES[part] })) } : {}) })
 
   // The Media Runtime, installed from the Studio with its progress shown (the same signed
   // manifest and checks as `kriya edit setup`): a first Index no longer looks like nothing happening
@@ -313,16 +378,25 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
       }
       const state = await needProject(res, parts[1])
       if (!state) return
-      if (parts.length === 2 && method === "GET") return say(200, projectView(state))
+      if (parts.length === 2 && method === "GET") return say(200, await projectView(state))
       if (parts.length === 2 && method === "DELETE") return say(200, projects.remove(state.id, { running: (id) => jobs.runningIn(id) }))
       if (parts.length === 2 && method === "PATCH") {
         const { ops, undo } = await readJson(req)
         if (undo === true) {
           projects.undo(state)
-          return say(200, { ...projectView(state), diagnostics: [] })
+          return say(200, { ...(await projectView(state)), diagnostics: [] })
+        }
+        // Labels and the storyboard are behind editing.assembly: off, the Host takes neither (ET-ASM-REG-01)
+        // Effects from the registry are behind editing.craft (TP5): off, the Host takes none
+        if (Array.isArray(ops) && ops.some((op) => CRAFT_OP_NAMES.includes(op?.op)) && (await projects.features()).craft !== true) return say(422, { ...(await projectView(state)), diagnostics: [{ code: "switched_off", message: "Effects aren't switched on.", op: 0 }] })
+        if (Array.isArray(ops) && ops.some((op) => ["describe_asset", "set_assembly", "place_over", "set_frame"].includes(op?.op)) && !(await assemblyOn())) return say(422, { ...(await projectView(state)), diagnostics: [{ code: "switched_off", message: "Clip labels and the storyboard aren't switched on.", op: 0 }] })
+        // The type kit, more caption looks and motion kit 2 are behind editing.typeKit (TP7): off, the Host takes none of them
+        if (Array.isArray(ops) && (await projects.features()).typeKit !== true) {
+          const typed = ops.findIndex((op) => TYPE_OP_NAMES.includes(op?.op) || (op?.op === "caption_style" && !Object.hasOwn(LOOKS, op.look ?? "") && Object.hasOwn(ALL_LOOKS, op.look ?? "")) || (op?.op === "add_motion" && op.block === GRAPHIC_BLOCK && (!Object.hasOwn(GRAPHIC_KINDS, op.variables?.kind ?? "") || !GRAPHIC_KINDS[op.variables.kind].styles.includes(op.variables?.style ?? GRAPHIC_KINDS[op.variables.kind].styles[0]))))
+          if (typed >= 0) return say(422, { ...(await projectView(state)), diagnostics: [{ code: "switched_off", message: "The type kit, the new caption looks and motion kit 2 aren't switched on.", op: typed }] })
         }
         const result = projects.change(state, { ops, author: "person" })
-        return say(result.ok ? 200 : 422, { ...projectView(state), diagnostics: result.diagnostics })
+        return say(result.ok ? 200 : 422, { ...(await projectView(state)), diagnostics: result.diagnostics })
       }
       if (parts[2] === "assets" && method === "POST") {
         const { path } = await readJson(req)
@@ -343,18 +417,72 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         const { picture, audio, overlays, captions, duration } = solve(state.log.current, state.index)
         return say(200, { ...compile(state.log.current, state.index, { engineVersion: ENGINE_VERSION, runtimeVersion: version }), timeline: { picture, audio, overlays, captions, duration } })
       }
+      // The live preview (TP3, editing.livePreview): what the monitor draws, from the draft's own plan;
+      // with ?proposal=, the cut as it would be if that proposal were accepted. Off, neither route exists
+      if (parts[2] === "preview" && parts.length === 3 && method === "GET") {
+        if (!(await livePreviewOn())) return refuse(res, 404, "The live preview isn't on.")
+        const proposalId = url.searchParams.get("proposal")
+        let project = state.log.current
+        if (proposalId !== null) {
+          const proposal = state.proposals.get(proposalId)
+          if (!proposal) return refuse(res, 404, "That proposal isn't there any more.")
+          const applied = apply(project, proposal.ops, { index: state.index })
+          if (applied.diagnostics.length) return refuse(res, 409, "That proposal no longer fits the cut.")
+          project = applied.project
+        }
+        const { version } = await tools()
+        state.previewTiles ??= new Map()
+        const fonts = state.engine.motion().fonts
+        return say(200, previewOf(project, state.index, { runtimeVersion: version, tiles: state.previewTiles, ...(fonts ? { fonts: [...fonts.keys()] } : {}) }))
+      }
+      // One tile of a preview: its own sandboxed document, no network, as the render draws it
+      if (parts[2] === "tile-preview" && parts.length === 3 && method === "GET") {
+        if (!(await livePreviewOn())) return refuse(res, 404, "The live preview isn't on.")
+        const found = tileDocument(state.previewTiles ?? new Map(), url.searchParams.get("key"))
+        if (found === null) return refuse(res, 404, "That tile isn't in this preview.")
+        // TP7: a type kit's fonts go in as data, as the render puts them; a tile without one is unchanged
+        const html = withFonts(found, state.engine.motion().fonts)
+        res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; frame-ancestors 'self'; sandbox allow-scripts" })
+        return res.end(html)
+      }
+      // A few seconds of the person's voice to text, on this computer only (TP4, §7.4)
+      if (parts[2] === "dictate" && parts.length === 3 && method === "POST") {
+        if (!(await dictationOn())) return refuse(res, 404, "Hold to talk isn't available.")
+        if (!/^(?:audio|video)\/(?:webm|ogg|mp4)\b/.test(req.headers["content-type"] ?? "")) return refuse(res, 415, "Send the recording as WebM, Ogg or MP4 audio.")
+        const audio = await readBody(req)
+        if (!audio.length) return refuse(res, 400, "Nothing was recorded.")
+        return say(200, await projects.dictate(state, audio))
+      }
       if (parts[2] === "ask" && parts.length === 3 && method === "POST") {
-        const { text, selection, history } = await readJson(req)
+        const { text, selection, history, mentions, mark: drawn } = await readJson(req)
         if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want changed, in up to 2,000 characters.")
+        // TP9: a drawn box, checked here; with editing.customMotion off it isn't read at all
+        const mark = (await projects.features()).customMotion === true ? cleanMark(drawn) : undefined
+        if (mark === null) return refuse(res, 400, "That drawing isn't a box, ring or arrow inside the frame. Draw it again.")
         // The chat's last turns, short and text only: nothing else of the browser's reaches the model
         const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
-        return say(200, await projects.ask(state, { text, selection, history: turns }))
+        return say(200, await projects.ask(state, { text, selection, history: turns, mentions, ...(mark ? { mark } : {}) }))
+      }
+      // TP9 (editing.customMotion): a proposal's custom animation, as the render draws it: its own sandboxed document, no network
+      if (parts[2] === "custom-preview" && parts.length === 3 && method === "GET") {
+        if ((await projects.features()).customMotion !== true) return refuse(res, 404, "Custom motion isn't on.")
+        const n = Number(url.searchParams.get("op"))
+        if (!Number.isInteger(n) || n < 0) return refuse(res, 404, "That proposal has no custom animation to show.")
+        let html
+        try {
+          html = projects.customPreview(state, url.searchParams.get("proposal") ?? "", n)
+        } catch (error) {
+          if (error instanceof EngineFailure && error.reason === "no_preview") return refuse(res, 404, error.message)
+          throw error
+        }
+        res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'; sandbox allow-scripts" })
+        return res.end(html)
       }
       if (parts[2] === "proposals" && parts.length === 4 && method === "POST") {
         const { accept, only } = await readJson(req)
         if (typeof accept !== "boolean" || (only !== undefined && !(Array.isArray(only) && only.every(Number.isInteger)))) return refuse(res, 400, "Accept or reject the proposal.")
         const result = projects.decide(state, parts[3], { accept, only })
-        return say(200, { ...result, ...projectView(state) })
+        return say(200, { ...result, ...(await projectView(state)) })
       }
       if (parts[2] === "make" && parts.length === 3 && method === "POST") {
         const { asset, brief, plan } = await readJson(req)
@@ -363,7 +491,8 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (Number.isFinite(brief.seconds) && brief.seconds >= 5 && brief.seconds <= 600) clean.targetDuration = Math.round(brief.seconds * 705_600_000)
           if (Array.isArray(brief.mustKeep) && brief.mustKeep.every((id) => typeof id === "string" && id.length < 64)) clean.mustKeep = brief.mustKeep.slice(0, 20)
           if (brief.effort === "fast" || brief.effort === "best") clean.effort = brief.effort
-          if (typeof brief.captions === "string" && Object.hasOwn(LOOKS, brief.captions)) clean.captions = brief.captions
+          const typeKitOn = (await projects.features()).typeKit === true
+          if (typeof brief.captions === "string" && Object.hasOwn(typeKitOn ? ALL_LOOKS : LOOKS, brief.captions)) clean.captions = brief.captions
           if (typeof brief.music === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.music)) clean.music = brief.music
           if (typeof brief.reference === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(brief.reference)) clean.reference = brief.reference
           if (Object.hasOwn(FORMATS, brief.format)) clean.format = brief.format
@@ -375,8 +504,11 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
           if (Array.isArray(brief.references)) clean.references = cleanRefs(brief.references)
           if (safeId(brief.hook)) clean.hook = brief.hook
           if (brief.coldOpen && safeId(brief.coldOpen.from) && safeId(brief.coldOpen.to)) clean.coldOpen = { from: brief.coldOpen.from, to: brief.coldOpen.to, mono: brief.coldOpen.mono !== false }
-          if (["whoosh", "pop"].includes(brief.cutSound)) clean.cutSound = brief.cutSound
-          if (["riser", "hit"].includes(brief.introSound)) clean.introSound = brief.introSound
+          // TP10: with editing.craft on, the sounds Kriya writes are more, and the make may arrange its sound to the cut
+          const crafted = (await projects.features()).craft === true
+          if ((crafted ? CUT_SOUNDS : ["whoosh", "pop"]).includes(brief.cutSound)) clean.cutSound = brief.cutSound
+          if ((crafted ? INTRO_SOUNDS : ["riser", "hit"]).includes(brief.introSound)) clean.introSound = brief.introSound
+          if (crafted) for (const flag of ["arrange", "ambience", "splits", "beatJoins"]) if (brief[flag] === true) clean[flag] = true
           if (Number.isInteger(brief.punches) && brief.punches >= 0 && brief.punches <= 8) clean.punches = brief.punches
           for (const flag of ["angles", "titles", "ramps"]) if (brief[flag] === true) clean[flag] = true
           if (brief.broll === "own") clean.broll = "own"
@@ -403,12 +535,41 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
             if (brief.transitionAll === true) clean.transitionAll = true
           }
           // Motion graphics from an approved plan, only while the server's switch is on; each cleaned to the kit's shape
-          if (Array.isArray(brief.graphics) && brief.graphics.length && allowed.motion) clean.graphics = brief.graphics.slice(0, 12).map(cleanGraphic).filter(Boolean)
+          // TP9: a callout round a drawn box also, with editing.customMotion on
+          if (Array.isArray(brief.graphics) && brief.graphics.length && allowed.motion) clean.graphics = brief.graphics.slice(0, 12).map((g) => cleanGraphic(g, typeKitOn || (allowed.customMotion === true && g?.kind === "callout" && g?.mark) ? ALL_GRAPHIC_KINDS : GRAPHIC_KINDS)).filter(Boolean)
+          // TP7: a type kit or a style pack, from the person's brief or an approved plan, only with editing.typeKit on.
+          // The pack fills only what the brief leaves open; the kit is stored on the project by the make (EH-69)
+          if (typeKitOn && (brief.typeKit !== undefined || typeof brief.stylePack === "string")) {
+            let raw = brief.typeKit ?? null
+            if (typeof brief.stylePack === "string") {
+              if (!Object.hasOwn(STYLE_PACKS, brief.stylePack)) return refuse(res, 400, "There is no style pack by that name.")
+              const packed = applyStylePack(brief.stylePack, clean, { moods: allowed.craft ? ALL_MOODS : MOODS, grades: GRADES, transitions: TRANSITIONS, looks: ALL_LOOKS, motion: allowed.motion })
+              Object.assign(clean, packed.brief)
+              if (packed.notes.length) clean.packNotes = packed.notes
+              // The person's own pair, colours, logo and bar over the pack's
+              raw = { ...packed.kit, ...(raw && typeof raw === "object" ? raw : {}), pack: brief.stylePack }
+            }
+            const { kit, problem } = cleanTypeKit(raw, { packs: STYLE_PACKS })
+            if (problem) return refuse(res, 400, `That type kit can't be used: ${problem}.`)
+            if (kit) clean.typeKit = kit
+          }
+          // TP6: the style brief the person kept, only with editing.referenceIntent on: a reference's id and the trait ids
+          // they unticked. Nothing else of it comes from the browser: the Host builds the lines again from the measured numbers
+          if (allowed.referenceIntent === true && brief.styleBrief && safeId(brief.styleBrief.ref)) clean.styleBrief = { ref: brief.styleBrief.ref, off: cleanOff(brief.styleBrief.off) }
           // Animated scenes from an approved plan, only while the server's switch is on; the recipe checks each again against the speech
           if (Array.isArray(brief.scenes) && brief.scenes.length && (await projects.features()).visuals) {
             clean.scenes = brief.scenes.slice(0, 12).map(cleanScene).filter(Boolean)
             clean.sceneSound = brief.sceneSound !== false
           }
+        }
+        // The film's order (TP2), only from this make's own brief and only with editing.assembly on: the storyboard
+        // the Studio sent, or an approved plan's. Checked as set_assembly checks it; one file with none is the reel
+        // it always was, and with the switch off the key is dropped (ET-ASM-REG-01, EH-63)
+        if (brief && typeof brief === "object" && brief.assembly !== undefined && (await projects.features()).assembly === true) {
+          const assembly = { version: 1, parts: Array.isArray(brief.assembly?.parts) ? brief.assembly.parts : [] }
+          const problems = assemblyProblems(assembly, { project: state.log.current, index: state.index })
+          if (problems.length) return refuse(res, 400, `That order can't be made: ${problems[0]}`)
+          if (isAssembly(assembly.parts)) clean.assembly = assembly
         }
         if (asset !== undefined && typeof asset !== "string") return refuse(res, 400, "Name the take.")
         if (brief?.fresh === true) clean.fresh = true
@@ -417,6 +578,27 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         if (story) clean.story = story
         const approved = cleanPlan(plan)
         return say(200, jobs.start(state, { kind: "make", ...(asset ? { asset } : {}), brief: clean, ...(approved ? { plan: approved } : {}) }))
+      }
+      // Three openings to choose from (TP8, editing.directorLoop): started as a job, each film streamed by the job's own
+      // record. Off, neither route exists
+      if (parts[2] === "openings" && (await projects.features()).directorLoop === true) {
+        if (parts.length === 3 && method === "POST") {
+          const { asset, brief } = await readJson(req)
+          if (asset !== undefined && (typeof asset !== "string" || !state.log.current.assets.some((a) => a.id === asset && a.kind === "video"))) return refuse(res, 400, "Name the take.")
+          // Only the look of the openings comes from the browser, each value from its fixed list
+          const clean = {}
+          if (brief && typeof brief === "object") {
+            if (Object.hasOwn(FORMATS, brief.format)) clean.format = brief.format
+            if (typeof brief.captions === "string" && Object.hasOwn(LOOKS, brief.captions)) clean.captions = brief.captions
+            if (Object.hasOwn(GRADES, brief.grade)) clean.grade = brief.grade
+          }
+          return say(200, jobs.start(state, { kind: "openings", ...(asset ? { asset } : {}), brief: clean }))
+        }
+        if (parts.length === 5 && method === "GET") {
+          const file = /^\d{1,9}$/.test(parts[3]) && /^[0-2]$/.test(parts[4]) ? projects.openingFile(state, Number(parts[3]), Number(parts[4])) : null
+          if (!file) return refuse(res, 404, "That opening isn't there any more.")
+          return sendFile(req, res, file)
+        }
       }
       // The person fixes a word the recogniser misheard (UX_SPEC §5)
       if (parts[2] === "words" && parts.length === 4 && method === "POST") {
@@ -452,17 +634,31 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
         } catch {
           return refuse(res, 400, "That isn't a graphic.")
         }
-        const html = projects.graphicPreview(state, graphic, url.searchParams.get("format"))
+        const html = projects.graphicPreview(state, graphic, url.searchParams.get("format"), { typeKit: (await projects.features()).typeKit === true, drawn: (await projects.features()).customMotion === true })
         res.writeHead(200, { ...HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'; sandbox allow-scripts" })
         return res.end(html)
       }
       // The Director's plan: proposed in words with its settings; nothing is made here
       if (parts[2] === "plan" && parts.length === 3 && method === "POST") {
-        const { text, history, previous, choices } = await readJson(req)
+        const { text, history, previous, choices, mentions, mark: drawn } = await readJson(req)
         if (typeof text !== "string" || !text.trim() || text.length > 2000) return refuse(res, 400, "Say what you want, in up to 2,000 characters.")
+        const mark = (await projects.features()).customMotion === true ? cleanMark(drawn) : undefined
+        if (mark === null) return refuse(res, 400, "That drawing isn't a box, ring or arrow inside the frame. Draw it again.")
         const turns = Array.isArray(history) ? history.filter((h) => h && (h.who === "you" || h.who === "kriya") && typeof h.text === "string").slice(-6).map((h) => ({ who: h.who, text: h.text.slice(0, 400) })) : []
         const prior = cleanPlan(previous)
-        return say(200, await projects.plan(state, { text, history: turns, previous: prior, choices: choices && typeof choices === "object" ? choices : {} }))
+        return say(200, await projects.plan(state, { text, history: turns, previous: prior, choices: choices && typeof choices === "object" ? choices : {}, mentions, ...(mark ? { mark } : {}) }))
+      }
+      // TP6 (editing.referenceIntent): a reference's style is read as a job (progress, cancel) and its brief is built from
+      // what the job kept; asking for a brief never measures. Off, neither route exists
+      if (parts[2] === "references" && parts.length === 5 && (parts[4] === "measure" || parts[4] === "brief") && (await projects.features()).referenceIntent === true) {
+        const ref = decodeURIComponent(parts[3])
+        if (!state.log.current.assets.some((a) => a.id === ref && a.kind === "reference")) return refuse(res, 404, "There is no such reference in this project.")
+        if (parts[4] === "measure" && method === "POST") return say(200, jobs.start(state, { kind: "reference", asset: ref }))
+        if (parts[4] === "brief" && method === "GET") {
+          const format = url.searchParams.get("format")
+          const brief = await projects.styleBriefFor(state, ref, Object.hasOwn(FORMATS, format ?? "") ? format : undefined)
+          return say(200, brief ? { status: "ready", brief } : { status: "none" })
+        }
       }
       // A reference's classified analysis, measured once and kept
       if (parts[2] === "references" && parts.length === 4 && method === "GET") return say(200, await projects.referenceAnalysis(state, decodeURIComponent(parts[3])))
@@ -512,6 +708,9 @@ export function createHandler({ home, roots, projects, jobs, tavi, tools, tokenT
     const url = new URL(req.url, "http://host")
     try {
       if (overSocket) {
+        // TP11: the channel's own secret on every command, so another account on a shared Windows computer
+        // (whose pipe Node can't make owner-only) gets nothing. A Host made without one (tests) is as before
+        if (ipcToken !== null && !sameSecret(req.headers[TOKEN_HEADER], ipcToken)) return refuse(res, 401, "This command didn't come from this account's Kriya.")
         if (url.pathname === "/internal/info") return json(res, 200, { pid, port: port(), stamp, busy: busy() })
         if (url.pathname === "/internal/launch" && req.method === "POST") {
           const token = mintToken((await readJson(req)).back)

@@ -808,9 +808,47 @@
           },
           "customMotion": {
             "type": "boolean"
+          },
+          "assembly": {
+            "type": "boolean"
+          },
+          "livePreview": {
+            "type": "boolean"
+          },
+          "intent": {
+            "type": "boolean"
+          },
+          "craft": {
+            "type": "boolean"
+          },
+          "typeKit": {
+            "type": "boolean"
+          },
+          "referenceIntent": {
+            "type": "boolean"
+          },
+          "directorLoop": {
+            "type": "boolean"
+          },
+          "taviOrder": {
+            "type": "boolean"
           }
         },
-        "required": ["visuals", "playbooks", "mediaSearch", "motion", "customMotion"],
+        "required": [
+          "visuals",
+          "playbooks",
+          "mediaSearch",
+          "motion",
+          "customMotion",
+          "assembly",
+          "livePreview",
+          "intent",
+          "craft",
+          "typeKit",
+          "referenceIntent",
+          "directorLoop",
+          "taviOrder"
+        ],
         "additionalProperties": false
       }
     },
@@ -1044,7 +1082,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["take", "hook", "file", "name", "taste"]
+            "enum": ["take", "hook", "file", "name", "taste", "order"]
           },
           "prompt": {
             "type": "string",
@@ -1259,6 +1297,28 @@
                 },
                 "git": {
                   "type": "boolean"
+                },
+                "clips": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "n": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 999
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 40,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f<>]+$"
+                      }
+                    },
+                    "required": ["n"],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": ["id", "name", "path", "git"],

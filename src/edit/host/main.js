@@ -1,7 +1,8 @@
 // The Edit Host: one process per machine, detached, owning every job (EDD-03). It
 // holds a lock, listens on loopback and on an owner-only socket, and exits when idle.
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { randomBytes } from "node:crypto"
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { homedir } from "node:os"
 import { delimiter } from "node:path"
@@ -12,7 +13,7 @@ import { createScheduler, DEFAULT_SLOTS } from "../graph/scheduler.js"
 import { createGovernor } from "../loop/governor.js"
 import { kriyaHome } from "../../paths.js"
 import { createJobs } from "./jobs.js"
-import { codeStamp, editHome, isPipe, lockPath, portPath, socketPath } from "./paths.js"
+import { codeStamp, editHome, isPipe, lockPath, portPath, socketPath, tokenPath } from "./paths.js"
 import { createProjects } from "./projects.js"
 import { createHandler } from "./server.js"
 import { createTavi } from "./tavi.js"
@@ -78,7 +79,12 @@ let inFlight = 0 // a request still running isn't idle, however long it takes
 let port = 0
 // What code this process runs, so an outdated Host is replaced once it's idle (client.js)
 const stamp = codeStamp()
-const handle = createHandler({ home, roots, projects, jobs, tavi, tools: readTools, tokenTtlMs, port: () => port, stamp, busy: () => jobs.count() + tavi.pending(), onActivity: (change = 0) => ((inFlight += change), (lastActive = Date.now())), onStop: () => shutdown(), onLive: () => (liveAt = Date.now()), sse, log, pid: process.pid })
+// TP11: this launch's secret for its own channel (a Windows pipe takes anyone's connection), written owner-only
+// and atomically before the channel opens, so a command never meets a Host whose token isn't on disk yet
+const ipcToken = randomBytes(32).toString("hex")
+writeFileSync(`${tokenPath(home)}.tmp`, ipcToken, { mode: 0o600 })
+renameSync(`${tokenPath(home)}.tmp`, tokenPath(home))
+const handle = createHandler({ home, ipcToken, roots, projects, jobs, tavi, tools: readTools, tokenTtlMs, port: () => port, stamp, busy: () => jobs.count() + tavi.pending(), onActivity: (change = 0) => ((inFlight += change), (lastActive = Date.now())), onStop: () => shutdown(), onLive: () => (liveAt = Date.now()), sse, log, pid: process.pid })
 const web = createServer((req, res) => handle(req, res, false))
 const local = createServer((req, res) => handle(req, res, true))
 
@@ -92,6 +98,7 @@ function shutdown() {
     server.closeAllConnections()
   }
   if (!isPipe(socketPath(home))) rmSync(socketPath(home), { force: true })
+  rmSync(tokenPath(home), { force: true })
   tavi.close()
   watcher.close()
   projects.close()

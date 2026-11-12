@@ -10,10 +10,18 @@ import { join } from "node:path"
 import { busOf, speechSpans } from "../core/audio.js"
 import { isSceneBlock } from "../core/layout.js"
 import { wholeSegment } from "../core/plan.js"
+import { clipNumbers } from "../core/project.js"
 import { solve } from "../core/solver.js"
 import { measureLoudness } from "../engine/loudness.js"
 import { runTool } from "../engine/tool.js"
+import { extractDna2 } from "../engine/dna2.js"
+import { referenceFit, sayFit } from "./reference.js"
+import { judgeAssembly, sayFailure } from "./assembly.js"
 import { judgeCopy, ocrHelper, readOcr } from "./copy.js"
+import { captionAtRest, captionComposition } from "../engine/captions.js"
+import { glyphProblems, OCR_READS, scriptsIn } from "../engine/fonts.js"
+import { checkGlyphs, compositionFor } from "../engine/motion.js"
+import { intendedText } from "./copy.js"
 import { healthArgs, judgeHealth, judgeMotion, judgeSync, readHealth, streamTimes, tileFrames } from "./picture.js"
 import { curveOf, judgeMix, rangeOf } from "./sound.js"
 import { expectedWords, judgeReview, judgeSpeech, REVIEWER_SCHEMA } from "./speech.js"
@@ -52,7 +60,9 @@ const ratio = (text) => {
   return n > 0 && d > 0 ? { n, d } : null
 }
 const seconds = (flicks) => (flicks / FLICKS).toFixed(6)
-const SEVERITY = { "QG-13": "note", "QG-14": "note" }
+// QG-15 is a note until its threshold is measured and its seeded run passes (EH-70)
+// QG-16 (TP6) is a note by design: the film is the person's, not the reference's
+const SEVERITY = { "QG-13": "note", "QG-14": "note", "QG-15": "note", "QG-16": "note" }
 const result = (id, status, numbers = {}, message = "", at = null, severity = SEVERITY[id] ?? "block") => ({ id, status, severity, numbers, message, ...(at === null ? {} : { at }) })
 
 async function probeFile(file, run) {
@@ -318,7 +328,7 @@ async function qg07({ file, plan, run, thresholds }) {
 
 const textTiles = (plan) => plan.tiles.filter((t) => t.kind === "caption" || t.kind === "block")
 
-async function qg10({ plan, run, thresholds, tilePath, binDir, work }) {
+async function qg10({ plan, run, thresholds, tilePath, binDir, work, motion, glyphs = checkGlyphs }) {
   const tiles = textTiles(plan)
   if (!tiles.length) return result("QG-10", "not_applicable", {}, "No text on screen.")
   if (!tilePath || !binDir || !work) return result("QG-10", "not_checked", {}, "The gate has no tiles or helper folder to read text from.")
@@ -326,23 +336,46 @@ async function qg10({ plan, run, thresholds, tilePath, binDir, work }) {
   if (helper.missing) return result("QG-10", "not_checked", {}, helper.missing)
   mkdirSync(work, { recursive: true })
   const dir = mkdtempSync(join(work, "ocr-"))
+  // TP7 (EQ-17, SPIKES §6): a tile drawn with a type kit is read in Devanagari too (hi-IN), and the
+  // scripts no reader reads are checked glyph by glyph. A tile without a kit is read as before
+  const scriptsOf = (tile) => scriptsIn(intendedText(tile))
+  const devanagari = (tile) => !!tile.node.type && scriptsOf(tile).includes("devanagari") && scriptsOf(tile).every((script) => Object.hasOwn(OCR_READS, script))
+  const unreadable = (tile) => !!tile.node.type && scriptsOf(tile).some((script) => !Object.hasOwn(OCR_READS, script))
   try {
+    mkdirSync(join(dir, "hi"))
+    const fileOf = (tile, i) => join(dir, devanagari(tile) ? "hi" : "", `t${String(i).padStart(4, "0")}.png`)
     // Each tile at rest, over mid grey, as the reader sees it
     for (const [i, tile] of tiles.entries()) {
       const length = (tile.end - tile.at) / FLICKS
-      // A scene's labels come in as they're said, so it's read when they're all in, before it fades
-      const at = isSceneBlock(tile.node) ? Math.max(0, length - 0.5) : Math.min(length * 0.9, tile.kind === "caption" ? 0.4 : 1)
+      // A scene's labels come in as they're said, so it's read when they're all in, before it fades;
+      // a TP7 look whose words arrive as said is read once its last word is in
+      const rest = tile.kind === "caption" ? captionAtRest(tile.node) : null
+      const at = isSceneBlock(tile.node) ? Math.max(0, length - 0.5) : rest !== null ? Math.min(length * 0.9, rest / 1000) : Math.min(length * 0.9, tile.kind === "caption" ? 0.4 : 1)
       // The tile from zero: a seek rounded to just before a frame made the overlay's first output plain grey, an empty read (found on real footage)
-      await run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", at.toFixed(3), "-i", tilePath(tile.key), "-f", "lavfi", "-i", `color=c=0x808080:s=${plan.output.width}x${plan.output.height}`, "-filter_complex", "[0:v]setpts=PTS-STARTPTS[tile];[1:v][tile]overlay=shortest=1", "-frames:v", "1", "-y", join(dir, `t${String(i).padStart(4, "0")}.png`)], { timeoutMs: 60_000 })
+      await run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", at.toFixed(3), "-i", tilePath(tile.key), "-f", "lavfi", "-i", `color=c=0x808080:s=${plan.output.width}x${plan.output.height}`, "-filter_complex", "[0:v]setpts=PTS-STARTPTS[tile];[1:v][tile]overlay=shortest=1", "-frames:v", "1", "-y", fileOf(tile, i)], { timeoutMs: 60_000 })
     }
     let seen = readOcr(await run(helper.path, [dir], { timeoutMs: 300_000 }))
     // The reader swallows its own errors: every tile blank at once is the reader, not the screen (found under load).
     // One more read; a render that's really blank still fails
     if (tiles.length > 1 && tiles.every((_, i) => !seen.get(`t${String(i).padStart(4, "0")}.png`)?.text)) seen = readOcr(await run(helper.path, [dir], { timeoutMs: 300_000 }))
+    if (tiles.some(devanagari)) for (const [name, read] of readOcr(await run(helper.path, [join(dir, "hi"), OCR_READS.devanagari], { timeoutMs: 300_000 }))) seen.set(name, read)
     const judged = judgeCopy(tiles.map((tile, i) => {
       const read = seen.get(`t${String(i).padStart(4, "0")}.png`)
-      return { tile, seen: read?.text ?? "", unsure: read?.unsure ?? [] }
+      return { tile, seen: read?.text ?? "", unsure: read?.unsure ?? [], reads: devanagari(tile) ? ["latin", "devanagari"] : ["latin"] }
     }), thresholds)
+    // The glyph check, in the runtime's Chrome: no missing glyph, the shipped fonts drew it, every cluster drawn
+    const checked = tiles.filter(unreadable)
+    if (checked.length && motion && !motion.missing) {
+      const frame = { output: plan.output, canvas: plan.canvas }
+      const items = checked.map((tile) => ({ id: tile.key, html: compositionFor(tile, frame, captionComposition), at: tile.kind === "caption" ? (captionAtRest(tile.node) ?? 400) : Math.min(((tile.end - tile.at) / FLICKS) * 900, 1000) }))
+      const reports = await glyphs({ items, work: mkdtempSync(join(work, "glyphs-")), runtime: motion })
+      for (const tile of checked) {
+        const problems = (reports.get(tile.key) ?? []).flatMap((report) => glyphProblems(report, { shipped: tile.node.type.shipped }))
+        for (const problem of problems) judged.failures.push({ kind: "missing_glyph", t: tile.at, seconds: Math.round((tile.at / FLICKS) * 100) / 100, problem })
+      }
+      judged.unread = judged.unread.filter((u) => !checked.some((tile) => tile.key === u.tile))
+      judged.numbers = { ...judged.numbers, glyphChecked: checked.length, unread: judged.unread.length }
+    }
     if (judged.unread.length === tiles.length) return result("QG-10", "not_checked", judged.numbers, `No reader for ${judged.unread[0].script} script here, so its shaping wasn't checked.`)
     return outcome("QG-10", judged)
   } finally {
@@ -420,7 +453,7 @@ export function verdictOf(results) {
  *   tilePath, motion, work: the Engine's tiles, the runtime's Chrome and a scratch folder, for QG-08 and QG-09; stems: the Engine's, for QG-06's mix;
  *   recognise: a verified recogniser (file → words), for QG-04 and QG-14; ask: the Director, for QG-14 only; binDir: where helpers are built (QG-10)
  */
-export async function runGates({ file, plan, project, index, sourcePath, run = runTool, only = [...BUILT], thresholds = {}, tilePath, motion, work, inputPath, stems, recognise, ask, binDir }) {
+export async function runGates({ file, plan, project, index, sourcePath, run = runTool, only = [...BUILT], thresholds = {}, tilePath, motion, work, inputPath, stems, recognise, ask, binDir, assembly, referenceFit: fit }) {
   // Frozen: no gate, fix or model can loosen what the recipe set (QUALITY_GATES §4)
   const limits = Object.freeze({ ...THRESHOLDS, ...thresholds })
   const shared = { file, plan, project, index, sourcePath, run, thresholds: limits, tilePath, motion, work, inputPath, stems, recognise, ask, binDir }
@@ -437,5 +470,37 @@ export async function runGates({ file, plan, project, index, sourcePath, run = r
       results.push(result(id, "not_checked", {}, `The gate couldn't run: ${error.message}`))
     }
   }
+  // QG-15 (TP2): only for a make that followed an assembly, so every other film has the gates it had
+  if (assembly?.parts?.length && (only.includes("QG-15") || only.length === BUILT.size)) {
+    try {
+      results.push(await qg15({ ...shared, assembly }))
+    } catch (error) {
+      results.push(result("QG-15", "not_checked", {}, `The gate couldn't run: ${error.message}`))
+    }
+  }
+  // QG-16 (TP6): only for a make that followed a reference's style brief, so every other film has the gates it had
+  if (fit?.kept?.length && (only.includes("QG-16") || only.length === BUILT.size)) {
+    try {
+      results.push(await qg16({ ...shared, kept: fit.kept }))
+    } catch (error) {
+      results.push(result("QG-16", "not_checked", {}, `The gate couldn't run: ${error.message}`))
+    }
+  }
   return { gates: results, ...verdictOf(results) }
+}
+
+// The made cut, measured by the same code that measured the reference, against the lines the person kept
+async function qg16({ file, run, kept }) {
+  const judged = referenceFit(kept, await extractDna2(file, { run }))
+  const numbers = { followed: judged.followed, of: judged.of, unread: judged.unread }
+  if (!judged.missed.length) return result("QG-16", judged.of ? "passed" : "not_checked", numbers, sayFit(judged))
+  return { ...result("QG-16", "failed", numbers, sayFit(judged)), failures: judged.missed.map((m) => ({ kind: "reference_trait", trait: m.id, hint: m.hint })) }
+}
+
+async function qg15(input) {
+  const judged = await judgeAssembly({ ...input, timeline: solve(input.project, input.index) })
+  const numbers = clipNumbers(input.project)
+  const first = judged.failures[0]
+  if (!first) return result("QG-15", "passed", judged.numbers)
+  return { ...result("QG-15", "failed", { ...judged.numbers, first }, sayFailure(first, (asset) => `clip ${numbers.get(asset) ?? "?"}`), first.seconds === undefined ? null : Math.round(first.seconds * FLICKS)), failures: judged.failures }
 }

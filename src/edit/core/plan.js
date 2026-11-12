@@ -7,12 +7,14 @@ import { outputFaces, unionBox } from "./faces.js"
 import { canonical, sha256 } from "./project.js"
 import { solveReframe } from "./reframe.js"
 import { solve } from "./solver.js"
+import { EFFECTS as FX, skinEase } from "./effects.js"
+import { against, kitNode, typeKitOf } from "./type-kit.js"
 import { flicksToFrames, FLICKS, frameFlicks, framesToFlicks, scaleFlicks, snapToFrame } from "./time.js"
 
 const MAX_SEGMENT = 6 * FLICKS
 const DRAFT_SHORT_SIDE = 720
 // A transition isn't an effect on the piece's own frames: it becomes the piece's `enter` below
-const PICTURE_EFFECTS = new Set(["reframe", "grade", "lut", "stabilize", "fade"])
+const PICTURE_EFFECTS = new Set(["reframe", "grade", "lut", "stabilize", "fade", "frame", "fx"])
 const AUDIO_EFFECTS = new Set(["level", "eq", "duck", "fade", "fit"])
 
 const even = (value) => Math.round(value / 2) * 2
@@ -127,6 +129,8 @@ export function wholeSegment(plan) {
       overlays: plan.segments.flatMap((s) => s.node.overlays.map(absolute(s.start))),
       tiles: plan.tiles.filter((tile) => !seen.has(tile.key) && seen.add(tile.key)).map(({ key, at, end }) => ({ key, at, end })),
       ...(plan.mattes?.length ? { mattes: plan.mattes } : {}),
+      ...(plan.adjustments?.length ? { adjust: plan.adjustments.map((a) => ({ at: a.at, end: a.end, fx: { ...a.fx, origin: a.at / FLICKS, span: a.end - a.at } })) } : {}),
+      ...(plan.brand ? { brand: { ...plan.brand, from: 0 } } : {}),
     },
   }
 }
@@ -134,10 +138,11 @@ export function wholeSegment(plan) {
 /**
  * @param {object} project
  * @param {object} rawIndex
- * @param {{ engineVersion: string, runtimeVersion: string, quality?: "draft" | "master", deliverable?: string, rules?: object }} options
+ * @param {{ engineVersion: string, runtimeVersion: string, quality?: "draft" | "master", deliverable?: string, rules?: object, filters?: Set<string> }} options
+ *   filters: this runtime's FFmpeg filters (TP5): an effect needing one it lacks is left out with a note, never faked
  * @returns {object} the RenderPlan: plain data, no I/O
  */
-export function compile(project, rawIndex, { engineVersion, runtimeVersion, quality = "draft", deliverable, rules } = {}) {
+export function compile(project, rawIndex, { engineVersion, runtimeVersion, quality = "draft", deliverable, rules, filters, fonts, customMotion = false } = {}) {
   if (!engineVersion || !runtimeVersion) throw new TypeError("compile needs engineVersion and runtimeVersion: they are part of every cache key")
   const timeline = solve(project, rawIndex, rules)
   const output = outputOf(project, quality, deliverable)
@@ -148,6 +153,11 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
 
   // key = sha256(engine ‖ runtime ‖ inputs' content ids ‖ resolved plan node ‖ output settings)
   const key = (node, assets) => sha256(canonical([engineVersion, runtimeVersion, [...new Set(assets)].map((id) => fingerprint.get(id)).sort(), node, settings]))
+
+  // TP7: a type kit the person or an approved plan chose (look.brand.type); none, and every node is the one it was (EH-69)
+  const kit = typeKitOf(project)
+  const typeNode = kit ? kitNode(kit, fonts) : null
+  if (kit && !typeNode.shipped) issues.push({ code: "fonts_missing", message: "the Fonts pack isn't installed here, so this film's type kit draws in the system fonts (kriya edit setup --pack fonts)" })
 
   const burnCaptions = deliverable === undefined || project.deliverables.find((d) => d.id === deliverable)?.burnCaptions !== false
   const captionTiles = burnCaptions
@@ -161,15 +171,19 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
           placement: caption.placement,
           duration: caption.end - caption.at,
           ...(caption.behind ? { behind: true } : {}),
+          ...(typeNode ? { type: typeNode } : {}),
         }
         return { key: key(node, []), kind: "caption", at: caption.at, end: caption.end, node }
       })
     : []
+  // TP9: a model-written animation is drawn only while editing.customMotion is on; off, it stays in the project and out of the film
+  const custom = timeline.overlays.filter((overlay) => overlay.block?.blockId === "custom")
+  if (custom.length && customMotion !== true) issues.push({ code: "custom_motion_off", message: `custom motion is switched off, so ${custom.length === 1 ? "a custom animation isn't" : `${custom.length} custom animations aren't`} drawn` })
   const blockTiles = timeline.overlays
     // A definition with no clear place stays out (the solver has said why), rather than land on a face
-    .filter((overlay) => overlay.block && !(overlay.block.blockId === "term" && !overlay.placement))
+    .filter((overlay) => overlay.block && !(overlay.block.blockId === "term" && !overlay.placement) && (overlay.block.blockId !== "custom" || customMotion === true))
     .map((overlay) => {
-      const node = { kind: "block", ...overlay.block, placement: overlay.placement, duration: overlay.end - overlay.at, ...(overlay.behind ? { behind: true } : {}) }
+      const node = { kind: "block", ...overlay.block, placement: overlay.placement, duration: overlay.end - overlay.at, ...(overlay.behind ? { behind: true } : {}), ...(typeNode && overlay.block.blockId === "graphic" ? { type: typeNode } : {}) }
       return { key: key(node, []), kind: "block", at: overlay.at, end: overlay.end, node }
     })
   const tiles = [...captionTiles, ...blockTiles].sort((a, b) => a.at - b.at || (a.key < b.key ? -1 : 1))
@@ -219,6 +233,33 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
   // A transition into a piece (transitions.js): the piece before it, frozen on its last frame and
   // dressed as it was, for the incoming piece to arrive over. Only in the segment the piece starts
   // in, never longer than half the piece or than that segment less two frames, so the cut stays put
+  // Effects from the registry (TP5): each knows where it starts in its chain, how long it is, and how strongly
+  // the skin guard lets it act; one this runtime can't draw goes, with a note. Nothing here without an fx effect
+  const clipSpan = new Map()
+  for (const piece of timeline.picture) {
+    const span = clipSpan.get(piece.clip)
+    clipSpan.set(piece.clip, span ? { at: Math.min(span.at, piece.at), end: Math.max(span.end, piece.end) } : { at: piece.at, end: piece.end })
+  }
+  const noted = new Set()
+  const note = (code, clip, message) => !noted.has(`${code}:${clip}:${message}`) && (noted.add(`${code}:${clip}:${message}`), issues.push({ code, clip, message }))
+  const drawable = (effect, clip) => {
+    if (effect.type === "stabilize" && filters && !filters.has("deshake")) return note("effect_unavailable", clip, "this FFmpeg has no deshake filter, so the picture isn't steadied"), false
+    if (effect.type !== "fx") return true
+    const missing = FX[effect.id].needs.filter((name) => filters && !filters.has(name))
+    if (missing.length) return note("effect_unavailable", clip, `this FFmpeg has no ${missing.join(", ")} filter, so ${FX[effect.id].label.toLowerCase()} is left out`), false
+    return true
+  }
+  const faced = (item) => (rawIndex.faces ?? []).some((face) => face.asset === item.asset && face.t >= item.in && face.t <= item.out)
+  const dressed = (effects, { clip, chainAt, item }) =>
+    effects.filter((effect) => drawable(effect, clip)).map((effect) => {
+      if (effect.type !== "fx") return effect
+      const span = clipSpan.get(clip) ?? { at: chainAt, end: chainAt }
+      const ease = item && faced(item) ? skinEase(effect) : 1
+      if (ease < 1) note("skin_guard", clip, `${FX[effect.id].label} would move skin tones too far, so it is eased on this clip`)
+      return { ...effect, origin: (span.at - chainAt) / FLICKS, span: span.end - span.at, ...(ease < 1 ? { ease: Math.round(ease * 1000) / 1000 } : {}) }
+    })
+  const adjustments = (timeline.adjustments ?? []).filter((a) => drawable(a.fx, a.clip)).map(({ at, end, fx, clip }) => ({ clip, at, end, fx }))
+
   const frame = frameFlicks(project.canvas.fps)
   const enterOf = (piece, start, end) => {
     const asked = piece.effects.find((e) => e.type === "transition")
@@ -232,9 +273,16 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
     const color = sourceColor(before.asset)
     // shortcut: a punch-in still on at the cut is kept only when it's a plain centred one; an eased or focused zoom is left off the held frame
     const zoom = timeline.zooms.find((z) => z.at < piece.at && piece.at <= z.end && z.x === undefined && z.ease !== "smooth")
-    const from = { asset: before.asset, in: last, out: before.out, at: 0, end: duration, speed: { n: 1, d: 1 }, hold: true, effects: only(resolved(before), PICTURE_EFFECTS), ...(path ? { crop: [{ t: last, x: cropAt(path, last) }] } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}) }
+    const from = { asset: before.asset, in: last, out: before.out, at: 0, end: duration, speed: { n: 1, d: 1 }, hold: true, effects: dressed(only(resolved(before), PICTURE_EFFECTS), { clip: before.clip, chainAt: piece.at, item: null }), ...(path ? { crop: [{ t: last, x: cropAt(path, last) }] } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}) }
     return { kind: asked.kind, duration, from }
   }
+
+  // TP7: the kit's bar and logo bug span the cut, so FFmpeg draws them on every segment (CRAFT §5.4)
+  const logo = kit?.logo ? project.assets.find((a) => a.id === kit.logo && ["image", "video"].includes(a.kind)) : null
+  if (kit?.logo && !logo) issues.push({ code: "logo_missing", message: "the logo chosen for this film isn't a picture in its bin any more, so no logo is shown" })
+  const chapterStarts = timeline.overlays.filter((o) => o.block?.blockId === "graphic" && ["chapter", "card"].includes(o.block.variables?.kind)).map((o) => o.at).filter((t) => t > 0)
+  const accent = kit?.colors?.accent ?? "#ffd23f"
+  const brand = kit && (kit.bar || logo) ? { ...(kit.bar ? { bar: { kind: kit.bar, color: accent, track: against(accent), total: timeline.duration, ...(kit.bar === "chapters" ? { chapters: [...new Set(chapterStarts)].sort((a, b) => a - b) } : {}) } } : {}), ...(logo ? { bug: { asset: logo.id, corner: kit.corner ?? "tr" } } : {}) } : null
 
   const segments = boundaries(timeline, rawIndex, project.canvas.fps).map(([start, end], i) => {
     const picture = timeline.picture.filter(during(start, end)).map((piece) => {
@@ -244,17 +292,23 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
       const crop = path ? cropFor(path, part, (rawIndex.shots ?? []).filter((s) => s.asset === piece.asset).map((s) => s.start)) : undefined
       const zoom = timeline.zooms.find(during(start, end))
       const enter = enterOf(piece, start, end)
-      return { ...part, ...(piece.hold ? { hold: true } : {}), effects: only(resolved(piece), PICTURE_EFFECTS), ...(crop ? { crop } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}), ...(enter ? { enter } : {}) }
+      return { ...part, ...(piece.hold ? { hold: true } : {}), effects: dressed(only(resolved(piece), PICTURE_EFFECTS), { clip: piece.clip, chainAt: start + part.at, item: part }), ...(crop ? { crop } : {}), ...(zoom ? { zoom: zoomNode(zoom, start) } : {}), ...(color ? { color } : {}), ...(enter ? { enter } : {}) }
     })
-    const overlays = footage.filter(during(start, end)).map((overlay) => ({ ...clipped(overlay, start, end), effects: only(overlay.effects, PICTURE_EFFECTS) }))
+    const overlays = footage.filter(during(start, end)).map((overlay) => {
+      const part = clipped(overlay, start, end)
+      // A B-roll's own effect starts with the B-roll
+      return { ...part, effects: dressed(only(overlay.effects, PICTURE_EFFECTS), { clip: overlay.clip, chainAt: overlay.at, item: part }).map((e) => (e.type === "fx" ? { ...e, origin: (overlay.at - Math.max(overlay.at, start)) / FLICKS, span: overlay.end - overlay.at } : e)) }
+    })
     const node = {
       picture,
       overlays,
       tiles: tiles.filter(during(start, end)).map((tile) => ({ key: tile.key, at: tile.at - start, end: tile.end - start })),
       ...(mattes.some(during(start, end)) ? { mattes: mattes.filter(during(start, end)).map((m) => ({ at: m.at - start, end: m.end - start, box: m.box })) } : {}),
+      ...(adjustments.some(during(start, end)) ? { adjust: adjustments.filter(during(start, end)).map((a) => ({ at: Math.max(0, a.at - start), end: Math.min(end, a.end) - start, fx: { ...a.fx, origin: (a.at - start) / FLICKS, span: a.end - a.at } })) } : {}),
+      ...(brand ? { brand: { ...brand, from: start } } : {}),
     }
     const luts = picture.flatMap((item) => item.effects.filter((e) => e.type === "lut").map((e) => e.asset))
-    return { id: `s${i}`, start, end, key: key(node, [...picture.flatMap((item) => [item.asset, ...(item.enter ? [item.enter.from.asset] : [])]), ...overlays.map((item) => item.asset), ...luts]), node }
+    return { id: `s${i}`, start, end, key: key(node, [...picture.flatMap((item) => [item.asset, ...(item.enter ? [item.enter.from.asset] : [])]), ...overlays.map((item) => item.asset), ...luts, ...(brand?.bug ? [brand.bug.asset] : [])]), node }
   })
 
   issues.push(...crowdedEffects(timeline.audio))
@@ -290,6 +344,8 @@ export function compile(project, rawIndex, { engineVersion, runtimeVersion, qual
     segments,
     tiles,
     ...(mattes.length ? { mattes } : {}),
+    ...(adjustments.length ? { adjustments } : {}),
+    ...(brand ? { brand } : {}),
     audio,
     keys: { picture: sha256(canonical(pictureNodes)), audio: audio.key, caption: sha256(canonical(tiles.map((tile) => tile.key))) },
     issues,

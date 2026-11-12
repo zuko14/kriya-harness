@@ -18,6 +18,7 @@ import { chromeSkip, linkMotion, motionSkip } from "./motion-runtime.js"
 import { drums, writeWav } from "../sound.js"
 import { writeMusicBed } from "../../../src/edit/engine/music-bed.js"
 import { request } from "node:http"
+import { hostHeaders } from "../../../src/edit/host/paths.js"
 
 // ET-RCP-02, the phase's key check: a raw synthetic take with a restart, fillers, a
 // stutter and a retake becomes a cut, reframed, mastered and checked reel, through a
@@ -385,7 +386,7 @@ test("a Director's plan made real: a black-and-white cold open, a whoosh on each
   // A reference upload, as the Studio's picker sends it
   const upload = (path, bytes) =>
     new Promise((done, fail) => {
-      const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: { host: "kriya-edit" } }, (res) => {
+      const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: hostHeaders(home) }, (res) => {
         const chunks = []
         res.on("data", (c) => chunks.push(c))
         res.on("end", () => (res.statusCode === 200 ? done(JSON.parse(Buffer.concat(chunks).toString())) : fail(new Error(Buffer.concat(chunks).toString()))))
@@ -470,7 +471,7 @@ test("speed and B-roll made real: a cold open that ramps into the story, angles,
   // A reference upload, as the Studio's picker sends it
   const upload = (path, bytes) =>
     new Promise((done, fail) => {
-      const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: { host: "kriya-edit" } }, (res) => {
+      const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: hostHeaders(home) }, (res) => {
         const chunks = []
         res.on("data", (c) => chunks.push(c))
         res.on("end", () => (res.statusCode === 200 ? done(JSON.parse(Buffer.concat(chunks).toString())) : fail(new Error(Buffer.concat(chunks).toString()))))

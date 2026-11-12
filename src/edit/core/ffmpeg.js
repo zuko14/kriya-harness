@@ -3,6 +3,7 @@
 
 import { secondsArg } from "./time.js"
 import { TRANSITIONS } from "./transitions.js"
+import { fxSteps } from "./effects.js"
 
 const BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 // On the frames too: FFmpeg can drop the output flags alone when it converts a format
@@ -82,7 +83,22 @@ export function colourSteps(color, toneMap) {
   return [filter("scale", { in_color_matrix: "bt2020", in_range: "tv", out_range: "pc" }), "format=gbrp16le", filter("lut3d", { file: toneMap(color.transfer) }), filter("scale", { out_color_matrix: "bt709", out_range: "tv" }), "format=yuv420p"]
 }
 
-function pictureChain(item, width, height, plan, { input, toneMap }) {
+export const PLATE = "0x101014" // the bars of a fitted picture: near black, as the Studio's stage is
+
+/**
+ * The `frame` effect (TP2, ASSEMBLY_AND_INTENT §6.2): the whole picture inside the frame. `fit` puts
+ * it on bars; `blur` puts it over a blurred, darkened copy of itself that fills the frame. One
+ * step of a comma chain: the blur's two branches carry labels of their own (`n` keeps them apart).
+ * shortcut: the bars are one colour, not the look's plate; a look that sets one replaces PLATE
+ */
+export function frameSteps(frame, width, height, n) {
+  const whole = filter("scale", { w: width, h: height, force_original_aspect_ratio: "decrease", force_divisible_by: 2 })
+  if (frame.mode === "fit") return [whole, filter("pad", { w: width, h: height, x: "(ow-iw)/2", y: "(oh-ih)/2", color: PLATE })]
+  const behind = [filter("scale", { w: width, h: height, force_original_aspect_ratio: "increase" }), filter("crop", { w: width, h: height }), filter("boxblur", { luma_radius: Math.max(2, Math.round(Math.min(width, height) / 24)), luma_power: 2 }), filter("eq", { brightness: -0.12, saturation: 0.9 })].join(",")
+  return [`split[fa${n}][fb${n}];[fa${n}]${behind}[fbg${n}];[fb${n}]${whole}[ffg${n}];[fbg${n}][ffg${n}]${filter("overlay", { x: "(W-w)/2", y: "(H-h)/2" })}`]
+}
+
+function pictureChain(item, width, height, plan, { input, toneMap, uid }) {
   const steps = []
   // The input already seeks to item.in, so a long file isn't decoded from its start
   if (item.hold) {
@@ -94,12 +110,17 @@ function pictureChain(item, width, height, plan, { input, toneMap }) {
   steps.push(...colourSteps(item.color, toneMap))
   if (item.crop?.length) steps.push(filter("crop", { w: `ih*${plan.canvas.width}/${plan.canvas.height}`, h: "ih", x: cropX(item.crop, item.in), y: 0 }))
   if (item.zoom && !animatedZoom(item.zoom)) steps.push(filter("crop", { w: `iw/${item.zoom.scale}`, h: `ih/${item.zoom.scale}` }))
-  steps.push(filter("scale", { w: width, h: height, force_original_aspect_ratio: "increase" }), filter("crop", { w: width, h: height }))
+  const frame = item.effects.find((e) => e.type === "frame")
+  if (frame) steps.push(...frameSteps(frame, width, height, uid?.() ?? 0))
+  else steps.push(filter("scale", { w: width, h: height, force_original_aspect_ratio: "increase" }), filter("crop", { w: width, h: height }))
   if (animatedZoom(item.zoom)) steps.push(...zoomSteps(item.zoom, width, height, plan.output.fps))
   for (const effect of item.effects) {
     if (effect.type === "lut") steps.push(filter("lut3d", { file: input(effect.asset) }))
     else if (effect.type === "grade") steps.push(...gradeSteps(effect, input))
-    else if (effect.type !== "reframe") throw new RangeError(`this render can't do ${effect.type} yet`)
+    // TP5: a registry effect, from numbers only; stabilize drawn at last (EH-57: the operation always stored it)
+    else if (effect.type === "fx") steps.push(...fxSteps(effect, { width, height, uid: uid ?? (() => 0), origin: effect.origin ?? 0, span: effect.span ?? 0 }))
+    else if (effect.type === "stabilize") steps.push("deshake")
+    else if (effect.type !== "reframe" && effect.type !== "frame") throw new RangeError(`this render can't do ${effect.type} yet`)
   }
   // Square pixels on every piece: a zoom's crop leaves a fractional aspect, and concat refuses a mix (found in ED7)
   steps.push("setsar=1", TAG_BT709)
@@ -137,6 +158,8 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
   const { node } = segment
   const inputs = []
   const inputFor = (path, seek = null) => inputs.push({ path: absolute(path), seek }) - 1
+  let framed = 0
+  const uid = () => framed++ // a label for each framed picture's two branches
   const tiles = node.tiles
     .map((part) => ({ ...plan.tiles.find((t) => t.key === part.key), ...part }))
     .filter((part) => !without?.(part))
@@ -146,7 +169,7 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
   const chains = []
 
   const labels = node.picture.map((item, i) => {
-    const chain = `[${inputFor(input(item.asset), item.in)}:v]${pictureChain(item, width, height, plan, { input, toneMap })}`
+    const chain = `[${inputFor(input(item.asset), item.in)}:v]${pictureChain(item, width, height, plan, { input, toneMap, uid })}`
     if (!item.enter) {
       chains.push(`${chain}[p${i}]`)
       return `[p${i}]`
@@ -159,7 +182,7 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
     // xfade needs both sides alike: one frame rate, one pixel format, one time base
     const alike = `${filter("fps", { fps: `${plan.output.fps.n}/${plan.output.fps.d}` })},format=yuv420p,settb=AVTB`
     chains.push(`${chain},${alike},split[ph${i}][pt${i}]`)
-    chains.push(`[${inputFor(input(from.asset), from.in)}:v]${pictureChain(from, width, height, plan, { input, toneMap })},${alike}[pf${i}]`)
+    chains.push(`[${inputFor(input(from.asset), from.in)}:v]${pictureChain(from, width, height, plan, { input, toneMap, uid })},${alike}[pf${i}]`)
     chains.push(`[ph${i}]${filter("trim", { end: length })},setpts=PTS-STARTPTS[pa${i}]`)
     chains.push(`[pf${i}][pa${i}]${filter("xfade", { transition: TRANSITIONS[kind], duration: length, offset: 0 })}[px${i}]`)
     chains.push(`[pt${i}]${filter("trim", { start: length })},setpts=PTS-STARTPTS[pb${i}]`)
@@ -180,9 +203,18 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
     current = next
   }
   node.overlays.forEach((item, i) => {
-    chains.push(`[${inputFor(input(item.asset), item.in)}:v]${pictureChain(item, width, height, plan, { input, toneMap })},setpts=PTS+${secondsArg(item.at)}/TB[o${i}]`)
+    chains.push(`[${inputFor(input(item.asset), item.in)}:v]${pictureChain(item, width, height, plan, { input, toneMap, uid })},setpts=PTS+${secondsArg(item.at)}/TB[o${i}]`)
     layer(`[o${i}]`, item.at, item.end)
   })
+
+  // An effect over a stretch of the cut (TP5): the picture split, the effect on one copy, laid back over its window
+  for (const [i, adjust] of (node.adjust ?? []).entries()) {
+    const steps = fxSteps(adjust.fx, { width, height, uid, origin: adjust.fx.origin ?? 0, span: adjust.fx.span ?? 0 })
+    if (!steps.length) continue
+    chains.push(`${current}split[aj${i}][ak${i}]`, `[ak${i}]${steps.join(",")}[al${i}]`)
+    current = `[aj${i}]`
+    layer(`[al${i}]`, adjust.at, adjust.end)
+  }
 
   // The speaker, cut from the picture before anything covers it, goes back over the text behind
   const mattes = node.mattes ?? []
@@ -221,6 +253,33 @@ export function segmentArgs(plan, segment, { input, tile, output, encoder, toneM
     }
   }
   if (!matted) drawMattes()
+
+  // TP7 (CRAFT §5.4): the type kit's bar and logo bug, over everything and across the cut, so each
+  // segment draws its share of them on the cut's own clock (from: where this segment starts)
+  if (node.brand) {
+    const { bar, bug, from } = node.brand
+    const draw = (chain) => {
+      const next = `[v${step++}]`
+      chains.push(`${current}${chain}${next}`)
+      current = next
+    }
+    if (bar) {
+      const h = Math.max(4, Math.round(height * 0.008))
+      const y = height > width ? 0 : height - h
+      const total = secondsArg(bar.total)
+      draw(filter("drawbox", { x: 0, y, w: width, h, color: `${bar.track}@0.35`, t: "fill" }))
+      chains.push(`${filter("color", { c: bar.color, s: `${width}x${h}`, r: `${plan.output.fps.n}/${plan.output.fps.d}`, d: secondsArg(segment.end - segment.start) })}[bar]`)
+      // The filled part grows with the cut's time: this segment's t plus where it starts
+      draw(`[bar]${filter("overlay", { x: `-${width}+${width}*(t+${secondsArg(from)})/${total}`, y, eval: "frame" })}`)
+      for (const at of bar.chapters ?? []) draw(filter("drawbox", { x: Math.max(0, Math.round((width * at) / bar.total) - 1), y, w: Math.max(2, Math.round(h * 0.6)), h, color: bar.track, t: "fill" }))
+    }
+    if (bug) {
+      const side = Math.round(Math.min(width, height) * 0.11)
+      const margin = Math.round(Math.min(width, height) * 0.04)
+      chains.push(`[${inputFor(input(bug.asset))}:v]${filter("scale", { w: side, h: side, force_original_aspect_ratio: "decrease" })},format=rgba[bug]`)
+      draw(`[bug]${filter("overlay", { x: bug.corner.endsWith("r") ? `W-w-${margin}` : margin, y: bug.corner.startsWith("b") ? `H-h-${margin}` : margin, eof_action: "repeat" })}`)
+    }
+  }
 
   const head = ["-nostdin", "-hide_banner", ...inputs.flatMap(({ path, seek }) => [...(seek === null ? [] : ["-ss", secondsArg(seek)]), "-protocol_whitelist", "file,pipe", "-i", path])]
   if (frames) {

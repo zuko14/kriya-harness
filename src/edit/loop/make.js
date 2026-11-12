@@ -12,6 +12,7 @@ import { remapIds, remapOp, replayable } from "../director/continuity.js"
 import { planReel, recipeFor } from "../recipes/reel.js"
 import { search } from "./loop.js"
 import { repairLadder } from "./repair.js"
+import { roundsLeft, watchAndFix } from "../director/watch-fix.js"
 
 const FLICKS = 705_600_000
 const TEXT_GATES = new Set(["QG-08", "QG-09", "QG-10", "QG-11"])
@@ -38,9 +39,10 @@ export function planVerdict(project, index, recipe, { engineVersion = "f0", runt
  *   ask: Function, render: (project: object, deliverable: string, signal?: AbortSignal) => Promise<{ file: string, plan: object }>,
  *   sourcePath: (asset: string) => string, signal?: AbortSignal, onStage?: (stage: string) => void, run?: Function,
  *   gateKit?: { tilePath?: Function, motion?: object, work?: string }, the Engine's tiles and Chrome, for QG-08 and QG-09
+ *   watch?: { view: (attempt: object) => Promise<{ report: object, timeline: object }> } | null, the Director's watch-and-fix (TP8, editing.directorLoop); absent, the make as before
  * }} input
  */
-export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null, edits = [] }) {
+export async function makeReel({ project, head, index, asset, brief = {}, ask, render, sourcePath, signal, onStage = () => {}, run, gateKit = {}, planner = null, plannerRecipe = null, edits = [], watch = null }) {
   // edits: what the person did to the last cut, replayed on each candidate before it is rendered and gated
   // planner: a recipe with no variants to try (a programme, a montage), instead of the reel
   const recipe = plannerRecipe ?? recipeFor(brief)
@@ -74,6 +76,14 @@ export async function makeReel({ project, head, index, asset, brief = {}, ask, r
       attempt = ladder.best
       candidate.repairs = ladder.attempts
       candidate.person = ladder.person
+    }
+    // TP8: the Director watches what was rendered and fixes it, in the rounds the ladder left (EH-74)
+    const left = watch ? roundsLeft(candidate.repairs) : 0
+    if (left > 0) {
+      onStage("watch")
+      const watched = await watchAndFix(attempt, { index, view: watch.view, render: (project) => render(project, deliverable.id, signal), check, rounds: left, signal })
+      attempt = watched.best
+      candidate.watched = { rounds: watched.rounds, left: watched.left, score: watched.best.report?.score ?? null }
     }
     Object.assign(candidate, { project: attempt.project, ops: attempt.ops, file: attempt.file, plan: attempt.plan, gates: attempt.checked })
     const checked = attempt.checked

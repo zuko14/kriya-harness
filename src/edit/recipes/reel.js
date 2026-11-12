@@ -9,9 +9,13 @@ import { graphicOps, isPlanGraphic } from "./graphic-clips.js"
 import { TRANSITION_DEFAULT, TRANSITIONS } from "../core/transitions.js"
 import { apply } from "../core/ops.js"
 import { solve } from "../core/solver.js"
-import { LOOKS, pages, readablePages } from "../engine/captions.js"
+import { ALL_LOOKS, pageLimits, pages, placeOf, readablePages } from "../engine/captions.js"
 import { paperEdit } from "../index/views.js"
 import { sceneOps } from "./scene-clips.js"
+import { busOf } from "../core/audio.js"
+import { compile } from "../core/plan.js"
+import { onBeat, quietStretch, splitOps, timelineBeats } from "./sound.js"
+import { referenceLook } from "./reference-look.js"
 
 const FLICKS = 705_600_000
 
@@ -71,7 +75,7 @@ export function recipeFor(brief = {}) {
 /** The recipe's deliverable; with captions asked for, they burn in and the text gates run (ED8). */
 export function deliverableFor(brief = {}) {
   const base = recipeFor(brief).deliverable
-  return LOOKS[brief.captions] ? { ...base, burnCaptions: true, gates: [...base.gates, "QG-08", "QG-09", "QG-10"].sort() } : base
+  return ALL_LOOKS[brief.captions] ? { ...base, burnCaptions: true, gates: [...base.gates, "QG-08", "QG-09", "QG-10"].sort() } : base
 }
 
 /** Lines worth keeping: each take group's best, with restarts and abandoned attempts out. */
@@ -143,7 +147,49 @@ export function fitLines(lines, max, required = new Set(), valueOf = (line, cost
   return lines.filter((l) => chosen.has(l.id))
 }
 
-const STORY_SCHEMA = {
+/**
+ * The clips a remake takes out: those `rebuilt` names, and whatever hung on one of them.
+ * B-roll, a cut's sound or a wide-and-tight punch anchored to a clip of the old cut has
+ * nothing left to sit on: it never played again, but it stayed in the project and piled up
+ * with every make (EH-60a, found 2026-11-11). The person's own clips are left as they are.
+ */
+export function remadeClips(sequence, rebuilt) {
+  const gone = new Set(sequence.clips.filter(rebuilt).map((c) => c.id))
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const c of sequence.clips) if (!gone.has(c.id) && c.createdBy !== "person" && [c.at, c.until].some((ref) => gone.has(ref?.clip))) ((grew = true), gone.add(c.id))
+  }
+  return sequence.clips.filter((c) => gone.has(c.id))
+}
+
+/* B-roll by meaning (TP8, CRAFT_UPGRADE §6.5): without the Smart search pack, a cutaway's source is the
+   person's clip whose label, role, file name and own words share the most words with the line it plays over */
+
+const STOP = new Set("a an and are as at be but by for from has have i in is it its me my of on or our so that the this to was we were what when with you your".split(" "))
+export const wordsOf = (text) => String(text ?? "").normalize("NFKC").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1 && !STOP.has(w)).map((w) => w.replace(/(?<=..)(ing|es|s)$/u, ""))
+
+/** The words said over a story clip's solved pieces (source times), from the index, as text. */
+export function spokenOver(pieces, index) {
+  return index.words.filter((w) => pieces.some((p) => w.asset === p.asset && w.start >= p.in && w.end <= p.out)).map((w) => w.text).join(" ")
+}
+
+/**
+ * The best source for a line: most shared words with its label, file name and own speech, a clip the
+ * person marked B-roll ahead of one they didn't, then the one used least and longest ago. Never
+ * the same source twice running when another is there.
+ */
+export function byMeaning(sources, said, index, used = []) {
+  const line = new Set(wordsOf(said))
+  const scored = sources.map((a, order) => {
+    const own = [a.label, String(a.path ?? "").split(/[\\/]/).at(-1).replace(/\.[^.]*$/, ""), index.words.filter((w) => w.asset === a.id).map((w) => w.text).join(" ")]
+    const shared = new Set(own.flatMap(wordsOf).filter((w) => line.has(w))).size
+    return { a, order, shared, broll: a.role === "broll" ? 1 : 0, uses: used.filter((id) => id === a.id).length, last: used.at(-1) === a.id && sources.length > 1 ? 1 : 0 }
+  })
+  scored.sort((x, y) => x.last - y.last || y.shared - x.shared || y.broll - x.broll || x.uses - y.uses || x.order - y.order)
+  return scored[0].a
+}
+
+export const STORY_SCHEMA = {
   type: "object",
   properties: { hook: { anyOf: [{ type: "string", maxLength: 64 }, { type: "null" }] }, drop: { type: "array", maxItems: 40, items: { type: "string", maxLength: 64 } } },
   required: ["hook", "drop"],
@@ -222,7 +268,7 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const rebuilt = new Set(sequence.tracks.filter((t) => ["base", "caption", "music"].includes(t.role)).map((t) => t.id))
   const ops = [
     // Scenes too: an earlier make's scenes hang on the words of that cut
-    ...sequence.clips.filter((c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e) || isPlanGraphic(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
+    ...remadeClips(sequence, (c) => rebuilt.has(c.track) || c.effects?.some((e) => isSceneBlock(e) || isPlanGraphic(e))).map((c) => ({ op: "ripple_delete", clip: c.id })),
     { op: "set_brief", format: recipe.id, targetDuration: target, mustKeep: brief.mustKeep ?? [], mustCut: brief.mustCut ?? [], effort: brief.effort ?? "best", ...(brief.language ? { language: brief.language } : {}) },
     { op: "set_format", width: recipe.canvas.width, height: recipe.canvas.height, fps: recipe.deliverable.fps },
     ...(project.deliverables.some((d) => d.preset === recipe.deliverable.preset) ? [] : [{ op: "add_deliverable", ...deliverableFor(brief) }]),
@@ -245,7 +291,7 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const most = Number.isInteger(brief.punches) && brief.punches > 0 ? Math.min(brief.punches, 8) : recipe.punch.max
   const kept = chosen.flatMap((l) => runsOf(l).flat())
   // The approved plan's scenes, on the cut as solved. A zoom or title under one would never be seen
-  const scenes = brief.scenes?.length || brief.pictures?.length || brief.terms?.length ? sceneOps({ scenes: brief.scenes ?? [], pictures: brief.pictures ?? [], terms: brief.terms ?? [], project: step.project, index, asset, kept, captions: !!LOOKS[brief.captions], sound: { scene: brief.sfx?.scene, reveal: brief.sfx?.reveal } }) : { ops: [], covered: new Set(), notes: [] }
+  const scenes = brief.scenes?.length || brief.pictures?.length || brief.terms?.length ? sceneOps({ scenes: brief.scenes ?? [], pictures: brief.pictures ?? [], terms: brief.terms ?? [], project: step.project, index, asset, kept, captions: !!ALL_LOOKS[brief.captions], sound: { scene: brief.sfx?.scene, reveal: brief.sfx?.reveal } }) : { ops: [], covered: new Set(), notes: [] }
   notes.push(...scenes.notes)
   // The approved plan's motion graphics (MOTION_GRAPHICS.md), placed on the cut with its scenes in, so none lands on one
   const withScenes = scenes.ops.length ? apply(step.project, scenes.ops, { index, author: "agent" }) : null
@@ -284,7 +330,8 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   // The template's colour look, on every picture clip
   // The look on every story clip; a cold open keeps its own black and white
   const look = GRADES[brief.grade] ?? (brief.customGrade && typeof brief.customGrade === "object" ? brief.customGrade : null)
-  const grading = look ? clips.filter((c) => !c.echo).map((c) => ({ op: "grade", clip: c.id, ...look })) : []
+  // TP6: a reference's colour as a measured match (a LUT the Host wrote), in place of a grade, only when this brief carries one
+  const grading = brief.lut ? clips.filter((c) => !c.echo).map((c) => ({ op: "apply_lut", clip: c.id, asset: brief.lut })) : look ? clips.filter((c) => !c.echo).map((c) => ({ op: "grade", clip: c.id, ...look })) : []
   // Sound design: an effect on every cut of the story, a riser into it after a cold open.
   // Each is placed by its peak, so the loudest moment lands on the cut
   const storyClips = clips.filter((c) => !c.echo)
@@ -302,12 +349,15 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const brollSources = brief.broll === "own" ? project.assets.filter((a) => a.kind === "video" && a.id !== asset && (a.facts.duration ?? 0) > FLICKS) : []
   const pieces = solve(step.project, index).picture
   const lengthOfClip = (id) => pieces.filter((p) => p.clip === id).reduce((sum, p) => sum + (p.end - p.at), 0)
+  const chosenFor = new Map()
   const broll = brollSources.length
     ? storyClips
         .slice(1)
         .filter((_, i) => i % 2 === 0)
-        .map((c, i) => {
-          const source = brollSources[i % brollSources.length]
+        .map((c, i, hosts) => {
+          // TP8 (editing.directorLoop): the source whose label, role and words best match what's said over it
+          const source = brief.brollByMeaning ? byMeaning(brollSources, spokenOver(pieces.filter((p) => p.clip === c.id), index), index, hosts.slice(0, i).map((h) => chosenFor.get(h.id))) : brollSources[i % brollSources.length]
+          chosenFor.set(c.id, source.id)
           const duration = Math.min(Math.round(2.5 * FLICKS), lengthOfClip(c.id))
           const room = Math.max(0, source.facts.duration - duration)
           const from = room ? Math.round((i * 3 * FLICKS) % room) : 0
@@ -317,8 +367,8 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
     : []
   if (brief.broll === "own" && !brollSources.length) notes.push("There's no other video in the bin, so the cut has no B-roll. Add clips to the bin and make it again.")
   // Title cards: each emphasis word pops on screen, unless captions already carry the words
-  const titleWords = brief.titles && !LOOKS[brief.captions] ? [...new Set(emphasis.value.emphasis)].slice(0, most).map((wid) => index.words.find((w) => w.id === wid)).filter(Boolean) : []
-  if (brief.titles && LOOKS[brief.captions]) notes.push("Captions already put the words on screen, so there are no separate title cards.")
+  const titleWords = brief.titles && !ALL_LOOKS[brief.captions] ? [...new Set(emphasis.value.emphasis)].slice(0, most).map((wid) => index.words.find((w) => w.id === wid)).filter(Boolean) : []
+  if (brief.titles && ALL_LOOKS[brief.captions]) notes.push("Captions already put the words on screen, so there are no separate title cards.")
   const titles = titleWords.map((w) => ({ op: "add_title", text: w.text.replace(/[^\p{L}\p{N}%$₹' -]/gu, "").toUpperCase().slice(0, 40) || w.text, at: { word: w.id, edge: "start" }, duration: Math.round(1.2 * FLICKS) }))
   // A speed ramp out of the cold open: its last 1.2 s rushes up to 2× into the story
   const coldClip = clips.find((c) => c.echo)
@@ -330,13 +380,13 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
   const cleaning = brief.cleanVoice ? clips.map((c) => ({ op: "clean_voice", clip: c.id, strength: 0.6 })) : []
 
   // Captions, when the brief asks for a look: pages of the kept words, timed to the speech
-  const captions = LOOKS[brief.captions] ? chosen.flatMap((l) => runsOf(l)).flatMap((run) => readablePages(pages(run), run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
+  const captions = ALL_LOOKS[brief.captions] ? chosen.flatMap((l) => runsOf(l)).flatMap((run) => readablePages(pages(run, pageLimits(brief.captions)), run)).map((ids) => ({ op: "caption_style", look: brief.captions, words: ids })) : []
   // Music, when the brief names a sound in the project: fitted on its downbeats, ducked under the speech (ED9)
   const song = brief.music ? project.assets.find((a) => a.id === brief.music && a.kind === "audio") : null
   if (brief.music && !song) notes.push(`There is no sound "${brief.music}" in this project, so the reel has no music.`)
   const music = song ? [{ op: "set_music", asset: song.id }, { op: "music_shape", fit: true, fadeIn: Math.round(FLICKS * 0.3) }, { op: "duck" }] : []
-  const captionLook = { ...(brief.captionStyle ?? {}), ...(brief.holdCaptions ? { hold: true } : {}) }
-  const style = LOOKS[brief.captions] && Object.keys(captionLook).length ? [{ op: "set_look", caption: captionLook }] : []
+  const captionLook = { ...(brief.captionStyle ?? {}), ...(brief.holdCaptions ? { hold: true } : {}), ...(placeOf(brief.captions) ? { place: placeOf(brief.captions) } : {}) }
+  const style = ALL_LOOKS[brief.captions] && Object.keys(captionLook).length ? [{ op: "set_look", caption: captionLook }] : []
   // Transitions (transitions.js): where the story changes moment (out of the cold open, a line moved
   // up, a jump of seconds in the take), or on every cut when the person asked. A filler cut stays a cut
   const joins = []
@@ -356,8 +406,48 @@ export async function planReel({ project, index: fullIndex, asset, ask, brief = 
     }
     if (!joins.length) notes.push(`No ${brief.transition} transition: this cut runs straight through, with no change of moment to dress.`)
   }
-  const all = [...ops, ...style, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...scenes.ops, ...graphics.ops, ...captions, ...music, ...sounds, ...ramps, ...joins]
+  // TP10 (editing.craft, only what this brief asks): accents in the bed's key on every join, a room tone from
+  // the take's own quiet, J and L cuts through silence. None of these keys is in a brief without the switch
+  const sound = []
+  if (brief.accent) sound.push(...storyClips.slice(1).map((c) => ({ op: "add_sfx", asset: brief.accent, peak_at: { clip: c.id, edge: "start" } })))
+  if (brief.ambience) {
+    const quiet = quietStretch(index.words, asset, facts.duration)
+    if (quiet) sound.push({ op: "room_tone", asset, from: quiet.from, to: quiet.to })
+    else notes.push("No room tone: the take has no second of quiet between its words to make one from.")
+  }
+  if (brief.splits) {
+    const played = []
+    for (const p of solve(step.project, index).picture) {
+      if (p.hold) continue
+      if (played.at(-1)?.clip === p.clip) played.at(-1).out = p.out
+      else played.push({ clip: p.clip, asset: p.asset, in: p.in, out: p.out })
+    }
+    sound.push(...splitOps(played.filter((p) => storyClips.some((c) => c.id === p.clip)), index.words))
+  }
+  const all = [...ops, ...style, ...angles, ...punches, ...framing, ...grading, ...cleaning, ...broll, ...titles, ...scenes.ops, ...graphics.ops, ...captions, ...music, ...sounds, ...ramps, ...joins, ...sound]
   step = apply(project, all, { index, author: "agent" })
   if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
+  // TP6: a reference's grain, corners and bars over the whole film, only when this brief carries them (EH-59)
+  if (brief.fx?.length) step = referenceLook({ project, all, step, fx: brief.fx, index, notes })
+  // B-roll on the beat (TP10): each moved later to the music's nearest beat within reach, inside its host clip.
+  // Only the B-roll moves: the picture and the words under it stay where they are
+  if (brief.beatJoins && music.length && broll.length) {
+    const plan = compile(step.project, index, { engineVersion: "beats", runtimeVersion: "beats" })
+    const beats = timelineBeats(plan.audio.items.find((item) => busOf(item.role) === "music"), index.beats ?? [])
+    const placed = solve(step.project, index).picture
+    let moved = 0
+    for (const op of broll) {
+      const host = placed.filter((p) => p.clip === op.at.clip)
+      if (!host.length) continue
+      const [start, end] = [Math.min(...host.map((p) => p.at)), Math.max(...host.map((p) => p.end))]
+      const at = onBeat(start, end, op.duration, beats)
+      if (at !== start) (op.at = at), moved++
+    }
+    if (moved) {
+      step = apply(project, all, { index, author: "agent" })
+      if (!step.applied) throw new Error(`The reel was refused: ${step.diagnostics[0].message}`)
+      notes.push(`${moved} B-roll cutaway${moved === 1 ? " lands" : "s land"} on the music's beat.`)
+    }
+  }
   return { ops: all, project: step.project, notes, calls, slots, story: { hook: story.value.hook ?? null, drop: story.value.drop ?? [], emphasis: { most, ids: [...new Set(emphasis.value.emphasis)].slice(0, most) } } }
 }

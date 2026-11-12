@@ -25,6 +25,9 @@ export function editsSince(log, head) {
 /** The last make's story, when this brief cuts the same footage to the same length; else null and it's chosen again. */
 export function storyFor(last, brief = {}) {
   if (!last?.story || !last.brief) return null
+  // A film of several files keeps a story per part; a single take keeps one. Neither is read as the other,
+  // and a record with no `parts` (written before TP2) is a single take's
+  if ((last.story.parts !== undefined) !== (brief.assembly !== undefined)) return null
   const same = last.brief.targetDuration === brief.targetDuration && JSON.stringify(last.brief.cuts ?? []) === JSON.stringify(brief.cuts ?? [])
   return same ? last.story : null
 }
@@ -59,11 +62,15 @@ export function remapIds(before, after, index) {
     if (words?.length) found = next.find((c) => caption(c)?.words?.[0] === words[0])?.id ?? null
     else if (was.has(old.id)) {
       const a = was.get(old.id)
+      // By the overlap of source stretches, never by file alone: one file can be two parts of a film, and an
+      // edit made on one half must not land on the other (EH-61). Equal overlaps go to the nearer start
       let most = 0
+      let near = Infinity
       for (const [id, b] of now) {
         if (b.asset !== a.asset || b.echo !== a.echo || clipsOf(after).find((c) => c.id === id)?.track !== old.track) continue
         const shared = Math.min(a.out, b.out) - Math.max(a.in, b.in)
-        if (shared > most) ((most = shared), (found = id))
+        const off = Math.abs(b.in - a.in)
+        if (shared > most || (shared > 0 && shared === most && off < near)) ((most = shared), (near = off), (found = id))
       }
     }
     if (found) ids.set(old.id, found)
@@ -118,6 +125,7 @@ const LINES = [
   ["transitionAll", "Transitions on every cut", onOff],
   ["pictures", "Pictures", count("picture")],
   ["terms", "Definitions", count("definition")],
+  ["assembly", "The film's order", (v) => (v?.parts?.length ? `${v.parts.length} parts` : "none")],
 ]
 
 /** What a revised plan changes, in words, from the two briefs alone: never from a model's pitch. */

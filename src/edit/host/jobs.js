@@ -25,7 +25,7 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
     }
   }
   // The asset of an index job, so the Studio's bin shows its progress on the right file
-  const view = (state, row) => ({ id: idOf(state, row.id), project: state.id, kind: row.kind, status: row.status, progress: row.progress, error: row.error, output: row.dispatch, ...(row.kind === "index" ? { asset: assetOf(row) } : {}) })
+  const view = (state, row) => ({ id: idOf(state, row.id), project: state.id, kind: row.kind, status: row.status, progress: row.progress, error: row.error, output: row.dispatch, ...(row.kind === "index" || row.kind === "reference" ? { asset: assetOf(row) } : {}) })
 
   async function run(state, number, request) {
     const id = idOf(state, number)
@@ -44,13 +44,19 @@ export function createJobs({ projects, emit, log, onDispatch, beforeStory }) {
       const output =
         request.kind === "index"
           ? JSON.stringify(await projects.indexAsset(state, request.asset, { signal: controller.signal, onStep }))
+          : request.kind === "reference"
+            ? // TP6: a reference's Edit DNA 2, measured only here, as a job with progress and a cancel (EH-73)
+              JSON.stringify(await projects.measureReference(state, request.asset, { job: number, signal: controller.signal, onStep }))
           : request.kind === "make"
             ? JSON.stringify(await projects.make(state, request, { job: number, signal: controller.signal, onStep, ...(request.dispatch && beforeStory && { beforeStory: (...args) => beforeStory(request, ...args) }) }))
+          : request.kind === "openings"
+            ? // TP8: three short openings to choose from, only with editing.directorLoop on
+              JSON.stringify(await projects.openings(state, request, { job: number, signal: controller.signal, onStep }))
           : request.kind === "revise"
             ? JSON.stringify(await projects.revise(state, request, { job: number, signal: controller.signal, onStep }))
             : request.kind === "replay"
               ? JSON.stringify(await projects.replay(state, request.of, { job: number, signal: controller.signal, onStep }))
-            : (await state.engine.render({ ...request, job: number, signal: controller.signal, onStep, project: request.project ?? versionOf(state, number) })).file
+            : (await state.engine.render({ ...request, job: number, signal: controller.signal, onStep, project: request.project ?? versionOf(state, number), partial: request.quality === "draft" && (await projects.features?.())?.livePreview === true })).file
       update({ status: "done", progress: 100, dispatch: output, finished_at: new Date().toISOString() })
     } catch (error) {
       if (controller.signal.aborted) update({ status: "canceled", finished_at: new Date().toISOString() })

@@ -20,6 +20,8 @@ export const ANCHORS = {
 }
 
 const BOX = { x: "int", y: "int", w: "pos", h: "pos" }
+// Keyframes on an effect (TP5): a value of the effect, moved through points in flicks from its start
+export const KEYS = { list: { param: "str", points: { list: { at: "flicks", value: "num", "ease?": "str" } } } }
 
 export const EFFECTS = {
   reframe: { mode: { enum: ["subject", "fixed"] }, "x?": "int", "y?": "int" },
@@ -37,6 +39,14 @@ export const EFFECTS = {
   duck: { "depth?": "num", "attack?": "flicks", "release?": "flicks" },
   fit: {},
   freeze: { at: "ref", duration: "flicks" },
+  // How a picture of another shape sits in the frame (TP2, ASSEMBLY_AND_INTENT §6.2). Fill is the
+  // absence of this effect, so today's cuts compile to today's plan (EH-59). Never named `fit`:
+  // that is the music effect (EH-56)
+  frame: { mode: { enum: ["fit", "blur"] } },
+  // An effect from the registry (TP5, core/effects.js, EDD-64): its id and checked values; keyframes
+  // as numbers, or a named move code expands. `by` marks one an agent added, for the cap per minute
+  // TP9: `region`, a box the person drew, in thousandths of the frame: the effect acts only inside it (mask: only outside)
+  fx: { id: "id", "params?": "plain", "keys?": KEYS, "move?": "str", "by?": { enum: ["agent"] }, "region?": BOX },
 }
 
 export const SHAPES = {
@@ -62,6 +72,8 @@ export const SHAPES = {
         rights: { enum: ["own", "licensed", "public_domain", "unknown"] },
         "rightsNote?": "str",
         "role?": { enum: ["aroll", "broll", "screen", "music", "sfx", "logo"] },
+        // The person's name for a clip (TP1, EDD-60). Absent until they set one; untrusted text like a file name
+        "label?": "str",
         facts: {
           "duration?": "flicks",
           "fps?": { nullable: "rate" },
@@ -103,10 +115,29 @@ export const SHAPES = {
             "seamOut?": "bool",
             "audioLead?": "flicks",
             "audioLag?": "flicks",
+            // An assembly make placed this (TP2): the next make takes it out before placing again (EH-60)
+            "plan?": "bool",
             createdBy: AUTHOR,
           },
         },
         "parent?": "id",
+        // The storyboard (TP1, ASSEMBLY_AND_INTENT §3): which files, which stretch of each, in what order.
+        // Changed only by set_assembly; absent means none. A make reads it only from its own brief (EH-63)
+        "assembly?": {
+          version: "pos",
+          parts: {
+            list: {
+              id: "id",
+              asset: "id",
+              "from?": "ref",
+              "to?": "ref",
+              use: { enum: ["story", "whole", "over", "sound"] },
+              "at?": { part: "id", "where?": { enum: ["start", "middle", "end"] }, "word?": "id", "t?": "flicks" },
+              "fit?": { enum: ["fill", "fit", "blur"] },
+              "why?": { enum: ["person", "storyboard", "director", "default"] },
+            },
+          },
+        },
       },
     },
     active: "id",
@@ -297,6 +328,39 @@ export function newProject({ id, name, width = 1080, height = 1920, fps = { n: 3
     history: [],
   }
 }
+
+export const LABEL_MAX = 40
+
+/**
+ * A label or a file name as data (EH-71): letters, digits and single spaces, 40 characters at most.
+ * Marks stay with their letters: Telugu and Hindi vowel signs are marks, and a label without them is unreadable.
+ */
+export const cleanLabel = (text) =>
+  String(text ?? "")
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+    .trim()
+    .slice(0, LABEL_MAX)
+    .trim()
+
+// A clip is a file the person brought in. References aren't, and nor is what Kriya wrote or
+// fetched itself (music beds, sound effects, found pictures): the Host gives those a
+// rightsNote when it adds them, and a person's file never has one (host/projects.js)
+const isClip = (asset) => ["video", "audio", "image"].includes(asset.kind) && asset.rightsNote === undefined
+
+/**
+ * Each clip's number: its place among the files the person added. Computed, never stored
+ * (EH-54): assets are only ever appended, so a number never moves. If an operation that
+ * removes an asset is ever added, numbers need storing: stop and ask.
+ * @returns {Map<string, number>} asset id → 1, 2, …
+ */
+export function clipNumbers(project) {
+  const numbers = new Map()
+  for (const asset of project.assets) if (isClip(asset)) numbers.set(asset.id, numbers.size + 1)
+  return numbers
+}
+
+/** @returns {number | null} null for a reference, a file Kriya wrote, or no such asset */
+export const getClipNumber = (project, assetId) => clipNumbers(project).get(assetId) ?? null
 
 /** JSON with sorted keys: the same value always gives the same bytes. */
 export function canonical(value) {

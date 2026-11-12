@@ -4,8 +4,11 @@
 
 import { anchorSource, openIndex, wordAfter, wordAt, wordBefore } from "./anchors.js"
 import { TRANSITION_MAX, TRANSITION_MIN, TRANSITIONS } from "./transitions.js"
-import { check, EFFECTS, SHAPES, validateProject } from "./project.js"
+import { check, cleanLabel, EFFECTS, KEYS, SHAPES, validateProject } from "./project.js"
 import { snapToFrame } from "./time.js"
+import { AGENT_CAP_PER_MINUTE, EFFECTS as FX, keysProblem, MOVES, regionOf, valuesOf } from "./effects.js"
+import { STYLE_PACKS } from "./style-packs.js"
+import { cleanTypeKit } from "./type-kit.js"
 
 class Refused extends Error {
   constructor(code, message) {
@@ -627,7 +630,171 @@ const CODE_OPS = {
   },
 }
 
-const ALL_OPS = { ...OPS, ...CODE_OPS }
+// TP1 (ASSEMBLY_AND_INTENT §2, §3). Kept out of OPS: the Director's operation list and the
+// console's schema are the objects they were (TOP_TIER_FORENSIC_AUDIT §6 rule 1)
+const SPINE = ["story", "whole"]
+const ASSEMBLY_MAX = { parts: 200, files: 64 }
+const ASSEMBLY_OPS = {
+  describe_asset: {
+    fields: { asset: "id", "label?": "str", "role?": SHAPES.project.assets.list["role?"] },
+    run(op, s) {
+      if (op.label === undefined && op.role === undefined) refuse("needs_a_value", "give a label or a role")
+      if (op.label !== undefined && s.author !== "person") refuse("person_only", "a clip's label is the person's to set")
+      if (s.author === "agent") refuse("person_only", "a clip's role is set by the person, or by code from the index")
+      const asset = assetOf(s, op.asset)
+      if (asset.kind === "reference") refuse("wrong_asset_kind", `asset "${op.asset}" is a reference, not a clip`)
+      // Cleaned here, so the stored label is already data (EH-71); an empty one takes the label away
+      const label = op.label === undefined ? undefined : cleanLabel(op.label)
+      if (label) asset.label = label
+      else if (label === "") delete asset.label
+      if (op.role !== undefined) asset.role = op.role
+    },
+  },
+  set_assembly: {
+    fields: { assembly: SHAPES.project.sequences.list["assembly?"] },
+    run(op, s) {
+      const { version, parts } = op.assembly
+      if (version !== 1) refuse("bad_assembly", "this storyboard is a version this Kriya doesn't know")
+      if (parts.length > ASSEMBLY_MAX.parts) refuse("too_many_parts", `a storyboard holds up to ${ASSEMBLY_MAX.parts} parts`)
+      if (new Set(parts.map((part) => part.asset)).size > ASSEMBLY_MAX.files) refuse("too_many_files", `a storyboard uses up to ${ASSEMBLY_MAX.files} files`)
+      const ids = new Set()
+      for (const part of parts) {
+        if (ids.has(part.id)) refuse("duplicate_part", `two parts are called "${part.id}"`)
+        ids.add(part.id)
+        // A reference's kind is "reference", so it's refused here: measured, never placed (EDD-23)
+        const asset = assetOf(s, part.asset, SEQUENCED)
+        if (part.from === undefined && part.to === undefined) continue
+        const to = part.to === undefined ? asset.facts.duration : sourceEdge(s, part.to, asset.id, "end")
+        if (to === undefined) refuse("not_probed", `asset "${asset.id}" has no length, so a part of it can't be taken`)
+        checkRange(s, asset, part.from === undefined ? 0 : sourceEdge(s, part.from, asset.id, "start"), to)
+      }
+      const spine = new Set(parts.filter((part) => SPINE.includes(part.use)).map((part) => part.id))
+      for (const part of parts) {
+        if (SPINE.includes(part.use)) {
+          if (part.at !== undefined) refuse("bad_part", `part "${part.id}" is in the film's order, so it has no "at"`)
+          continue
+        }
+        if (part.at === undefined && part.use === "sound") continue // a song under the whole film
+        if (!part.at || !spine.has(part.at.part)) refuse("no_host", `part "${part.id}" plays over another part: name one that is in the film's order`)
+        if (["where", "word", "t"].filter((key) => part.at[key] !== undefined).length !== 1) refuse("bad_part", `part "${part.id}" needs one place: where, word or t`)
+        if (part.at.word !== undefined) known(s, { word: part.at.word })
+      }
+      // No parts is no storyboard: the key goes, so the project is what it was before one
+      if (parts.length) sequenceOf(s).assembly = { version, parts }
+      else delete sequenceOf(s).assembly
+    },
+  },
+  // TP2: a part's picture over another part's voice. place_broll as it is, and the clip carries
+  // the make's mark, so a remake finds it and never places it twice (EH-60)
+  place_over: {
+    fields: OPS.place_broll.fields,
+    run(op, s) {
+      OPS.place_broll.run(op, s)
+      sequenceOf(s).clips.at(-1).plan = true
+    },
+  },
+  // TP2: how a clip of another shape sits in the frame. fill takes the effect away (EH-59)
+  set_frame: {
+    fields: { clip: "id", mode: { enum: ["fill", "fit", "blur"] } },
+    run(op, s) {
+      const clip = writable(s, op.clip)
+      if (!clip.source || !PICTURE.includes(assetOf(s, clip.source.asset).kind)) refuse("not_footage", `clip "${op.clip}" has no picture to frame`)
+      if (op.mode === "fill") clip.effects = clip.effects.filter((e) => e.type !== "frame")
+      else setEffect(clip, { type: "frame", mode: op.mode })
+    },
+  },
+}
+
+// TP5 (CRAFT_UPGRADE §3, EDD-64), behind editing.craft: an effect from the registry on a clip, or on a
+// stretch of the cut. Refused unless the id, every value and every keyframe is one the render draws.
+// An agent is held to restraint (§3.5): never two heavy effects at once, a few a minute; the person never is
+function checkFx(op, span) {
+  const { values, problem } = valuesOf(op.effect, op.params ?? {})
+  if (problem) refuse("bad_effect", problem)
+  if (op.keys !== undefined && op.move !== undefined) refuse("bad_effect", "give keyframes or a named move, not both")
+  if (op.keys !== undefined) {
+    const why = keysProblem(op.effect, op.keys)
+    if (why) refuse("bad_keyframes", why)
+    if (span !== null && op.keys.some((k) => k.points.at(-1).at > span)) refuse("bad_keyframes", "a keyframe falls after the effect ends")
+  }
+  if (op.move !== undefined && MOVES[op.move]?.effect !== op.effect) refuse("bad_move", `"${op.move}" isn't a move of ${FX[op.effect].label}: ${Object.entries(MOVES).filter(([, m]) => m.effect === op.effect).map(([id]) => id).join(", ") || "it has none"}`)
+  // TP9: a drawn region, whole thousandths of the frame, inside it; only on effects that can act on part of it
+  const region = op.region === undefined ? null : regionOf(op.region)
+  if (op.region !== undefined && !region) refuse("bad_region", "a region is whole thousandths of the frame: x, y, w and h, inside it, each side at least 10")
+  if (region && !FX[op.effect].region) refuse("bad_region", `${FX[op.effect].label} acts on the whole frame: ${Object.entries(FX).filter(([, row]) => row.region).map(([id]) => id).join(", ")} can take a region`)
+  if (FX[op.effect].needsRegion && !region) refuse("needs_region", `${FX[op.effect].label} needs a region drawn on the frame`)
+  return { type: "fx", id: op.effect, ...(op.params && Object.keys(op.params).length ? { params: values } : {}), ...(op.keys ? { keys: op.keys } : {}), ...(op.move ? { move: op.move } : {}), ...(region ? { region } : {}) }
+}
+function restrain(s, fx, { clip, window }) {
+  if (s.author !== "agent") return fx
+  const clips = sequenceOf(s).clips
+  const added = clips.flatMap((c) => c.effects.filter((e) => e.type === "fx" && e.by === "agent").map((e) => ({ c, e })))
+  const length = clips.filter((c) => c.source && !c.at).reduce((sum, c) => sum + (c.source.out - c.source.in), 0)
+  if (added.length >= AGENT_CAP_PER_MINUTE * Math.max(1, Math.ceil(length / (60 * 705_600_000)))) refuse("restraint", `Kriya adds at most ${AGENT_CAP_PER_MINUTE} effects a minute; the rest are yours to ask for`)
+  if (FX[fx.id].weight === "heavy") {
+    const heavy = added.filter(({ e }) => FX[e.id]?.weight === "heavy")
+    const overlaps = ({ c }) => (clip ? c.id === clip.id : c.at !== null && window && (typeof c.at === "number" && typeof window.at === "number" ? c.at < window.at + window.length && window.at < c.at + (c.duration ?? Infinity) : JSON.stringify(c.at) === JSON.stringify(window.at)))
+    if (heavy.some(overlaps)) refuse("restraint", "two heavy effects at once is too much: one at a time")
+  }
+  return { ...fx, by: "agent" }
+}
+const CRAFT_OPS = {
+  add_effect: {
+    fields: { clip: "id", effect: "id", "params?": "plain", "keys?": KEYS, "move?": "str", "region?": "plain" },
+    run(op, s) {
+      const clip = writable(s, op.clip)
+      if (!clip.source || !PICTURE.includes(assetOf(s, clip.source.asset).kind)) refuse("not_footage", `clip "${op.clip}" has no picture for an effect`)
+      const rate = clip.speed ?? { n: 1, d: 1 }
+      const fx = restrain(s, checkFx(op, Math.round(((clip.source.out - clip.source.in) * rate.d) / rate.n)), { clip })
+      // One of each effect per clip: the same id again replaces it
+      clip.effects = [...clip.effects.filter((e) => !(e.type === "fx" && e.id === fx.id)), fx]
+    },
+  },
+  add_adjustment: {
+    fields: { at: "ref", effect: "id", "params?": "plain", "keys?": KEYS, "move?": "str", "region?": "plain", ...SPAN },
+    run(op, s) {
+      known(s, op.at)
+      const length = op.duration ?? null
+      const fx = restrain(s, checkFx(op, length), { window: { at: op.at, length: length ?? 0 } })
+      addClip(s, "overlay", { at: op.at, ...span(s, op), effects: [fx] })
+    },
+  },
+  remove_effect: {
+    fields: { clip: "id", effect: "id" },
+    run(op, s) {
+      const clip = writable(s, op.clip)
+      if (!clip.effects.some((e) => e.type === "fx" && e.id === op.effect)) refuse("no_effect", `clip "${op.clip}" has no ${FX[op.effect]?.label ?? op.effect} effect`)
+      clip.effects = clip.effects.filter((e) => !(e.type === "fx" && e.id === op.effect))
+    },
+  },
+}
+
+// TP7 (CRAFT_UPGRADE §5.2, EDD-67), behind editing.typeKit: the film's type kit, the person's colours,
+// a logo bug and a bar, stored in look.brand.type. Only the person (or the make of a plan they approved)
+// sets it, so a project nobody chose a kit for keeps the system stacks (EH-69); `clear` goes back to them
+const TYPE_OPS = {
+  set_type_kit: {
+    fields: { "pair?": "str", "colors?": "plain", "logo?": "str", "corner?": "str", "bar?": "str", "pack?": "str", "clear?": "bool" },
+    run({ op: _, clear, ...raw }, s) {
+      if (s.author === "agent") refuse("person_only", "the type kit is the person's to choose")
+      const brand = { ...s.project.look.brand }
+      if (clear === true) {
+        delete brand.type
+        s.project.look.brand = brand
+        return
+      }
+      const { kit, problem } = cleanTypeKit(raw, { packs: STYLE_PACKS })
+      if (problem || !kit) refuse("bad_type_kit", problem ?? "a type kit needs a pair")
+      // A person's own PNG comes into the bin as a picture with a width, so a logo is either kind of picture
+      if (kit.logo) assetOf(s, kit.logo, PICTURE)
+      s.project.look.brand = { ...brand, type: kit }
+    },
+  },
+}
+
+const ALL_OPS = { ...OPS, ...CODE_OPS, ...ASSEMBLY_OPS, ...CRAFT_OPS, ...TYPE_OPS }
+export const CRAFT_OP_NAMES = Object.keys(CRAFT_OPS)
+export const TYPE_OP_NAMES = Object.keys(TYPE_OPS)
 
 function captionOf(s, id) {
   const caption = writable(s, id).effects.find((e) => e.type === "caption")

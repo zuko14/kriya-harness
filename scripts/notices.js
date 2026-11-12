@@ -72,7 +72,7 @@ export function releasePackages(lock, root = ROOT) {
  * @param {{ decision?: { id: string, date: string, record: string, stillOpen?: string }, packages?: Record<string, { license: string, reason: string }> }} [exceptionsFile]
  * @returns {{ markdown: string, problems: string[] }}
  */
-export function buildNotices(lock, exceptionsFile = {}, root = ROOT, embedded = EMBEDDED_FONTS) {
+export function buildNotices(lock, exceptionsFile = {}, root = ROOT, embedded = EMBEDDED_FONTS, runtimeFonts = RUNTIME_FONTS) {
   const packages = releasePackages(lock, root)
   const exceptions = exceptionsFile.packages ?? {}
   const problems = []
@@ -136,8 +136,21 @@ where they run, and carry their own license file there.
     if (!entry || !licenseAllowed(entry.license)) problems.push(`${name}: embedded font license ${entry?.license ?? "unknown"} isn't allowed`)
     markdown += `\n### ${name}@${entry?.version ?? "?"} (${entry?.license ?? "unknown"})\n\n\`\`\`text\n${(text ?? "(license text missing)").replaceAll("```", "'''")}\n\`\`\`\n`
   }
+  // TP7: the Media Runtime's font pack. Each file is downloaded by `kriya edit setup --pack fonts` from
+  // the upstream commit the signed manifest pins, unmodified; its notice and the licence go here
+  if (runtimeFonts.length) {
+    markdown += "\n## Fonts in the Media Runtime's font pack (pack-fonts)\n\n"
+    markdown += "Downloaded unmodified from github.com/google/fonts at the commit the signed runtime manifest pins. Each is licensed under the SIL Open Font License, Version 1.1, whose text follows the list.\n\n"
+    for (const { id, name, notice } of runtimeFonts) markdown += `- ${name} (\`${id}\`, OFL-1.1): ${notice}\n`
+    markdown += `\n\`\`\`text\n${OFL_TEXT.trim().replaceAll("```", "'''")}\n\`\`\`\n`
+  }
   return { markdown, problems }
 }
+
+// TP7: the runtime font pack's notices, kept beside this script (tests/edit-type.test.js holds them to
+// src/edit/engine/fonts.js); read here, never imported, so nothing outside src/edit loads it (ET-IMP-01)
+const RUNTIME_FONTS = JSON.parse(readFileSync(join(ROOT, "scripts", "runtime-fonts.json"), "utf8"))
+const OFL_TEXT = readFileSync(join(ROOT, "scripts", "OFL-1.1.txt"), "utf8")
 
 // The font packages scripts/build-brand.js inlines (OFL-1.1 permits bundling
 // with software when the license accompanies it)

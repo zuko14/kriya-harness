@@ -7,6 +7,7 @@ import { test } from "node:test"
 
 import { ensureHost, hostCall, stopHost } from "../src/edit/host/client.js"
 import { openIndexDb } from "../src/edit/index/db.js"
+import { hostHeaders } from "../src/edit/host/paths.js"
 
 // The Studio's editing ease (2026-11-09, from use): fixing misheard words, picking files
 // instead of typing paths, style references, and setup and indexing that show progress.
@@ -64,7 +65,7 @@ async function world() {
 /** A raw upload over the socket, as the Studio's file picker sends one. */
 function upload(home, path, bytes) {
   return new Promise((done, fail) => {
-    const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: { host: "kriya-edit" } }, (res) => {
+    const req = request({ socketPath: join(home, "edit", "host.sock"), method: "POST", path, headers: hostHeaders(home) }, (res) => {
       const chunks = []
       res.on("data", (c) => chunks.push(c))
       res.on("end", () => done({ status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString() || "{}") }))

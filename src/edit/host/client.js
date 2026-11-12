@@ -1,4 +1,5 @@
-// Reaching the Host from anything else: one socket, mode 0600, no port, no cookie.
+// Reaching the Host from anything else: one socket, mode 0600 (a named pipe on Windows), no port, no
+// cookie; and (TP11) the Host's per-launch token on every command, read from an owner-only file.
 // `ensureHost` starts one, detached, so it outlives whoever asked (EH-05).
 
 import { spawn } from "node:child_process"
@@ -7,7 +8,7 @@ import { request } from "node:http"
 import { join } from "node:path"
 
 import { kriyaHome } from "../../paths.js"
-import { codeStamp, editHome, logPath, socketPath } from "./paths.js"
+import { codeStamp, editHome, hostHeaders, logPath, socketPath } from "./paths.js"
 
 const START_MS = 15_000
 
@@ -15,7 +16,7 @@ const START_MS = 15_000
 export function hostCall(home, method, path, body) {
   return new Promise((done, fail) => {
     const data = body === undefined ? null : JSON.stringify(body)
-    const req = request({ socketPath: socketPath(home), method, path, headers: { host: "kriya-edit", ...(data ? { "content-type": "application/json" } : {}) } }, (res) => {
+    const req = request({ socketPath: socketPath(home), method, path, headers: { ...hostHeaders(home), ...(data ? { "content-type": "application/json" } : {}) } }, (res) => {
       const chunks = []
       res.on("data", (chunk) => chunks.push(chunk))
       res.on("end", () => {
