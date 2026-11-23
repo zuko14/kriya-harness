@@ -32,7 +32,8 @@ const unavailable = (message) => {
 /**
  * @param {{ db: ReturnType<import("./db.js").openIndexDb>, cache: string, binDir: string, language?: string, run?: typeof runTool, runtime?: () => object | null, acquire?: (resources: string[], signal?: AbortSignal) => Promise<() => void> }} options
  */
-export function createIndexer({ db, cache, binDir, language = "en", run = runTool, runtime = () => activeRuntime(), acquire = async () => () => {} }) {
+// platform: which face helper this system has (faces.js); a parameter so tests that fake every tool can say which system they fake
+export function createIndexer({ db, cache, binDir, language = "en", run = runTool, runtime = () => activeRuntime(), acquire = async () => () => {}, platform = process.platform }) {
   const layers = {
     L0: {
       version: PROBE_VERSION,
@@ -138,7 +139,7 @@ export function createIndexer({ db, cache, binDir, language = "en", run = runToo
       needs: ["L6"],
       async run({ path, facts, signal, fingerprint }) {
         if (!facts.width) unavailable("This file has no picture.")
-        const helper = await faceHelper(binDir, run)
+        const helper = await faceHelper(binDir, run, platform)
         if (helper.missing) unavailable(helper.missing)
         const folder = join(cache, "faces", fingerprint)
         rmSync(folder, { recursive: true, force: true })

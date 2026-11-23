@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { execFileSync, spawn } from "node:child_process"
+import { spawn } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
 import { request } from "node:http"
 import { tmpdir } from "node:os"
@@ -287,11 +287,10 @@ test("ET-ASM-07: the bin's search finds by label, file name and spoken words, co
 })
 
 test("ET-ASM-08: the previous client, given a project with a label or a storyboard, refuses it whole", async () => {
-  // The code as it was before TP1, read from the commit this work started on (EH-55)
-  const before = mkdtempSync(join(tmpdir(), "kh-before-"))
-  mkdirSync(join(before, "core"))
-  for (const file of ["project.js", "ops.js", "history.js", "time.js", "anchors.js", "transitions.js"]) writeFileSync(join(before, "core", file), execFileSync("git", ["show", `08e5945:src/edit/core/${file}`], { cwd: ROOT }))
-  const old = { ...(await import(pathToFileURL(join(before, "core", "project.js")).href)), ...(await import(pathToFileURL(join(before, "core", "history.js")).href)) }
+  // The code as it was before TP1, at the commit this work started on (EH-55): frozen byte for byte in
+  // tests/edit/pre-tp1-core, since a CI checkout is one commit deep and can't `git show` it
+  const before = join(ROOT, "tests", "edit", "pre-tp1-core")
+  const old = { ...(await import(pathToFileURL(join(before, "project.js")).href)), ...(await import(pathToFileURL(join(before, "history.js")).href)) }
   const plain = makeProject()
   assert.equal(old.parseProject(serialize(plain)).ok, true, "it reads today's projects")
   const labelled = apply(plain, [{ op: "describe_asset", asset: "a1", label: "intro" }], person).project

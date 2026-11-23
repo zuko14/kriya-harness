@@ -77,7 +77,11 @@ export async function ensureHost({ env = process.env, home = kriyaHome(), stamp 
 
 /** Stops the Host and waits until it's gone. */
 export async function stopHost(home = kriyaHome()) {
+  const live = await contact(home)
   await hostCall(home, "POST", "/internal/stop").catch(() => null)
   const started = Date.now()
   while ((await contact(home)) && Date.now() - started < START_MS) await new Promise((done) => setTimeout(done, 25))
+  // The Host closes its channel first, then removes its token, socket and lock and exits: until the
+  // process is gone a caller could still read the old token (found on CI, edit-tp11)
+  if (live?.pid) await gone(live.pid)
 }

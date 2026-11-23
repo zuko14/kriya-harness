@@ -319,7 +319,12 @@ test("handoff: FCPXML times sit on frames, chapter markers inside their clips; t
   const timeline = solve(made.project, talk.index)
   const { markers } = timelineMarkers(made.project, talk.index, timeline)
   const { text } = toFcpxml(made.project, timeline, markers)
-  execFileSync("xmllint", ["--noout", "-"], { input: text })
+  // Well-formed XML, by libxml2 where it's installed (CI installs it on Linux; macOS ships it), as in edit-core-compile
+  try {
+    execFileSync("xmllint", ["--noout", "-"], { input: text, stdio: ["pipe", "pipe", "pipe"] })
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error
+  }
   // Every time is a whole number of 1/30 s frames (Final Cut refuses edits between frames)
   const times = [...text.matchAll(/ (offset|start|duration)="([^"]+)"/g)].filter((m) => !m[0].includes("frameDuration"))
   assert.ok(times.length > 200)

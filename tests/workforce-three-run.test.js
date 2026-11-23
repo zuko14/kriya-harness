@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { after, before, test } from "node:test"
 
 import { browserTarget } from "../src/browser.js"
-import { budgetFor, bufferProblem, CEILINGS, threeGate } from "../src/gates/three.js"
+import { budgetFor, bufferProblem, CEILINGS, GATE_MS, threeGate } from "../src/gates/three.js"
 import { freshHome, ROOT } from "./helpers.js"
 
 // Harness 2.0 W13 (WD-17), WT-GATE-3D-*: G-3D on one raw-WebGL fixture scene
@@ -38,7 +38,8 @@ const failsWith = (r, re) => {
   assert.equal(r.status, "fail", JSON.stringify(r).slice(0, 1500))
   assert.match(r.excerpt, re, r.excerpt)
 }
-const T = { timeout: 120_000, skip }
+// Generous: CI runners have no GPU, so Chrome draws in software (SwiftShader); the gate's own budget bounds it
+const T = { timeout: 240_000, skip }
 
 test("WT-GATE-3D-00: counts come from the gate's own wrapper on its own page; the app can't replace them", T, async () => {
   const src = readFileSync(join(ROOT, "src", "gates", "three.js"), "utf8")
@@ -110,4 +111,21 @@ test("WT-GATE-3D-10: budgets are code ceilings the contract can only tighten; te
   assert.equal(bufferProblem({ width: 390, height: 320, clientWidth: 390 }, 3, 1.5), null, "a lower ratio than the cap is the app's choice")
   assert.match(bufferProblem({ width: 300, height: 320, clientWidth: 390 }, 3, 1.5), /not synced to the CSS size/)
   failsWith(await gate("bigtex"), /128\.0 MB of textures over the low budget of 64\.0 MB/)
+})
+
+test("WT-GATE-3D-11: a scene the gate can't finish within its budget is not checked, never passed", T, async () => {
+  const r = await gate("clean", {}, { budgetMs: 1 })
+  assert.equal(r.status, "not_checked", JSON.stringify(r).slice(0, 800))
+  assert.match(r.reason, /not reached within the gate's 0\.001 s budget/)
+  assert.equal(GATE_MS, 60_000)
+})
+
+test("WT-GATE-3D-12: on a software renderer (no GPU, as on CI) a heavy scene still fails on its budget, in bounded time", T, async () => {
+  const { chromium } = await import("playwright-core")
+  const launch = () => chromium.launch({ ...browserTarget(), headless: true, args: ["--use-angle=swiftshader", "--use-gl=angle", "--enable-unsafe-swiftshader"] })
+  const started = Date.now()
+  const r = await gate("draws", {}, { launch })
+  failsWith(r, /2000 draw calls a frame \(median\) over the low budget of 100/)
+  assert.match(r.note, /SwiftShader|llvmpipe|Software/i, "it really ran on the software path")
+  assert.ok(Date.now() - started < GATE_MS + 60_000, `${Date.now() - started} ms`)
 })

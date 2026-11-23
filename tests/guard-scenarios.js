@@ -311,7 +311,10 @@ export const STRICT_SCENARIOS = {
     chat(body, record, prompt) {
       if (!prompt) return oneStep(body, "Fix the value", { kind: "surgical_bugfix" })
       if (said(body, "tool").length) return { content: "Written." }
-      return bash(`printf 'module.exports = "right" // %s\\n' "$$" > value.js`)
+      // A different file each attempt, counted here: "$$" is the same in every bwrap sandbox (a PID namespace on Linux),
+      // so two attempts would write the same bytes and the loop guard would rightly stop the step as "no file changed"
+      record.attempt = (record.attempt ?? 0) + 1
+      return bash(`printf 'module.exports = "right" // attempt %s\\n' ${record.attempt} > value.js`)
     },
     passed: () => false,
   },

@@ -26,11 +26,17 @@ export const CEILINGS = Object.freeze({
 /** Each viewport, its device pixel ratio (above every cap, so an uncapped ratio shows) and the tier it is judged against. */
 export const VIEWPORTS_3D = Object.freeze([
   Object.freeze({ name: "390", width: 390, height: 844, dpr: 3, tiers: ["low", "mid", "high"] }),
-  Object.freeze({ name: "1440", width: 1440, height: 900, dpr: 3, tiers: ["high", "mid", "low"] }),
+  // DPR 2, not 3: a 4,320 px software-rendered buffer (CI has no GPU) costs minutes and shows nothing DPR 2 doesn't
+  Object.freeze({ name: "1440", width: 1440, height: 900, dpr: 2, tiers: ["high", "mid", "low"] }),
 ])
 export const FRAMES = 120
 export const LEAK_SLACK = 0.05
-const FRAME_WAIT_MS = 8_000
+// Each wait for frames is bounded by wall time: on a software renderer (no GPU, as on CI) a heavy scene
+// draws a few frames a second, so the gate measures the frames that came instead of waiting for 120
+const FRAME_WAIT_MS = 3_000
+const SHOT_MS = 10_000
+/** The whole gate's time budget: what isn't checked by then is reported not checked, never passed */
+export const GATE_MS = 60_000
 const NAV_MS = 30_000
 const RESTORE_WAIT_MS = 2_000
 const DIRECTION = "scene_direction.json"
@@ -165,6 +171,7 @@ export const WRAP = `(() => {
   raf(tick)
   let lost = null
   const read = (action) => {
+    if (action === "frames") return frames.length
     const live = contexts.filter((c) => !c.gl.isContextLost())
     if (action === "lose") {
       const c = live.filter((x) => x.canvas.isConnected).sort((a, b) => b.canvas.clientWidth * b.canvas.clientHeight - a.canvas.clientWidth * a.canvas.clientHeight)[0]
@@ -260,13 +267,13 @@ const evidenceDir = (root, label) =>
  * given (tests); otherwise the stack's app and the project's scene_direction.json.
  * @returns {Promise<{ id: "G-3D", status: "pass" | "fail" | "not_checked", reason?: string, kind?: string, excerpt?: string, note?: string, optional?: true, report?: any }>}
  */
-export async function threeGate({ root, label, launch, app: givenApp, direction: givenDirection }) {
+export async function threeGate({ root, label, launch, app: givenApp, direction: givenDirection, budgetMs }) {
   const app = givenApp ?? readStack(root).app
   if (!app) return { id: "G-3D", status: "not_checked", reason: "no app is confirmed for this project (kriya stack use --app http://localhost:<port>)", optional: true }
   const direction = givenDirection ?? readDirection(root)
   if (!direction) return { id: "G-3D", status: "not_checked", reason: `no ${DIRECTION} with routes in .kriya/contracts (the designer step writes it)`, optional: true }
   const dir = evidenceDir(root, label)
-  const run = await withGateBrowser((_open, browser) => checkScenes(browser, app, direction, dir), { launch })
+  const run = await withGateBrowser((_open, browser) => checkScenes(browser, app, direction, dir, budgetMs ? { budgetMs } : {}), { launch })
   if (run.unavailable) return { id: "G-3D", status: "not_checked", reason: run.unavailable }
   return run.value
 }
@@ -296,19 +303,23 @@ async function openPage(browser, url, { viewport, reducedMotion = "no-preference
   }
   const read = (action) => page.evaluate(({ name, action }) => window[name]?.(action), { name: READ, action })
   const framesFrom = async (from, n = FRAMES) => {
-    await page.waitForFunction(({ name, want }) => (window[name]?.().frames ?? 0) >= want, { name: READ, want: from + n }, { timeout: FRAME_WAIT_MS, polling: 50 }).catch(() => {})
+    await page.waitForFunction(({ name, want }) => (window[name]?.("frames") ?? 0) >= want, { name: READ, want: from + n }, { timeout: FRAME_WAIT_MS, polling: 50 }).catch(() => {})
     return read()
   }
   const shot = async () => {
     const canvas = page.locator("canvas").first()
     if (!(await canvas.count())) return null
-    return canvas.screenshot({ timeout: 5_000 }).catch(() => null)
+    return canvas.screenshot({ timeout: SHOT_MS }).catch(() => null)
   }
   return { page, context, read, framesFrom, shot, consoleErrors, bytes: () => bytes, started }
 }
 
-async function checkScenes(browser, app, direction, dir) {
+async function checkScenes(browser, app, direction, dir, { budgetMs = GATE_MS } = {}) {
+  const deadline = Date.now() + budgetMs
+  const late = () => Date.now() > deadline
   const problems = []
+  // Checks that couldn't be made here (e.g. a screenshot that timed out): never a pass, never a made-up failure
+  const unknown = []
   const reported = []
   const motion = direction.motion ?? "none"
   // Does this browser make WebGL at all? Otherwise not_checked, never pass
@@ -321,6 +332,10 @@ async function checkScenes(browser, app, direction, dir) {
   for (const route of direction.routes)
     for (const viewport of VIEWPORTS_3D) {
       const at = `${route.path} at ${viewport.name}px`
+      if (late()) {
+        unknown.push(`${at}: not reached within the gate's ${budgetMs / 1000} s budget (the scene draws slowly here)`)
+        continue
+      }
       const budget = budgetFor(direction.tiers, viewport.tiers)
       const v = await openPage(browser, new URL(route.path, app).href, { viewport })
       if (v.unreachable) return { id: "G-3D", status: "not_checked", reason: `${app}${route.path} doesn't answer (${v.unreachable})` }
@@ -341,7 +356,8 @@ async function checkScenes(browser, app, direction, dir) {
         keepShot(dir, `${route.path.replace(/\W+/g, "_") || "root"}-${viewport.name}-f90.png`, b)
         if (v.consoleErrors.length) problems.push(`${at}: console errors (shader compile and link failures are logged here): ${v.consoleErrors.slice(0, 3).join(" | ")}`)
         if (r.errors) problems.push(`${at}: ${r.errors} WebGL error${r.errors === 1 ? "" : "s"} (gl.getError) while drawing`)
-        if (blank(lookB)) problems.push(`${at}: the canvas is blank or one colour (${lookB ? `${lookB.colours} colours` : "no screenshot"}); check the shader, the camera and the light`)
+        if (!lookA || !lookB) unknown.push(`${at}: the canvas couldn't be captured to check it draws`)
+        else if (blank(lookB)) problems.push(`${at}: the canvas is blank or one colour (${lookB.colours} colours); check the shader, the camera and the light`)
         else if (motion !== "none" && moved(lookA, lookB) === 0) problems.push(`${at}: motion is "${motion}" in the direction, but frame 30 and frame 90 are identical`)
         const recent = r.recent ?? []
         const drawCalls = median(recent.map((f) => f.draws))
@@ -354,8 +370,12 @@ async function checkScenes(browser, app, direction, dir) {
         if (sizing) problems.push(`${at}: ${sizing}`)
         const deltas = recent.map((f) => f.ms).filter((ms) => ms > 0 && ms < 1000)
         reported.push(`${at}: ${drawCalls} draws, ${Math.round(tris)} triangles, ${mb(r.textureBytes)} textures, frame ${median(deltas).toFixed(1)} ms median / ${p95(deltas).toFixed(1)} ms p95 (reported, not gated)`)
-        // The deeper checks once per route, at the phone width
+        // The deeper checks once per route, at the phone width, while the budget lasts
         if (viewport !== VIEWPORTS_3D[0]) continue
+        if (late()) {
+          unknown.push(`${at}: resize, leak and context-loss checks not reached within the gate's ${budgetMs / 1000} s budget`)
+          continue
+        }
         // Resize: the buffer follows the new CSS size
         await v.page.setViewportSize({ width: viewport.width - 60, height: viewport.height - 100 })
         const resized = await v.framesFrom((await v.read()).frames, 20)
@@ -379,13 +399,15 @@ async function checkScenes(browser, app, direction, dir) {
           await v.page.waitForTimeout(RESTORE_WAIT_MS)
           const after = await v.read()
           const look = canvasLook(await v.shot())
-          if (after.canvas?.lost || blank(look)) problems.push(`${at}: after a lost and restored WebGL context the canvas stays ${after.canvas?.lost ? "lost" : "blank"}; prevent default on webglcontextlost and rebuild on webglcontextrestored`)
+          if (!after.canvas?.lost && !look) unknown.push(`${at}: the canvas couldn't be captured after a restored context`)
+          else if (after.canvas?.lost || blank(look)) problems.push(`${at}: after a lost and restored WebGL context the canvas stays ${after.canvas?.lost ? "lost" : "blank"}; prevent default on webglcontextlost and rebuild on webglcontextrestored`)
         } else reported.push(`${at}: context loss not checked (no WEBGL_lose_context)`)
       } finally {
         await v.context.close().catch(() => {})
       }
       // Reduced motion: decorative motion stops
-      if (motion !== "none" && viewport === VIEWPORTS_3D[0]) {
+      if (motion !== "none" && viewport === VIEWPORTS_3D[0] && late()) unknown.push(`${at}: reduced motion not checked within the gate's ${budgetMs / 1000} s budget`)
+      else if (motion !== "none" && viewport === VIEWPORTS_3D[0]) {
         const q = await openPage(browser, new URL(route.path, app).href, { viewport, reducedMotion: "reduce" })
         if (!q.unreachable)
           try {
@@ -393,14 +415,16 @@ async function checkScenes(browser, app, direction, dir) {
             const a = canvasLook(await q.shot())
             await q.framesFrom((await q.read()).frames, 60)
             const b = canvasLook(await q.shot())
-            if (moved(a, b) > 0) problems.push(`${at}: decorative motion still runs under prefers-reduced-motion`)
+            if (!a || !b) unknown.push(`${at}: the canvas couldn't be captured under reduced motion`)
+            else if (moved(a, b) > 0) problems.push(`${at}: decorative motion still runs under prefers-reduced-motion`)
           } finally {
             await q.context.close().catch(() => {})
           }
       }
     }
-  const note = [`renderer: ${renderer ?? "unknown"}`, ...reported].join("\n")
+  const note = [`renderer: ${renderer ?? "unknown"}`, ...reported, ...unknown.map((u) => `not checked: ${u}`)].join("\n")
   if (problems.length) return { id: "G-3D", status: "fail", kind: "gate", excerpt: `G-3D:\n${problems.slice(0, 12).map((p) => `- ${p}`).join("\n")}${problems.length > 12 ? `\n- … and ${problems.length - 12} more` : ""}\n(${note.split("\n")[0]})`, note }
+  if (unknown.length) return { id: "G-3D", status: "not_checked", reason: unknown[0], note }
   return { id: "G-3D", status: "pass", note }
 }
 

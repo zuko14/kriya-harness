@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
@@ -176,7 +176,8 @@ test("ET-SEC-04 (lint): network, clocks, randomness, outside code and GSAP are r
 /* ─────────────────────────────── confinement ─────────────────────────────── */
 
 test("ES-05: the profile denies outbound network but loopback, people's folders, and lets back only what a render needs", () => {
-  const profile = sandboxProfile({ read: ["/usr/bin"], write: ["/private/var/tmp"] })
+  // The macOS profile is plain text, so it's checked on every system: its paths are real everywhere (it resolves them)
+  const profile = sandboxProfile({ read: ["/usr/bin"], write: [realpathSync(tmpdir())] })
   assert.match(profile, /\(deny network-outbound\)/)
   assert.match(profile, /\(allow network-outbound \(remote ip "localhost:\*"\)\)/)
   assert.doesNotMatch(profile, /unix-socket/, "no unix socket: the Host's and the daemon's sockets stay out of reach")
@@ -185,7 +186,7 @@ test("ES-05: the profile denies outbound network but loopback, people's folders,
   const lines = profile.split("\n")
   assert.ok(lines.findIndex((l) => l.startsWith("(deny file-read*")) < lines.findIndex((l) => l.includes('(subpath "/usr/bin")')), "denials first, so the allowances win")
   assert.throws(() => sandboxProfile({ read: ['/tmp/a"b'], write: [] }), /./)
-  assert.equal(confinement("linux").kind, null)
+  assert.equal(confinement("linux", () => false).kind, null, "no bubblewrap installed: nothing to confine with")
   assert.equal(confinement("darwin", () => true).kind, "sandbox-exec")
   assert.throws(() => confine("chrome", [], { read: [], write: [] }, confinement("win32")), (e) => e.reason === "no_confinement")
   const wrapped = confine("/bin/echo", ["hi"], { read: [], write: [] }, { kind: "sandbox-exec" })

@@ -61,9 +61,6 @@ test("WT-GATE-UI-RUN-01: a page that scrolls sideways at 360 px fails G-UI; the 
   })
   await new Promise((done) => app.listen(0, "127.0.0.1", done))
   useStack(dir, { app: `http://127.0.0.1:${app.address().port}` })
-  const pages = mkdtempSync(join(tmpdir(), "kriya-ui-run-pages-"))
-  writeFileSync(join(pages, "wide.html"), WIDE)
-  writeFileSync(join(pages, "fixed.html"), FIXED)
   const builders = []
   const fake = await startFakeKriya({
     approveAfter: 0,
@@ -74,8 +71,9 @@ test("WT-GATE-UI-RUN-01: a page that scrolls sideways at 360 px fails G-UI; the 
       if (/Do only this step, then stop\./.test(first)) {
         if (!done) builders.push(first)
         if (done) return { content: "Built." }
-        const source = join(pages, builders.length > 1 ? "fixed.html" : "wide.html")
-        return { toolCall: { name: "bash", args: { command: `cp '${source}' index.html`, description: "Write the page" } } }
+        // The page is written inline: the builder's sandbox can't read the host's /tmp on Linux (bwrap gives it its own)
+        const page = builders.length > 1 ? FIXED : WIDE
+        return { toolCall: { name: "bash", args: { command: `cat > index.html <<'KRIYA_PAGE'\n${page}\nKRIYA_PAGE`, description: "Write the page" } } }
       }
       if (done === 0) return { toolCall: { name: "kriya_plan", args: { goal: "Orders page", steps: [{ title: "Orders page", done_when: "index.html shows the orders", files: ["index.html"], role: "frontend" }] } } }
       if (done === 1) return { toolCall: { name: "kriya_step", args: { step: 1 } } }

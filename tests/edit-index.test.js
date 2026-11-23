@@ -45,7 +45,8 @@ const HEARD = [
   .join("\n")
 const FACES = JSON.stringify({ frame: "f000002.jpg", faces: [{ x: 0.25, y: 0.5, w: 0.25, h: 0.3, c: 0.98 }] })
 
-function world({ runtime = true, swift = true, fail = null } = {}) {
+// Faked as macOS (the Swift and Vision face helper) on every system, so these tests mean the same on Linux CI
+function world({ runtime = true, swift = true, fail = null, platform = "darwin" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "kh-index-"))
   const python = join(dir, "rt", "python", "bin", "python")
   mkdirSync(join(dir, "rt", "python", "bin"), { recursive: true })
@@ -64,7 +65,7 @@ function world({ runtime = true, swift = true, fail = null } = {}) {
     return { probe: PROBE, packets: PACKETS, sound: SOUND, words: HEARD, shots: SHOTS, faces: FACES }[kind] ?? ""
   }
   const db = openIndexDb(join(dir, "index.sqlite"))
-  const indexer = createIndexer({ db, cache: join(dir, "cache"), binDir: join(dir, "bin"), run, runtime: () => (runtime ? { dir: join(dir, "rt") } : null) })
+  const indexer = createIndexer({ db, cache: join(dir, "cache"), binDir: join(dir, "bin"), run, runtime: () => (runtime ? { dir: join(dir, "rt") } : null), platform })
   return { dir, db, indexer, calls, asset: (id = "a1", fingerprint = "f1") => ({ id, kind: "video", fingerprint, facts: {} }) }
 }
 
@@ -100,6 +101,11 @@ test("ET-IDX-02: a missing optional layer degrades and says why; the others stil
   assert.match(report.L5.notice, /Needs L2/)
   assert.equal(report.L8.status, "unavailable")
   assert.match(report.L8.notice, /command line tools/)
+  // Off macOS there's no Vision helper: the face layer says so and the rest still run
+  const linux = Object.fromEntries((await world({ platform: "linux" }).indexer.indexAsset(w.asset(), "/media/take.mov")).map((r) => [r.layer, r]))
+  assert.equal(linux.L8.status, "unavailable")
+  assert.match(linux.L8.notice, /Media Runtime's face model/)
+  for (const layer of ["L0", "L1", "L2", "L6", "L7"]) assert.equal(linux[layer].status, "ok", layer)
   for (const layer of ["L0", "L1", "L6", "L7"]) assert.equal(report[layer].status, "ok", layer)
   assert.ok(!w.calls.includes("words"), "no recogniser was started")
 
