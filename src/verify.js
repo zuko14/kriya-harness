@@ -220,15 +220,22 @@ const git = (cwd, args, input, encoding = "utf8") =>
  * @returns {Promise<{ fingerprint: string, changed: string[] } | undefined>}
  *   changed: paths that differ from HEAD (staged, unstaged, untracked)
  */
-export async function workTree(cwd) {
+export async function workTree(cwd, base = "HEAD") {
   const status = await git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"])
   if (status === null) return undefined
   const head = ((await git(cwd, ["rev-parse", "--verify", "-q", "HEAD"])) ?? "no commit").trim()
   const root = ((await git(cwd, ["rev-parse", "--show-toplevel"])) ?? cwd).trim()
-  const changed = status
-    .split("\0")
-    .filter(Boolean)
-    .map((entry) => entry.slice(3))
+  // Harness 2.0 W16: with a plan's base (repository tools on), files committed since it count as changed too
+  const committed = base === "HEAD" ? "" : ((await git(root, ["diff", "--name-only", "-z", "--no-renames", base, "HEAD"])) ?? "")
+  const changed = [
+    ...new Set([
+      ...status
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => entry.slice(3)),
+      ...committed.split("\0").filter(Boolean),
+    ]),
+  ]
   const present = changed.filter((rel) => existsSync(join(root, rel)))
   const hashes = present.length ? await git(root, ["hash-object", "--stdin-paths"], present.join("\n") + "\n") : ""
   const fingerprint = createHash("sha256").update(`${head}\0${status}\0${hashes ?? "unreadable"}`).digest("hex").slice(0, 16)
@@ -258,14 +265,14 @@ export const checkFiles = (paths) => paths.filter((p) => CHECK_FILE.some((re) =>
  * session's first checkpoint.
  * @returns {Promise<undefined | Awaited<ReturnType<typeof run>>>} undefined outside a repository or before a first commit
  */
-export async function onOriginals(cwd, paths, run) {
+export async function onOriginals(cwd, paths, run, base = "HEAD") {
   const root = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim()
-  if (!root || (await git(root, ["rev-parse", "--verify", "-q", "HEAD"])) === null) return undefined
+  if (!root || (await git(root, ["rev-parse", "--verify", "-q", base])) === null) return undefined
   const saved = []
   try {
     for (const rel of paths) {
       const file = join(root, rel)
-      const original = await git(root, ["show", `HEAD:${rel}`], undefined, "buffer")
+      const original = await git(root, ["show", `${base}:${rel}`], undefined, "buffer")
       const entry = { file, mine: existsSync(file) ? readFileSync(file) : null }
       saved.push(entry)
       if (original === null) rmSync(file, { force: true })
@@ -303,7 +310,8 @@ const matches = (pattern, rel) => (/\*+$/.test(pattern) ? rel.startsWith(pattern
 async function strictBefore(cwd, plan, work, run, defensive) {
   const root = await gitRoot(cwd)
   if (!root || !work?.changed.length) return undefined
-  const head = (rel) => git(root, ["show", `HEAD:${rel}`])
+  const base = baseOf(plan)
+  const head = (rel) => git(root, ["show", `${base}:${rel}`])
   const hit = work.changed.find((rel) => plan?.invariants?.some((p) => matches(p, rel)))
   if (hit) return refusal("invariant broken", "the plan's invariants", `${hit} must not change in this task (the plan's invariants). Put it back and solve this another way.`)
   const checks = new Set(checkFiles(work.changed))
@@ -321,7 +329,7 @@ async function strictBefore(cwd, plan, work, run, defensive) {
   let neighbours = []
   if (defensive) {
     const graph = importGraph(root)
-    const diffs = await diffsOf(root, work.changed)
+    const diffs = await diffsOf(root, work.changed, base)
     const found = sentinel(diffs, { tenancy: graph.files.some((rel) => /\bwithUser\(/.test(graph.text(rel))) })
     if (found.length) return refusal("invariant violated", "the invariant sentinel", findings(found.map((f) => `${f.file}:${f.line} [${f.rule}] ${f.why}`)))
     // The neighbours' suites too: the work isn't done if it passes here and breaks there
@@ -338,8 +346,15 @@ async function strictBefore(cwd, plan, work, run, defensive) {
   return undefined
 }
 
-const diffsOf = async (root, changed) =>
-  Promise.all(changed.map(async (rel) => ({ rel, before: await git(root, ["show", `HEAD:${rel}`]), after: fileNow(join(root, rel)) })))
+const diffsOf = async (root, changed, base = "HEAD") =>
+  Promise.all(changed.map(async (rel) => ({ rel, before: await git(root, ["show", `${base}:${rel}`]), after: fileNow(join(root, rel)) })))
+
+/**
+ * Harness 2.0 W16 (repository tools): "the code before this session" is the
+ * commit kriya_plan recorded, so a commit made in the session can't make
+ * weakened tests the new originals. Without one, HEAD, exactly as before.
+ */
+export const baseOf = (plan) => (typeof plan?.base === "string" && /^[0-9a-f]{40}$/.test(plan.base) ? plan.base : "HEAD")
 
 const findings = (lines) => `${lines.slice(0, 12).join("\n")}${lines.length > 12 ? `\n… ${lines.length - 12} more` : ""}`
 
@@ -351,7 +366,7 @@ const findings = (lines) => `${lines.slice(0, 12).join("\n")}${lines.length > 12
 async function defensiveAfter(cwd, plan, work) {
   const root = await gitRoot(cwd)
   if (!root || !work?.changed.length) return undefined
-  const diffs = await diffsOf(root, work.changed)
+  const diffs = await diffsOf(root, work.changed, baseOf(plan))
   const hazards = reviewDiff(importGraph(root), diffs)
   if (hazards.length) return refusal("regression hazard", "the diff review", findings(hazards.map((h) => `${h.file}${h.line ? `:${h.line}` : ""} [${h.hazard}] ${h.why}`)))
   const surface = newSurface(diffs)
@@ -377,7 +392,7 @@ async function strictAfter(cwd, sessionId, plan, work, check, run, defensive, fi
   if (!code.length) return undefined
   // The red phase, proved: on the code as it was, the check (with any new test) must fail
   const kept = await checkpoint(cwd, sessionId, "before the check on the old code").catch(() => undefined)
-  const old = kept && (await onOriginals(cwd, code, () => run(check.command)))
+  const old = kept && (await onOriginals(cwd, code, () => run(check.command), baseOf(plan)))
   if (old?.aborted) throw new VerifyError("The check was stopped.")
   if (old?.exitCode === 0 && !old.timedOut)
     return refusal("no reproduction", check.command, "The check also passes on the code before your change, so nothing proves the bug or its fix. Add a test that fails on the old code and passes on the new.")
@@ -499,7 +514,7 @@ export const stepLabel = (plan, n) => normalStep(`${n} ${plan.steps[n - 1].title
  *   guard (KRIYA_LOOP_GUARD=on): a failure's class and excerpt too, with its signature, and the excerpt kept in the run so a resumed step can use it
  *   strict (KRIYA_STRICT_LOOP=on): the checks of strictBefore and strictAfter around the person's check; never in Read only
  */
-export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree, v2, guard, strict }) {
+export async function verifyStep({ cwd, sessionId, step, run, now = () => new Date(), tree = workTree, v2, guard, strict, gates, expect }) {
   const label = normalStep(step)
   const check = confirmedCheck(cwd)
   if (!check) return { status: "not configured", step: label, suggestions: discoverChecks(cwd) }
@@ -507,9 +522,10 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
   if (before?.status === "blocked") return { status: "blocked", step: label, attempts: before.attempts, command: check.command }
   // The files this run checks, taken before the command (a check that writes
   // files, e.g. a build, doesn't make its own pass stale)
-  const work = await tree(cwd)
+  const base = baseOf(readProgress(check.root, sessionId).plan)
+  const work = await (base === "HEAD" ? tree(cwd) : tree(cwd, base))
   const started = now()
-  const hard = strict && !strict.readOnly
+  const hard = strict && !strict.readOnly && expect !== "red"
   const plan = hard ? readProgress(check.root, sessionId).plan : undefined
   const early = hard ? await strictBefore(cwd, plan, work, run, strict.defensive) : undefined
   const result = early ?? (await run(check.command))
@@ -517,13 +533,33 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
   const passes = (r) => r.exitCode === 0 && !r.timedOut
   let status = passes(result) ? "pass" : "fail"
   let touched = work && status === "pass" ? checkFiles(work.changed) : []
+  // Harness 2.0 W5, a spec-test step (ORCHESTRA §7): its tests can't pass before the code exists, so it passes
+  // only red for the right reason: the check fails now, passes with the new check files moved aside (the
+  // strict loop's red-phase proof), and the failure isn't a syntax error
+  let red
+  if (expect === "red") {
+    const tests = work ? checkFiles(work.changed) : []
+    const failing = classify(result)
+    if (passes(result)) red = refusal("not red", check.command, "The check passes with the new tests, so they test nothing the code lacks yet. Write tests for what the next steps add, named after their criteria (AC-1, AC-2, …), so they fail now.")
+    else if (failing.kind === "syntax") red = refusal("syntax", check.command, failing.excerpt)
+    else if (!tests.length) red = refusal("not red", check.command, "This step changed no test file. A spec step writes the tests, and only the tests.")
+    else {
+      const without = await onOriginals(cwd, tests, () => run(check.command), base)
+      if (without?.aborted) throw new VerifyError("The check was stopped.")
+      if (!without) red = refusal("not red", check.command, "Kriya can't set the new tests aside here (no git repository with a commit), so it can't prove they are what fails.")
+      else if (!passes(without)) red = refusal("red for another reason", check.command, `The check fails even without the new tests, so their failure proves nothing. Fix that first:\n${classify(without).excerpt}`)
+      else red = { ...result, exitCode: 0, red: true }
+    }
+    if (red.own) [status, touched] = ["fail", []]
+    else [status, touched] = ["pass", []]
+  }
   // v2 and strict: a pass that changed tests or the check's files must hold on the originals too
-  let checked = result
+  let checked = red ?? result
   let weakened
   if (((v2 && !v2.readOnly) || hard) && touched.length) {
     // The work's own files are saved first, so a crash mid-swap loses nothing (kriya undo); no save, no swap
     const kept = await checkpoint(cwd, sessionId, "before the check on the committed tests").catch(() => undefined)
-    const originals = kept && (await onOriginals(cwd, touched, () => run(check.command)))
+    const originals = kept && (await onOriginals(cwd, touched, () => run(check.command), base))
     if (originals?.aborted) throw new VerifyError("The check was stopped.")
     if (originals && !passes(originals)) [status, checked, weakened, touched] = ["fail", originals, touched, []]
   }
@@ -533,9 +569,15 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     const late = await strictAfter(cwd, sessionId, plan, work, check, run, strict.defensive, !open.length)
     if (late) [status, checked, touched] = ["fail", late, []]
   }
+  // Harness 2.0 gates (--gates): after a pass, the step's gates; the first failure fails the run
+  let gated
+  if (gates && status === "pass") {
+    gated = await gates({ root: check.root, changed: work?.changed ?? [], output: checked.output ?? "", rerun: () => run(check.command), command: (c) => run(c), label, recorded: readProgress(check.root, sessionId).contracts ?? {} })
+    if (gated.failure) [status, checked, touched] = ["fail", refusal(gated.failure.kind, `gate ${gated.failure.id}`, gated.failure.excerpt), []]
+  }
   // A refusal's words are its whole output; a rung's error is cut like any other
   const classified = () => (checked.own ? { kind: checked.kind, excerpt: checked.output } : weakened ? { kind: "tests changed", excerpt: classify(checked).excerpt } : { ...classify(checked), ...(checked.kind && { kind: checked.kind }) })
-  const failure = (v2 || guard) && status === "fail" ? classified() : undefined
+  const failure = (v2 || guard || gated?.failure || red?.own) && status === "fail" ? classified() : undefined
   const sig = guard && failure ? createHash("sha256").update(signature(check.command, failure)).digest("hex").slice(0, 16) : undefined
   const progress = recordRun(check.root, sessionId, {
     at: started.toISOString(),
@@ -551,7 +593,11 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     ...(weakened && { weakened }),
     ...(sig && { sig, excerpt: failure.excerpt.slice(0, KEPT_OUTPUT) }),
     ...(checked.level && { level: checked.level }),
+    ...(checked.red && { red: true }),
+    ...(gated && { gates: gated.results.map(({ id, status: s, reason, note }) => ({ id, status: s, ...(reason && { reason }), ...(note && { note: String(note).slice(0, 600) }) })) }),
   })
+  // The owning role's contracts, hashed once its step passes (the contract bus's ledger)
+  if (gated && status === "pass" && Object.keys(gated.contracts).length) writeProgress(check.root, sessionId, { ...progress, contracts: { ...(progress.contracts ?? {}), ...gated.contracts } })
   const proposed = (v2 || strict) && failure && noteFailure(check.root, check.command, failure, now)
   const after = verdict(progress)
   const mine = after.steps.find((s) => s.step === label)
@@ -570,6 +616,7 @@ export async function verifyStep({ cwd, sessionId, step, run, now = () => new Da
     ...(weakened && { weakened }),
     ...(proposed && { proposed: proposed.text }),
     ...(sig && { signature: sig }),
+    ...(gated && { gates: gated.results }),
   }
 }
 

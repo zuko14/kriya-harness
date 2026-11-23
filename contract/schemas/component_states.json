@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "component_states.json",
+  "type": "object",
+  "maxProperties": 200,
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "states"
+    ],
+    "properties": {
+      "states": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "enum": [
+            "loading",
+            "empty",
+            "partial",
+            "error",
+            "populated"
+          ]
+        }
+      },
+      "preview": {
+        "type": "string",
+        "pattern": "^/[^\\s]{0,200}$"
+      }
+    }
+  }
+}

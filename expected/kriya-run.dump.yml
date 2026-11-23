@@ -527,6 +527,23 @@
 - id: kriya-anchor
   name: '@kriya-ai/harness-anchor'
   disabled: !!js process.env.KRIYA_ANCHOR !== 'on'
+- id: kriya-grounding
+  name: '@kriya-ai/harness-grounding'
+  disabled: !!js process.env.KRIYA_GROUNDING !== 'on'
+- id: kriya-repo
+  name: '@kriya-ai/harness-repo'
+  disabled: !!js process.env.KRIYA_REPO_TOOLS !== 'on'
+- id: kriya-mcp
+  name: '@kriya-ai/harness-mcp'
+  disabled: !!js process.env.KRIYA_MCP !== 'on'
+- id: kriya-deploy
+  name: '@kriya-ai/harness-deploy'
+  disabled: !!js process.env.KRIYA_DEPLOY !== 'on'
+- id: kriya-runstrip
+  name: '@kriya-ai/harness-runstrip'
+  disabled: !!js >-
+    process.env.KRIYA_RUNSTRIP !== 'on' || ctx.get('profileContext')?.name !==
+    'kriya'
 - id: kriya-skills
   name: '@kriya-ai/harness-skills'
   disabled: !!js ctx.get('profileContext')?.name !== 'kriya'

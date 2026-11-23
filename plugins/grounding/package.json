@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-grounding",
+  "description": "Facts about the project's installed packages from their own type definitions, stubs, changelogs and lockfiles; nothing imported or run",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

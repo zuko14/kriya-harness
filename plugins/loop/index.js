@@ -5,14 +5,24 @@ import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { extname, join, resolve } from "node:path"
 
+import { cartridgeSource, ROLES, selectCartridge } from "../../src/cartridges.js"
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
+import { escalateAfterFromEnv, orchestraFromEnv, tierFor } from "../../src/orchestra.js"
+import { contractSlices, CONTRACT_NAMES } from "../../src/contracts.js"
+import { recordOutcome } from "../../src/outcomes.js"
+import { bindPlan, checkPlanAllowed, MAX_MILESTONES, milestonesText, saveMilestones, syncMilestones } from "../../src/milestones.js"
+import { runGates } from "../../src/gates/index.js"
+import { scopedResources } from "../../src/gates/tenant.js"
+import { CRITIC_MS, critiquePrompt, parseDefects } from "../../src/critic.js"
 import { rankSkills } from "../../src/intent.js"
-import { builderLimits, loopStateText, MAX_STEPS, nextStep, planStatus, readPlan, runStep, savePlan, seededPlan, writeSnapshot } from "../../src/loop.js"
+import { fingerprint, takeQuestion, waitForReload } from "../../src/explore.js"
+import { readStack } from "../../src/stack.js"
+import { builderLimits, loopStateText, MAX_STEPS, nextStep, planStatus, readPlan, runStep, savePlan, seededPlan, stepLabel, writeSnapshot } from "../../src/loop.js"
 import { blastRadius, importers, importGraph, insideFolder, MAX_READ_LINES, outline, ReconError, readPage } from "../../src/recon.js"
 import { confirmedRules } from "../../src/rules.js"
 import { projectRoot } from "../../src/skill-switches.js"
 import { TASK_KINDS } from "../../src/strict.js"
-import { confirmedCheck, currentVerdict, VerifyError, verifyStep } from "../../src/verify.js"
+import { confirmedCheck, currentVerdict, normalStep, readProgress, VerifyError, verifyStep, workTree, writeProgress } from "../../src/verify.js"
 
 // The Kriya loop, node half (H14a; KRIYA_LOOP.md in the Kriya repository):
 // `kriya_verify` runs the project's confirmed check and reports pass, fail
@@ -156,7 +166,7 @@ export function verifyTool(host) {
     async execute(args, exec) {
       if (!exec.agent) throw new VerifyError("kriya_verify needs a session.")
       const cwd = await host.cwd(exec)
-      const result = await verifyStep({ cwd, sessionId: String(exec.agent.id), step: args.step, run: (command) => host.run(command, exec, cwd), ...(host.v2 && { v2: host.v2(exec) }), ...(host.guard && { guard: true }), ...(host.strict && { strict: host.strict(exec) }) })
+      const result = await verifyStep({ cwd, sessionId: String(exec.agent.id), step: args.step, run: (command) => host.run(command, exec, cwd), ...(host.v2 && { v2: host.v2(exec) }), ...(host.guard && { guard: true }), ...(host.strict && { strict: host.strict(exec) }), ...(host.gates && { gates: host.gates(exec, cwd) }), ...(host.expect?.(exec, cwd, args.step) && { expect: host.expect(exec, cwd, args.step) }) })
       const rules = host.v2 && result.status === "fail" ? confirmedRules(cwd) : []
       return rules.length ? { ...result, rules } : result
     },
@@ -173,13 +183,40 @@ const PLAN_STEP = {
     files: { type: "array", items: { type: "string" }, description: "Files the step expects to touch." },
   },
 }
-const PLAN_STEP_V2 = {
+export const PLAN_STEP_V2 = {
   ...PLAN_STEP,
   properties: {
     ...PLAN_STEP.properties,
     after: { type: "array", items: { type: "number" }, description: "Numbers of the earlier steps this one needs; [] for none. Default: the step before it." },
   },
 }
+
+// Harness 2.0 cartridges: each step may name the discipline it needs, from Kriya's list
+// (Kriya-Tavi docs/kriya-harness/upgrade_2.0/CARTRIDGES.md §5). Without roles, the schema as before
+export const withRole = (schema, roles) =>
+  roles?.length
+    ? { ...schema, properties: { ...schema.properties, role: { type: "string", enum: roles, description: "Optional: the discipline this step needs (e.g. database, frontend, security); its guidance goes to the step's builder. Leave it out to let the harness choose from the files." } } }
+    : schema
+
+// Harness 2.0 gates: each step may name the contract slices it builds to (ORCHESTRA §5), and
+// may be a spec-test step, which passes only red for the right reason (§7)
+// Harness 2.0 W14 (WD-18): a creative step may ask for 2 or 3 takes (KRIYA_EXPLORE=on only)
+export const withExplore = (schema, on) =>
+  on
+    ? { ...schema, properties: { ...schema.properties, explore: { type: "number", description: "Optional, creative steps only (role frontend, designer or graphics): 2 or 3 takes, each in a different direction, checked like any step; the person keeps one." } } }
+    : schema
+
+export const withContracts = (schema, names) =>
+  names?.length
+    ? {
+        ...schema,
+        properties: {
+          ...schema.properties,
+          contracts: { type: "array", items: { type: "string" }, description: `Optional: contracts in .kriya/contracts this step builds to (${names.join(", ")}), each optionally with a JSON Pointer, e.g. "api#/paths/~1orders". Their text goes to the step's builder.` },
+          spec_tests: { type: "boolean", description: "Optional: true when this step only writes tests from the contracts and criteria, before the code exists. It passes when those tests fail for the right reason, and comes before the steps that build the code." },
+        },
+      }
+    : schema
 
 // The task contract: what kriya_plan adds under the strict loop. It can only add to what must hold
 const CONTRACT = {
@@ -263,7 +300,7 @@ export function planTool(host) {
     description: `Record the plan for a task with several parts: a goal and 1 to ${MAX_STEPS} ordered steps. Then run each with kriya_step, in order.`,
     parameters: {
       goal: { type: "string", required: true, description: "What the task is for, in one sentence." },
-      steps: { type: "array", required: true, items: host.v2 ? PLAN_STEP_V2 : PLAN_STEP, description: `1 to ${MAX_STEPS} ordered steps.` },
+      steps: { type: "array", required: true, items: withExplore(withContracts(withRole(host.v2 ? PLAN_STEP_V2 : PLAN_STEP, host.roles), host.contracts), Boolean(host.explore)), description: `1 to ${MAX_STEPS} ordered steps.` },
       ...(host.strict && CONTRACT),
       ...(host.defensive && PREMORTEM),
     },
@@ -286,8 +323,16 @@ export function planTool(host) {
       const seed = seededPlan()
       // The person drew this plan in Kriya Flows: it isn't the model's to change
       if (seed && readPlan(cwd, id)) throw new VerifyError("The person set this plan in Kriya. Run its steps with kriya_step; it can't be replanned here.")
-      savePlan(cwd, id, seed ?? args, undefined, { v2: Boolean(host.v2), strict: Boolean(host.strict), defensive: Boolean(host.defensive) })
+      // Harness 2.0 W5: a project with tenant-scoped resources plans a security step that proves isolation
+      if (!seed && host.roles && host.contracts && scopedResources(projectRoot(cwd)).size && !(args?.steps ?? []).some((s) => s?.role === "security"))
+        throw new VerifyError("This project's auth matrix has tenant-scoped resources, so the plan needs a step with role \"security\" that proves tenants are isolated (G-TENANT, with .kriya/gates/tenants.json).")
+      // Harness 2.0 milestones: a plan is for the first milestone not yet done
+      if (host.milestones) checkPlanAllowed(projectRoot(cwd))
+      savePlan(cwd, id, seed ?? args, undefined, { v2: Boolean(host.v2), strict: Boolean(host.strict), defensive: Boolean(host.defensive), ...(host.roles && { roles: host.roles }), ...(host.contracts && { contracts: host.contracts, specTests: true }), ...(host.explore && { explore: true }) })
       writeSnapshot(cwd, id)
+      if (host.milestones) await bindPlan(projectRoot(cwd), id)
+      // Harness 2.0 W16: with repository tools on, the plan's base commit is "the code before this session"
+      if (host.repoTools) await recordBase(projectRoot(cwd), id)
       return plain({ steps: planStatus(cwd, id), ...(!(host.checked ?? confirmedCheck)(cwd) && { unchecked: true }), ...(host.defensive && { radius: traced(cwd, readPlan(cwd, id)) }) })
     },
     presentCall: (args) => ({ card: "generic", title: "Plan", kind: "think", rawInput: typeof args.goal === "string" ? args.goal : "" }),
@@ -297,7 +342,9 @@ export function planTool(host) {
 function presentStep(value) {
   const head = `Step ${value.step} (${value.title}): ${value.status}${value.attempts ? ` after ${value.attempts} run${value.attempts === 1 ? "" : "s"}` : ""}.`
   const lines = [head]
-  if (value.status === "not checked")
+  if (value.explore?.kept) lines.push(`Explore: kept take ${value.explore.kept} (${value.explore.direction}), chosen by ${{ person: "the person", critic: "the critic", order: "take order (no pick, no critic)", only: "being the only passing take" }[value.explore.by] ?? value.explore.by}. Takes: ${value.explore.takes.map((t) => `${t.take} ${t.direction} ${t.status}`).join("; ")}. The others are in kriya undo --list.`)
+  else if (value.explore) lines.push(`Explore: no take passed (${value.explore.takes.map((t) => `${t.take} ${t.direction} ${t.status}`).join("; ")}).`)
+  if (value.status === "not checked" && !value.explore)
     lines.push("No check is confirmed for this project, so the step was built but not checked. Tell the person; they can confirm one with `kriya verify use <number>`.")
   if (value.status === "blocked") lines.push(`\`${value.command}\` ${value.stalled ? `was stopped early: ${value.stalled}, so more builders wouldn't help` : "kept failing"}. Stop and tell the person what failed:`, value.output)
   if (value.status === "interrupted") lines.push("Call kriya_step for this step again; if it comes back interrupted again, stop and tell the person.")
@@ -349,11 +396,24 @@ export function stepTool(host) {
         ...(host.steps && { v2: host.steps(exec, cwd) }),
         ...(host.guardSteps && { guard: host.guardSteps(exec, cwd) }),
         ...(host.questions && { pickCheck: (found) => askCheck(host.questions(), exec, found) }),
+        ...(host.cartridge && { cartridge: host.cartridge }),
+        ...(host.orchestra && { orchestra: host.orchestra }),
+        ...(host.contracts && { slices: (step) => contractSlices(projectRoot(cwd), step.contracts) }),
+        ...(host.polish && { polish: host.polish(exec, cwd) }),
+        ...(host.explore && { explore: host.explore(exec, cwd) }),
       }).catch((error) => {
         // An abort rejects with DSH's plain reason ({ kind: "user" }), which reads as "[object Object]"
         throw error instanceof Error ? error : new VerifyError("The step was stopped before it finished.")
       })
       writeSnapshot(cwd, id)
+      if (host.milestones) await syncMilestones(cwd, id)
+      // Harness 2.0 W11: the step's outcome for the cartridge version that built it, only with `kriya share on`
+      if (host.cartridge && result.note !== "This step already passed.") {
+        const plan = readPlan(cwd, id)
+        const label = plan && stepLabel(plan, n)
+        const built = readProgress(projectRoot(cwd), id).builders?.findLast((b) => b.step === label)
+        if (built?.cartridge) recordOutcome(built.cartridge, result.status)
+      }
       return plain(result)
     },
     presentCall: (args) => ({ card: "generic", title: "Build and check a step", kind: "execute", rawInput: `step ${args.step}` }),
@@ -559,6 +619,142 @@ export function toolsToHide(names, step) {
   return names.filter((name) => HEAVY.some(([tool, words]) => tool.test(name) && !words.test(text)))
 }
 
+// Harness 2.0 W2: kriya_advise (Kriya-Tavi docs/kriya-harness/upgrade_2.0/ORCHESTRA.md §3).
+// A builder may ask the head level a question, twice per attempt: the answer
+// comes from a fresh child of the head (a builder can't have children: DSH
+// refuses depth 2, W0 spike S2) that can only read files. Advice is guidance,
+// never evidence: nothing here decides pass, fail or done
+export const ADVICE_LIMIT = 2
+export const ADVICE_MS = 60_000
+export const ADVICE_CHARS = 4000
+export const ADVISOR_TOOLS = new Set(["read", "read_image", "grep", "glob"])
+
+const blocksText = (blocks) =>
+  (Array.isArray(blocks) ? blocks : [])
+    .filter((b) => b?.type === "text" && typeof b.text === "string")
+    .map((b) => b.text)
+    .join("\n")
+    .trim()
+
+/** What the advisor is told: the task, the builder's step, its question; it reads, it changes nothing */
+export function advisePrompt(plan, n, question) {
+  const step = plan?.steps?.[n - 1]
+  return [
+    "You are advising the builder of one step of a larger task. You can read files; you change nothing and run nothing.",
+    "",
+    ...(plan ? [`Goal of the task: ${plan.goal}`] : []),
+    ...(step ? [`The builder's step: ${n}. ${step.title}`, `It is done when: ${step.doneWhen}`] : []),
+    "",
+    "The builder asks:",
+    question,
+    "",
+    "Answer in at most 15 lines: the likely cause or the approach, and the files and lines to look at. Don't write the whole change.",
+  ].join("\n")
+}
+
+export function adviseTool(host) {
+  return defineTool({
+    name: "kriya_advise",
+    description:
+      `Ask a stronger model one focused question about your step when you are stuck: a failing check you can't explain, an API you're unsure of, a design choice. It reads the project and answers; it changes nothing. At most ${ADVICE_LIMIT} questions per attempt.`,
+    parameters: {
+      question: { type: "string", required: true, description: "The question, with the error or code it is about (up to 2,000 characters)." },
+    },
+    output: {
+      schema: { type: "object", additionalProperties: true, properties: { advice: { type: "string", required: true } } },
+      render: (_args, value) => [{ type: "text", text: value.advice }],
+    },
+    execute: (args, exec) => host.advise(exec, typeof args.question === "string" ? args.question : ""),
+    presentCall: (args) => ({ card: "generic", title: "Ask for advice", kind: "think", rawInput: typeof args.question === "string" ? args.question.slice(0, 120) : "" }),
+  })
+}
+
+const headCommit = (root) =>
+  new Promise((done) =>
+    execFile("git", ["rev-parse", "--verify", "-q", "HEAD"], { cwd: root, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } }, (error, out) => done(error ? undefined : String(out).trim()))
+  )
+
+/** The plan's base commit, recorded once per plan (the commit HEAD was on when it was made). */
+export async function recordBase(root, sessionId) {
+  const sha = await headCommit(root)
+  if (!/^[0-9a-f]{40}$/.test(sha ?? "")) return undefined
+  const progress = readProgress(root, sessionId)
+  if (!progress.plan || progress.plan.base) return progress.plan?.base
+  writeProgress(root, sessionId, { ...progress, plan: { ...progress.plan, base: sha } })
+  return sha
+}
+
+const MILESTONE = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string", required: true, description: "The milestone, in a few words." },
+    done_when: { type: "string", required: true, description: "What is true, and checkable, when it is done." },
+  },
+}
+const withRoles = (item, roles) =>
+  roles ? { ...item, properties: { ...item.properties, roles: { type: "array", items: { type: "string", enum: roles }, description: "The roles its steps will need." } } } : item
+
+/** The Explore card: the person keeps one passing take (DSH's question card, keyboard-selectable). No UI or no answer: undefined. */
+export async function askTake(questions, exec, survivors, title) {
+  const answer = await questions
+    ?.ask({ agent: exec.agent, signal: AbortSignal.any([exec.signal, AbortSignal.timeout(CHECK_QUESTION_MS)]), questions: [takeQuestion(survivors, title)] })
+    .catch(() => undefined)
+  const label = answer?.answers?.find((a) => a.id === "kriya-explore")?.selected?.[0]
+  return survivors.find((t) => `Take ${t.v}` === label)?.v
+}
+
+export const REPLACE = "Replace them"
+
+/** The harness asks the person whether to replace open milestones; only their selected "Replace them" counts. No UI: no. */
+export async function askReplan(questions, exec) {
+  const answer = await questions
+    ?.ask({
+      agent: exec.agent,
+      signal: AbortSignal.any([exec.signal, AbortSignal.timeout(CHECK_QUESTION_MS)]),
+      questions: [
+        {
+          id: "kriya-replan",
+          header: "Milestones",
+          question: "Replace this project's milestones with a new list?",
+          detail: "The agent wants to replace milestones that aren't all done yet. Finished work stays; only the list of what comes next changes.",
+          options: [
+            { label: REPLACE, description: "Use the agent's new list from now on." },
+            { label: NOT_NOW, description: "Keep the current milestones." },
+          ],
+        },
+      ],
+    })
+    .catch(() => undefined)
+  return answer?.answers?.find((a) => a.id === "kriya-replan")?.selected?.[0] === REPLACE
+}
+
+/** kriya_milestones (Harness 2.0 W10): the head records the long work's milestones, once per project unless the person agrees to replace them. */
+export function milestonesTool(host) {
+  return defineTool({
+    name: "kriya_milestones",
+    description: `For long work that one plan can't hold: record 1 to ${MAX_MILESTONES} milestones in order. Then plan each with kriya_plan, one at a time; the next is planned only after the current one's every step passes.`,
+    parameters: {
+      milestones: { type: "array", required: true, items: withRoles(MILESTONE, host.roles), description: `1 to ${MAX_MILESTONES} ordered milestones.` },
+      replan: { type: "boolean", description: "Replace milestones still in progress; the person is asked first." },
+    },
+    output: {
+      schema: { type: "object", additionalProperties: true, properties: { milestones: { type: "array", required: true, items: { type: "object", additionalProperties: true, properties: {} } } } },
+      render: (_args, value) => [{ type: "text", text: `Milestones recorded (${value.milestones.length}):\n${value.milestones.map((m, i) => `${i + 1}. ${m.title}`).join("\n")}\nPlan milestone 1 with kriya_plan.` }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) throw new VerifyError("kriya_milestones needs a session.")
+      if (host.isBuilder(exec)) throw new VerifyError("A step's builder doesn't set milestones; build your step and stop.")
+      const root = projectRoot(await host.cwd(exec))
+      const replan = args?.replan === true && (await askReplan(host.questions?.(), exec))
+      if (args?.replan === true && !replan) throw new VerifyError("The person kept the current milestones. Work through them with kriya_plan.")
+      const ledger = await saveMilestones(root, args?.milestones, { roles: host.roles, replan })
+      return plain({ milestones: ledger.milestones.map((m) => ({ title: m.title, status: m.status })) })
+    },
+    presentCall: () => ({ card: "generic", title: "Milestones", kind: "think", rawInput: "" }),
+  })
+}
+
 export function apply(ctx) {
   const sandboxPolicy = ctx.shell.sandboxMode === undefined ? undefined : ctx.get("sandboxPolicy")
   const readOnly = (exec) => sandboxPolicy?.resolve({ session: exec.agent.session })?.mode === "read-only"
@@ -611,7 +807,121 @@ export function apply(ctx) {
   const guard = builderGuard(limits, { tokens: (agent) => { try { return ctx.get("tokenMeter")?.measure(agent.session).totalTokens } catch { return undefined } } })
   // A builder's mask, waiting for that builder (agent/created runs before its first step)
   const masks = new Map()
+  // Harness 2.0 cartridges (--cartridges): one role's guidance per builder, chosen by code
+  const cartridgesOn = process.env.KRIYA_CARTRIDGES === "on" && ROLES.length > 0
+  const cartridges = cartridgesOn ? cartridgeSource() : undefined
+  // Harness 2.0 gates (--gates): the same runner for kriya_step's builders and a direct
+  // kriya_verify, so no path marks a step passed without them; the step's cartridge says which
+  const gatesOn = process.env.KRIYA_GATES === "on"
+  const stepOf = (cwd, id, label) => {
+    const plan = readPlan(cwd, id)
+    const i = plan ? plan.steps.findIndex((_, k) => stepLabel(plan, k + 1) === label) : -1
+    return i === -1 ? undefined : plan.steps[i]
+  }
+  // A spec-test step is judged red; the same rule for kriya_step and a direct kriya_verify
+  if (gatesOn) host.expect = (exec, cwd, label) => (stepOf(cwd, String(exec.agent.id), normalStep(label))?.specTests ? "red" : undefined)
+  if (gatesOn)
+    host.gates = (exec, cwd) => async (input) => {
+      const step = stepOf(cwd, String(exec.agent.id), input.label)
+      const chosen = cartridges && step ? selectCartridge(step, await cartridges.list()) : undefined
+      return runGates({ ...input, step, cartridge: chosen?.cartridge })
+    }
+  // Harness 2.0 orchestra (--orchestra, Kriya's offer): builders on the worker level, the head after
+  const levels = orchestraFromEnv()
+  // KRHE's escalateAfter (W10): a profile pins it through the environment; else the default
+  const escalateAfter = escalateAfterFromEnv()
+  // Harness 2.0 milestones (--milestones, WD-12)
+  const milestonesOn = process.env.KRIYA_MILESTONES === "on"
+  // Builders that may ask for advice: their head, live record, folder and step
+  const advising = new Map()
+  // Harness 2.0 critic (--critic, WD-13): a read-only reviewer after a pass; one polish attempt
+  const criticOn = process.env.KRIYA_CRITIC === "on"
+  const critique = async (exec, cwd, step, n) => {
+    const subagents = ctx.get("subagents")
+    if (!subagents) return []
+    const id = String(exec.agent.id)
+    const plan = readPlan(cwd, id)
+    const label = stepLabel(plan, n)
+    const chosen = cartridges ? selectCartridge(step, await cartridges.list()) : undefined
+    const notes = (readProgress(projectRoot(cwd), id).runs.findLast((r) => r.step === label)?.gates ?? []).map((g) => g.note && `${g.id}: ${g.note}`).filter(Boolean)
+    const changed = (await workTree(cwd).catch(() => undefined))?.changed ?? []
+    masks.set(exec.agent, ctx.tools.schemas(exec.agent).map((s) => s.name).filter((name) => !ADVISOR_TOOLS.has(name)))
+    let activation
+    try {
+      activation = await subagents.startActivation({
+        provider: "spawn",
+        label: `Review step ${n}`,
+        request: { prompt: [{ type: "text", text: critiquePrompt({ role: chosen?.cartridge.role, judgement: chosen?.cartridge.judgement, plan, n, changed, notes }) }], parent: exec.agent, signal: exec.signal, maxDepth: 1, ...(levels && { agentOptions: { model: levels.head } }) },
+        signal: exec.signal,
+        delivery: "caller",
+      })
+    } finally {
+      masks.delete(exec.agent)
+    }
+    const timer = setTimeout(() => activation.dispose().catch(() => {}), CRITIC_MS)
+    timer.unref?.()
+    try {
+      const defects = parseDefects(blocksText((await activation.result)?.output))
+      const progress = readProgress(projectRoot(cwd), id)
+      writeProgress(projectRoot(cwd), id, { ...progress, critiques: [...(progress.critiques ?? []), { step: label, major: defects.filter((d) => d.severity === "major").length, minor: defects.filter((d) => d.severity === "minor").length }] })
+      return defects
+    } catch {
+      return []
+    } finally {
+      clearTimeout(timer)
+    }
+  }
   const loopHost = {
+    ...(criticOn && {
+      // Never in Read only: a polish changes files and a restore puts them back
+      polish: (exec, cwd) =>
+        readOnly(exec)
+          ? undefined
+          : {
+              critique: (step, n) => critique(exec, cwd, step, n),
+              snapshot: async (label) => (await checkpoint(cwd, String(exec.agent.id), label))?.tree,
+              restore: (tree, label) => restoreTree(cwd, tree, label),
+            },
+    }),
+    ...(gatesOn && { contracts: CONTRACT_NAMES }),
+    ...(levels && { orchestra: { head: levels.head, tier: (input) => tierFor({ orchestra: levels, ...input, role: input.step?.role, ...(escalateAfter !== undefined && { escalateAfter }) }) } }),
+    ...(milestonesOn && { milestones: true }),
+    // Harness 2.0 W14 (WD-18): Explore takes; never in Read only (runStep refuses), needs roles
+    ...(process.env.KRIYA_EXPLORE === "on" &&
+      cartridgesOn && {
+        explore: (exec, cwd) => {
+          const id = String(exec.agent.id)
+          const app = readStack(projectRoot(cwd)).app
+          return {
+            readOnly: readOnly(exec),
+            snapshot: async (label) => (await checkpoint(cwd, id, label))?.tree,
+            restore: (tree, label) => restoreTree(cwd, tree, label),
+            pick: (survivors, step) => askTake(ctx.get("userQuestions"), exec, survivors, step.title),
+            // With the critic on: each passing take's files, reviewed in turn; fewest major defects first
+            ...(criticOn && {
+              rank: async (survivors, step, n) => {
+                const scored = []
+                for (const t of survivors) {
+                  await restoreTree(cwd, t.tree, `explore: the critic reviews take ${t.v}`)
+                  const defects = await critique(exec, cwd, step, n)
+                  scored.push({ v: t.v, major: defects.filter((d) => d.severity === "major").length, all: defects.length })
+                }
+                return scored.sort((a, b) => a.major - b.major || a.all - b.all || a.v - b.v).map((x) => x.v)
+              },
+            }),
+            ...(app && { served: () => fingerprint(app).catch(() => undefined), reloaded: (before) => waitForReload(app, before) }),
+          }
+        },
+      }),
+    ...(process.env.KRIYA_REPO_TOOLS === "on" && { repoTools: true }),
+    ...(cartridgesOn && {
+      roles: ROLES,
+      async cartridge(step) {
+        const chosen = selectCartridge(step, await cartridges.list())
+        const body = chosen && (await cartridges.body(chosen))
+        return body ? { id: chosen.id, version: chosen.version, name: chosen.name, body } : undefined
+      },
+    }),
     questions: () => ctx.get("userQuestions"),
     v2,
     strict,
@@ -619,6 +929,41 @@ export function apply(ctx) {
     limits,
     cwd: host.cwd,
     isBuilder: (exec) => builders.has(String(exec.agent?.id)),
+    async advise(exec, question) {
+      const state = advising.get(String(exec.agent?.id))
+      if (!state || !levels) throw new VerifyError("Only a step's builder asks for advice.")
+      const asked = question.trim().slice(0, 2000)
+      if (!asked) throw new VerifyError("Ask a question.")
+      if ((state.live.advice ?? 0) >= ADVICE_LIMIT) return { advice: `Advice limit reached for this attempt (${ADVICE_LIMIT}). Decide with what you have.`, limited: true }
+      const subagents = ctx.get("subagents")
+      if (!subagents) return { advice: "No advisor is available in this profile." }
+      state.live.advice = (state.live.advice ?? 0) + 1
+      const plan = readPlan(state.cwd, String(state.head.id))
+      // The advisor reads only: every other tool of the head is hidden from it before its first step
+      masks.set(state.head, ctx.tools.schemas(state.head).map((s) => s.name).filter((name) => !ADVISOR_TOOLS.has(name)))
+      let activation
+      try {
+        activation = await subagents.startActivation({
+          provider: "spawn",
+          label: "Advice",
+          request: { prompt: [{ type: "text", text: advisePrompt(plan, state.n, asked) }], parent: state.head, signal: exec.signal, maxDepth: 1, agentOptions: { model: levels.head } },
+          signal: exec.signal,
+          delivery: "caller",
+        })
+      } finally {
+        masks.delete(state.head)
+      }
+      const timer = setTimeout(() => activation.dispose().catch(() => {}), ADVICE_MS)
+      timer.unref?.()
+      try {
+        const result = await activation.result
+        return { advice: blocksText(result?.output).slice(0, ADVICE_CHARS) || "The advisor had nothing to add." }
+      } catch {
+        return { advice: "The advisor didn't answer in time; carry on with what you know." }
+      } finally {
+        clearTimeout(timer)
+      }
+    },
     async spawn(exec, prompt, label, live) {
       const subagents = ctx.get("subagents")
       if (!subagents) throw new VerifyError("kriya_step needs DSH's subagents, which this profile doesn't load.")
@@ -630,12 +975,13 @@ export function apply(ctx) {
       const activation = await subagents.startActivation({
         provider: "spawn",
         label,
-        request: { prompt: [{ type: "text", text: prompt }], parent: exec.agent, signal: exec.signal, maxDepth: 1 },
+        request: { prompt: [{ type: "text", text: prompt }], parent: exec.agent, signal: exec.signal, maxDepth: 1, ...(live?.tier && { agentOptions: { model: live.tier } }) },
         signal: exec.signal,
         delivery: "caller",
       })
       const id = String(activation.childId)
       builders.add(id)
+      if (levels && live) advising.set(id, { head: exec.agent, live, cwd: await host.cwd(exec), n: live.n })
       if (live) guard.start(id, live)
       masks.delete(exec.agent)
       const stop = () => activation.dispose().catch(() => {})
@@ -656,10 +1002,11 @@ export function apply(ctx) {
       } finally {
         clearTimeout(hard)
         guard.end(id)
+        advising.delete(id)
         exec.signal.removeEventListener("abort", stop)
       }
     },
-    verify: (exec, cwd, label) => verifyStep({ cwd, sessionId: String(exec.agent.id), step: label, run: (command) => host.run(command, exec, cwd), ...(v2 && { v2: v2(exec) }), ...(guarded && { guard: true }), ...(strict && { strict: strict(exec) }) }),
+    verify: (exec, cwd, label) => verifyStep({ cwd, sessionId: String(exec.agent.id), step: label, run: (command) => host.run(command, exec, cwd), ...(v2 && { v2: v2(exec) }), ...(guarded && { guard: true }), ...(strict && { strict: strict(exec) }), ...(host.gates && { gates: host.gates(exec, cwd) }), ...(host.expect?.(exec, cwd, label) && { expect: host.expect(exec, cwd, label) }) }),
     // Loop guard: what a builder left, to tell an attempt that changed nothing; never in Read only
     ...((guarded || reconOn || jitOn) && {
       guardSteps: (exec, cwd) => ({
@@ -697,12 +1044,31 @@ export function apply(ctx) {
     ctx.on("tools/post-execute", readHook())
   }
   if (strictOn) ctx.on("tools/post-execute", syntaxHook({ cwd: host.cwd }))
-  if (jitOn)
+  if (jitOn || levels || criticOn)
     ctx.on("agent/created", ({ agent }) => {
       for (const [parent, deny] of masks) if (ctx.get("agents")?.isOwnedBy(agent.id, parent)) agent.ctx.tools.restrict({ deny })
     })
   ctx.tools.register(planTool(loopHost))
   ctx.tools.register(stepTool(loopHost))
+  if (levels) ctx.tools.register(adviseTool(loopHost))
+  if (milestonesOn) {
+    ctx.tools.register(milestonesTool(loopHost))
+    // Where the long work stands, for a new or resumed session: before the plan's own state
+    ctx.systemPrompt.section({
+      name: "kriya:milestones",
+      order: 10240,
+      interpolate: false,
+      text: ({ scope }) => {
+        const cwd = scope && (folders.get(scope) ?? scope.session?.header?.cwd)
+        if (!cwd) return ""
+        try {
+          return milestonesText(projectRoot(cwd))
+        } catch {
+          return ""
+        }
+      },
+    })
+  }
   ctx.on(
     "tools/pre-execute",
     checkpointHook({

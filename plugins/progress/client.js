@@ -16,6 +16,8 @@ window.__ModuleLoader__.load({
     const CHECK_API = "api/kriya.progress.check"
     const REFRESH_MS = 3000
     const MAX_ATTEMPTS = 4
+    // Harness 2.0 W18: with --runstrip, plugins/runstrip names the four tracks and adds each one's section; absent, nothing changes
+    const tracks = () => globalThis.__kriyaTracks
 
     const CSS = `
 .kh-pg { height: 100%; overflow: auto; color: var(--dsw-alias-label-primary); font-size: 13px; padding-bottom: 16px; }
@@ -225,7 +227,7 @@ window.__ModuleLoader__.load({
         h(
           "section",
           { className: "kh-pg-sec", "aria-label": "Verdict" },
-          h("h3", { className: "kh-pg-h" }, "Progress", refresh),
+          h("h3", { className: "kh-pg-h" }, tracks()?.title[KIND] ?? "Progress", refresh),
           h(Flow, { data }),
           h(Verdict, { v: data.verdict }),
           data.plan && h("p", { className: "kh-pg-goal" }, data.plan.goal),
@@ -262,7 +264,8 @@ window.__ModuleLoader__.load({
           { className: "kh-pg-sec", "aria-label": "Check runs" },
           h("h3", { className: "kh-pg-h" }, `Check runs${data.runs.length ? ` · ${data.runs.length}` : ""}`),
           data.runs.length ? h(Runs, { runs: data.runs }) : h("div", { className: "kh-pg-dim" }, "None yet. Only these runs decide whether the work passes.")
-        )
+        ),
+        tracks() && h(tracks().Proof, { sessionId })
       )
     }
 
@@ -270,8 +273,8 @@ window.__ModuleLoader__.load({
       id: PLUGIN,
       kind: KIND,
       priority: "extension",
-      title: () => "Progress",
-      guide: [{ id: "progress", order: 6, title: () => "Progress", description: () => "Goal, plan, each step's check and the verdict", icon: TabIcon }],
+      title: () => tracks()?.title[KIND] ?? "Progress",
+      guide: [{ id: "progress", get order() { return tracks()?.order[KIND] ?? 6 }, title: () => tracks()?.title[KIND] ?? "Progress", description: () => "Goal, plan, each step's check and the verdict", icon: TabIcon }],
     }
 
     const inject = ["slots", "sidebarRightTabs"]

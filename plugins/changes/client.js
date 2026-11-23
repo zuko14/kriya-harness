@@ -12,6 +12,8 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const PLUGIN = "@kriya-ai/harness-changes"
+    // Harness 2.0 W18: with --runstrip, plugins/runstrip names the four tracks and adds each one's section; absent, nothing changes
+    const tracks = () => globalThis.__kriyaTracks
     const KIND = "kriya-changes"
     const API = { list: "api/kriya.changes", diff: "api/kriya.changes.diff" }
     // While the tab is on screen; a hidden tab doesn't poll
@@ -218,15 +220,15 @@ window.__ModuleLoader__.load({
                     )),
         ]
 
-      return h("div", { className: "kh-ch" }, head, body)
+      return h("div", { className: "kh-ch" }, head, tracks() && h(tracks().Changes, { sessionId }), body)
     }
 
     const definition = {
       id: PLUGIN,
       kind: KIND,
       priority: "extension",
-      title: () => "Changes",
-      guide: [{ id: "changes", order: 15, title: () => "Changes", description: () => "What changed in this folder, file by file", icon: ChangesIcon }],
+      title: () => tracks()?.title[KIND] ?? "Changes",
+      guide: [{ id: "changes", get order() { return tracks()?.order[KIND] ?? 15 }, title: () => tracks()?.title[KIND] ?? "Changes", description: () => "What changed in this folder, file by file", icon: ChangesIcon }],
     }
 
     const inject = ["slots", "sidebarRightTabs"]

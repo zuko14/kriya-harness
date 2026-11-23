@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "auth_matrix.json",
+  "type": "array",
+  "maxItems": 500,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "resource",
+      "action",
+      "roles",
+      "tenantScoped"
+    ],
+    "properties": {
+      "resource": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "action": {
+        "enum": [
+          "create",
+          "read",
+          "update",
+          "delete",
+          "list"
+        ]
+      },
+      "roles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "maxItems": 20
+      },
+      "tenantScoped": {
+        "type": "boolean"
+      }
+    }
+  }
+}

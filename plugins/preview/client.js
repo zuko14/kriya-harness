@@ -15,6 +15,8 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const PLUGIN = "@kriya-ai/harness-preview"
+    // Harness 2.0 W18: with --runstrip, plugins/runstrip names the four tracks and adds each one's section; absent, nothing changes
+    const tracks = () => globalThis.__kriyaTracks
     const KIND = "kriya-preview"
     const STORE = "kriya-preview:last"
 
@@ -94,7 +96,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function FrameView() {
+    function FrameView({ viewport } = {}) {
       const [input, setInput] = useState(remembered)
       const [url, setUrl] = useState(null)
       const [error, setError] = useState(null)
@@ -159,6 +161,8 @@ window.__ModuleLoader__.load({
               key: stamp,
               ref: frame,
               className: "kh-pv-frame",
+              // Live track: a chosen viewport width, centred; wider than the column scrolls
+              ...(viewport && { style: { flex: "1 0 auto", width: `${viewport}px`, maxWidth: "none", alignSelf: viewport > 1000 ? "flex-start" : "center" } }),
               src: url,
               title: `Preview of ${url}`,
               referrerPolicy: "no-referrer",
@@ -281,7 +285,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PreviewBody({ useTabInfo }) {
+    function PreviewBody({ useTabInfo, sessionId }) {
+      const [viewport, setViewport] = useState(null)
       const visible = useTabInfo?.().tab?.visible !== false
       const [agent, setAgent] = useState(false)
       const [mode, setMode] = useState("frame")
@@ -301,7 +306,7 @@ window.__ModuleLoader__.load({
       }, [])
       return h(
         "div",
-        { className: "kh-pv" },
+        { className: "kh-pv", ...(viewport && { style: { overflowX: "auto" } }) },
         agent &&
           h(
             "div",
@@ -309,7 +314,8 @@ window.__ModuleLoader__.load({
             h("button", { type: "button", className: "kh-pv-mode", "aria-pressed": mode === "frame", onClick: () => setMode("frame") }, "Your app"),
             h("button", { type: "button", className: "kh-pv-mode", "aria-pressed": mode === "agent", onClick: () => setMode("agent") }, "Agent's browser")
           ),
-        mode === "agent" ? h(AgentView, { visible }) : h(FrameView)
+        tracks() && h(tracks().Live, { sessionId, viewport, setViewport }),
+        mode === "agent" ? h(AgentView, { visible }) : h(FrameView, { viewport })
       )
     }
 
@@ -317,8 +323,8 @@ window.__ModuleLoader__.load({
       id: PLUGIN,
       kind: KIND,
       priority: "extension",
-      title: () => "Preview",
-      guide: [{ id: "preview", order: 7, title: () => "Preview", description: () => "An app running on this computer (localhost)", icon: TabIcon }],
+      title: () => tracks()?.title[KIND] ?? "Preview",
+      guide: [{ id: "preview", get order() { return tracks()?.order[KIND] ?? 7 }, title: () => tracks()?.title[KIND] ?? "Preview", description: () => "An app running on this computer (localhost)", icon: TabIcon }],
     }
 
     const inject = ["slots", "sidebarRightTabs"]

@@ -33,7 +33,8 @@ export function kriyaSkills({ now = Date.now } = {}) {
     name: skill.id,
     description: skill.description,
     whenToUse: `A Kriya skill (${skill.name}, v${skill.version}). Use when the request is about: ${skill.activation.keywords.slice(0, 12).join(", ")}.`,
-    invocation: { modelInvocable: true, userInvocable: true },
+    // Harness 2.0 cartridges come with modelInvocable false: the loop mounts them, the model's catalogue doesn't list them
+    invocation: { modelInvocable: skill.invocation?.modelInvocable !== false, userInvocable: true },
     source: "custom",
     provider: "kriya",
     rank: RANK,

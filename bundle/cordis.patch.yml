@@ -175,6 +175,55 @@
       name: '@kriya-ai/harness-anchor'
       disabled: !!js process.env.KRIYA_ANCHOR !== 'on'
 
+# Harness 2.0 W15, grounding (plugins/grounding, WD-20): api_lookup,
+# api_changes and api_version read the project's installed type definitions,
+# stubs, changelogs and lockfiles; nothing is imported, run or sent. Off
+# unless kriya was started with --grounding (KRIYA_GROUNDING=on): off, no
+# tool or prompt section exists
+- insert:
+    - id: kriya-grounding
+      name: '@kriya-ai/harness-grounding'
+      disabled: !!js process.env.KRIYA_GROUNDING !== 'on'
+
+# Harness 2.0 W16, repository tools (plugins/repo, WD-19): typed git and gh
+# calls through the person's own login; branch, commit, push and draft pull
+# requests only with the person's approval (Auto refuses). Off unless kriya was
+# started with --repo-tools (KRIYA_REPO_TOOLS=on)
+- insert:
+    - id: kriya-repo
+      name: '@kriya-ai/harness-repo'
+      disabled: !!js process.env.KRIYA_REPO_TOOLS !== 'on'
+
+# Harness 2.0 W16, MCP P3a (plugins/mcp): the owner's registry servers that need
+# no sign-in, each tool registered only if its definition matches the hash the
+# owner pinned; no token is sent. Off unless kriya was started with --mcp
+# (KRIYA_MCP=on)
+- insert:
+    - id: kriya-mcp
+      name: '@kriya-ai/harness-mcp'
+      disabled: !!js process.env.KRIYA_MCP !== 'on'
+
+# Harness 2.0 W17, deploy (plugins/deploy, WD-21, WD-22): G-RELEASE, preview
+# and production deploys through the person's own provider CLI, each approved
+# (Auto refuses), G-DEPLOYED on the printed URL, and a guard refusing in the
+# agent's shell what stays the person's (hosted-database migrations,
+# production env and secrets, DNS, merges). Off unless kriya was started with
+# --deploy (KRIYA_DEPLOY=on)
+- insert:
+    - id: kriya-deploy
+      name: '@kriya-ai/harness-deploy'
+      disabled: !!js process.env.KRIYA_DEPLOY !== 'on'
+
+# Harness 2.0 W18 (WD-23): the Run strip in shell.bottom, Mission Control and
+# the four right-column tracks (Live, Proof, Changes, Project: the Preview,
+# Progress, Changes and Overview tabs, same ids). Off unless kriya was started
+# with --runstrip (KRIYA_RUNSTRIP=on): off, no row, route or DOM exists and
+# the tabs read as before. Web UI only
+- insert:
+    - id: kriya-runstrip
+      name: '@kriya-ai/harness-runstrip'
+      disabled: !!js process.env.KRIYA_RUNSTRIP !== 'on' || ctx.get('profileContext')?.name !== 'kriya'
+
 # Harness upgrade U6: KriyaBench's tool-minimal control arm (arm B0,
 # BENCHMARK_PLAN.md): the same sandbox, gateway, model and prompt, with only
 # the shell and the file and search tools, so a run shows whether the rest

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process"
+import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, sep } from "node:path"
 
@@ -133,5 +134,71 @@ export async function doctor(io = {}) {
       check(false, "Kriya account reachable", error.message)
     }
   }
+  return ok
+}
+
+/* ─────────────── Harness 2.0 W17: gates on this machine (kriya doctor --gates) ─────────────── */
+
+/** Whether a program is on PATH, found by looking, never by running it. */
+export function onPath(name, env = process.env, exists = existsSync) {
+  const dirs = String(env.PATH ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean)
+  const exts = process.platform === "win32" ? ["", ".exe", ".cmd"] : [""]
+  return dirs.some((d) => exts.some((e) => exists(join(d, `${name}${e}`))))
+}
+
+/**
+ * The capability matrix (DELIVERY_AND_STABILITY §5): which gates can run
+ * here and, for the others, what they would need. Nothing is started.
+ */
+export async function gateMatrix({ has = (n) => onPath(n), chrome } = {}) {
+  const browser = chrome ?? chromeInstalled()
+  const row = (gate, ok, needs) => ({ gate, works: Boolean(ok), ...(!ok && { needs }) })
+  return [
+    row("G-CONTRACT", true),
+    row("G-DETECT", true),
+    row("G-SECRETS", true),
+    row("G-TRACE", true),
+    row("G-FLAKE", true),
+    row("G-UI", browser, "Google Chrome or another Chromium browser"),
+    row("G-A11Y", browser, "Google Chrome or another Chromium browser"),
+    row("G-STACK", has("psql"), "psql (PostgreSQL client) and kriya stack use --db"),
+    row("G-API", true),
+    row("G-TENANT", true),
+    row("G-SAST", has("semgrep"), "semgrep and the project's own rules file"),
+    row("G-DATA", true),
+    row("G-EVAL", true),
+    row("G-SAN", has("clang") || has("gcc"), "a C/C++ toolchain (clang or gcc)"),
+    row("G-IAC", has("tofu") || has("terraform"), "OpenTofu or Terraform"),
+    row("G-SIM", has("xcrun") || has("adb"), "Xcode (xcrun) or Android platform tools (adb)"),
+    row("G-DEPLOYED", has("vercel"), "a confirmed provider CLI (vercel), signed in by you"),
+    row("G-3D", browser, "Google Chrome or another Chromium browser that creates WebGL"),
+  ]
+}
+
+/**
+ * Self-tests of the gates that need nothing installed: each checks a clean
+ * and a mutant fixture, so a gate that stopped catching what it should is
+ * seen here before it misses something in a real step.
+ */
+export async function gateSelfTests() {
+  const { DETECTORS, findSecrets } = await import("./gates/detectors.js")
+  const file = (path, text) => ({ path, content: text, added: text.split("\n").map((t, i) => ({ line: i + 1, text: t })) })
+  const tests = [
+    ["G-SECRETS", findSecrets(file("src/a.js", "const key = process.env.KEY\n")).length === 0, findSecrets(file("src/a.js", `const key = "${"AKIA" + "QWERTYUIOPASDFGH"}"\n`)).length > 0],
+    ["G-DETECT DB-DROP", DETECTORS["DB-DROP"].find(file("db/1.sql", "create table t (id int);")).length === 0, DETECTORS["DB-DROP"].find(file("db/2.sql", "drop table t;")).length > 0],
+    ["G-DETECT OPS-MIGRATE-LOCK", DETECTORS["OPS-MIGRATE-LOCK"].find(file("db/1.sql", "create index concurrently i on t (a);")).length === 0, DETECTORS["OPS-MIGRATE-LOCK"].find(file("db/2.sql", "create index i on t (a);")).length > 0],
+  ]
+  return tests.map(([name, clean, mutant]) => ({ name, ok: clean && mutant, clean, mutant }))
+}
+
+/** `kriya doctor --gates`: the matrix and the self-tests; false if a self-test fails. */
+export async function doctorGates(io = {}) {
+  const say = io.say ?? ((line) => process.stdout.write(`${line}\n`))
+  let ok = true
+  for (const t of await gateSelfTests()) {
+    say(`${t.ok ? "ok  " : "FAIL"}  self-test ${t.name}${t.ok ? "" : ` — ${t.clean ? "" : "flags clean code"}${!t.clean && !t.mutant ? ", " : ""}${t.mutant ? "" : "misses the planted problem"}`}`)
+    if (!t.ok) ok = false
+  }
+  for (const r of await gateMatrix(io)) say(`${r.works ? "works" : "not checked here"}  ${r.gate}${r.works ? "" : ` (needs ${r.needs})`}`)
   return ok
 }

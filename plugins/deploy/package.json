@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-deploy",
+  "description": "G-RELEASE, preview and production deploys through the person's own provider CLI with approval, G-DEPLOYED, and the commands that stay the person's",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

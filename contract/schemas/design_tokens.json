@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "design_tokens.json (W3C Design Tokens format, the subset Kriya checks)",
+  "type": "object",
+  "minProperties": 1,
+  "$defs": {
+    "group": {
+      "type": "object",
+      "properties": {
+        "$value": {},
+        "$type": {
+          "type": "string"
+        },
+        "$description": {
+          "type": "string"
+        },
+        "$extensions": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/group"
+      }
+    }
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/group"
+  },
+  "properties": {
+    "$extensions": {
+      "type": "object"
+    }
+  }
+}

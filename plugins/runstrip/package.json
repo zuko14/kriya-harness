@@ -1,0 +1,23 @@
+{
+  "name": "@kriya-ai/harness-runstrip",
+  "description": "The Run strip, gate chips, Mission Control and the four right-column tracks of the Kriya Harness Web UI (Harness 2.0 W18)",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "UNLICENSED"
+}

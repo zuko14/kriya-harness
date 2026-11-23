@@ -37,7 +37,10 @@ export async function planTiers(device, list = models) {
     const encodings = Array.isArray(answer.bodyEncodings) ? answer.bodyEncodings.filter((e) => typeof e === "string") : []
     const offered = new Set(data.map((model) => model.id))
     const allowed = START_TIERS.filter((tier) => offered.has(tier))
-    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings } : { ...all, encodings }
+    // Harness 2.0 W2: the owner's head and worker levels, only if both are offered and differ
+    const o = answer.orchestra
+    const orchestra = o && allowed.includes(o.head) && allowed.includes(o.worker) && o.head !== o.worker ? { head: o.head, worker: o.worker } : undefined
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings, ...(orchestra && { orchestra }) } : { ...all, encodings }
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
@@ -96,7 +99,7 @@ export async function startTier(device, list = models) {
 }
 
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = []) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = [], orchestra) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -114,6 +117,13 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
     KRIYA_MODEL_LIMITS: JSON.stringify(Object.fromEntries(Object.entries(limits).filter(([t]) => START_TIERS.includes(t)))),
     // The tiers whose model takes images, as GET /models says. Never from the shell
     KRIYA_MODEL_IMAGES: images.filter((t) => START_TIERS.includes(t)).join(","),
+  }
+  // Harness 2.0 W2: the head and worker levels come only from Kriya's GET /models, never the shell
+  delete env.KRIYA_ORCHESTRA_HEAD
+  delete env.KRIYA_ORCHESTRA_WORKER
+  if (orchestra && START_TIERS.includes(orchestra.head) && START_TIERS.includes(orchestra.worker)) {
+    env.KRIYA_ORCHESTRA_HEAD = orchestra.head
+    env.KRIYA_ORCHESTRA_WORKER = orchestra.worker
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -237,6 +247,8 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
   const tiers = await planTiers(device)
+  // Harness 2.0 W2: with --orchestra and Kriya's offer, the session itself runs on the head level
+  const orchestra = process.env.KRIYA_ORCHESTRA === "on" && process.env.KRIYA_LOOP === "on" ? tiers.orchestra : undefined
   // DSH and the Kriya plugins reach Kriya through the local relay
   // (src/gateway-proxy.js): encoded bodies past the host's firewall, and a
   // block said as such. KRIYA_RELAY=off talks to Kriya directly, as before
@@ -262,7 +274,7 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       // stdout: the answer (kriya run) and ACP's protocol frames pass untouched;
       // the Web UI's stdout carries only log lines, rebranded like stderr
       stdio: ["inherit", profile === "kriya" ? "pipe" : "inherit", "pipe"],
-      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images),
+      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, orchestra ? orchestra.head : tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images, orchestra),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(rebrand(text)))

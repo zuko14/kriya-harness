@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-repo",
+  "description": "Typed git and gh tools through the person's own login: reads freely, branch, commit, push and draft pull requests only with their approval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "api.openapi.json (OpenAPI 3.1, the subset Kriya checks)",
+  "type": "object",
+  "required": [
+    "openapi",
+    "info",
+    "paths"
+  ],
+  "properties": {
+    "openapi": {
+      "type": "string",
+      "pattern": "^3\\.(0|1)\\.\\d+$"
+    },
+    "info": {
+      "type": "object",
+      "required": [
+        "title",
+        "version"
+      ]
+    },
+    "paths": {
+      "type": "object",
+      "patternProperties": {
+        "^/": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "get",
+              "put",
+              "post",
+              "delete",
+              "patch",
+              "head",
+              "options",
+              "parameters",
+              "summary",
+              "description",
+              "servers"
+            ]
+          },
+          "patternProperties": {
+            "^(get|put|post|delete|patch|head|options)$": {
+              "type": "object",
+              "required": [
+                "responses"
+              ],
+              "properties": {
+                "responses": {
+                  "type": "object",
+                  "minProperties": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "components": {
+      "type": "object"
+    }
+  }
+}

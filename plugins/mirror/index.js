@@ -2,6 +2,7 @@ import { chmodSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 
 import { call, deviceFromEnv } from "../../src/api.js"
+import { returnOutcomes, shareStatus, takeOutcomes } from "../../src/outcomes.js"
 import { kriyaHome } from "../../src/paths.js"
 import { hideSecrets } from "../approvals/index.js"
 
@@ -89,8 +90,19 @@ export function apply(ctx, config = {}) {
     timer.unref?.()
   }
 
+  // Harness 2.0 W11: whether this Kriya takes cartridge outcome counts (GET /models `workforce: 1`); asked once
+  let takesOutcomes
+  async function outcomesTaken(device) {
+    if (takesOutcomes === undefined)
+      takesOutcomes = await call(device.url, "GET", "/models", { token: device.token })
+        .then((m) => m?.workforce === 1)
+        .catch(() => undefined)
+    return takesOutcomes === true
+  }
+
   // One queued turn: "done", "drop" (this session isn't mirrored), or "retry"
   async function deliver(device, entry) {
+    let outcomes = []
     try {
       let session = opened.get(entry.deviceSessionId)
       if (!session) {
@@ -103,6 +115,9 @@ export function apply(ctx, config = {}) {
       }
       const body = { seq: entry.seq, text: entry.text, tools: entry.tools }
       if (session.mirror === "full" && entry.full) body.full = entry.full
+      // Counts only with the person's `kriya share on` (takeOutcomes checks) and Kriya's advert
+      if (shareStatus().on && (await outcomesTaken(device))) outcomes = takeOutcomes()
+      if (outcomes.length) body.cartridgeOutcomes = outcomes
       const send = () => call(device.url, "POST", `/sessions/${session.sessionId}/turns`, { token: device.token, body })
       try {
         await send()
@@ -115,6 +130,8 @@ export function apply(ctx, config = {}) {
       }
       return "done"
     } catch (error) {
+      // Not stored: the counts go back for a later turn (a refused body drops them, so they can't loop)
+      if (error.status !== 400) returnOutcomes(outcomes)
       if (error.status === 400) {
         warn(`Kriya refused a turn (${error.code}); skipped`)
         return "done"

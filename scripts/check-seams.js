@@ -111,6 +111,18 @@ export const SEAMS = [
     must: [/restrict\(filter\)/],
     users: "plugins/loop (--jit-tools)",
   },
+  {
+    seam: "createMcpToolDefinition exported by dsh-mcp-client",
+    file: "dsh-mcp-client/lib/types/index.d.ts",
+    must: [/export \{ createMcpToolDefinition \} from/],
+    users: "plugins/mcp (Harness 2.0 W16, MCP P3a)",
+  },
+  {
+    seam: "tools.guard: a synchronous guard's reason denies a call",
+    file: "dsh-tools/lib/types/index.d.ts",
+    must: [/export type ToolGuard = \(execution: Readonly<ToolExecution>\) => string \| undefined;/],
+    users: "plugins/deploy (Harness 2.0 W17, WD-22 refusals)",
+  },
 ]
 
 /**

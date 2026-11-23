@@ -199,6 +199,10 @@ export async function startFakeKriya(script = {}) {
           ...script.modelLimits?.[id],
         })),
         ...(script.bodyEncodings && { bodyEncodings: ["gzip+base64"] }),
+        // Harness 2.0 W2: the owner's head and worker levels, when the test says Kriya offers them
+        ...(script.orchestra && { orchestra: script.orchestra }),
+        // Harness 2.0 W11: this Kriya takes cartridge outcome counts
+        ...(state.workforce && { workforce: 1 }),
       })
     // Editing: 404 unless the test says this Kriya has it. An upload goes to `uploads`,
     // as to Storage: a signed link on this same fake, needing no token

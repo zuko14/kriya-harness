@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scene_direction.json",
+  "description": "The designer's art direction for a 3D step (Kriya-Tavi docs/kriya-harness/upgrade_2.0/THREE_D_AND_CREATIVE.md §3). Budgets can only tighten the gate's code ceilings. References are words, never copied images or another work's assets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mood", "lighting", "toneMapping", "motion", "tiers", "routes"],
+  "$defs": {
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "drawCalls": { "type": "integer", "minimum": 1 },
+        "triangles": { "type": "integer", "minimum": 1 },
+        "textureBytes": { "type": "integer", "minimum": 1 },
+        "routeBytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "range": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "path": { "type": "string", "pattern": "^/[^\\s]{0,200}$" }
+  },
+  "properties": {
+    "mood": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "palette": { "type": "array", "maxItems": 24, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,60}$" } },
+    "lighting": { "enum": ["studio-product", "daylight-exterior", "night-neon", "soft-clay", "data-abstract"] },
+    "toneMapping": { "enum": ["agx", "aces", "neutral", "none"] },
+    "exposure": { "type": "number", "minimum": 0.05, "maximum": 8 },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fov"],
+      "properties": {
+        "fov": { "type": "number", "minimum": 10, "maximum": 120 },
+        "position": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
+        "target": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } }
+      }
+    },
+    "materials": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "metalness": { "$ref": "#/$defs/range" }, "roughness": { "$ref": "#/$defs/range" } }
+    },
+    "motion": { "enum": ["none", "subtle", "full"] },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": { "low": { "$ref": "#/$defs/budget" }, "mid": { "$ref": "#/$defs/budget" }, "high": { "$ref": "#/$defs/budget" } }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": { "path": { "$ref": "#/$defs/path" }, "unmount": { "$ref": "#/$defs/path" } }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "licence", "source"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^[^\\s/][^\\s]{0,300}$" },
+          "licence": { "type": "string", "minLength": 2, "maxLength": 60 },
+          "source": { "type": "string", "minLength": 2, "maxLength": 300 }
+        }
+      }
+    },
+    "references": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 200 } }
+  }
+}

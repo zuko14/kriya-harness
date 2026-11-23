@@ -13,7 +13,12 @@ import { CheckpointError, listCheckpoints, trackedRoot, undo } from "../src/chec
 import { clearCheck, confirmCheck, confirmedCheck, discoverChecks, MAX_ATTEMPTS, sessionReport, VerifyError } from "../src/verify.js"
 import { projectRoot, setSkillSwitch, SwitchError } from "../src/skill-switches.js"
 import { confirmRule, dismissRule, forgetRule, listRules, RulesError } from "../src/rules.js"
+import { forgetStack, hostedDatabase, readStack, shownDatabase, StackError, useStack } from "../src/stack.js"
+import { COMMAND_GATES, confirmBaseline, forgetGateCommand, GateCommandError, gateCommands, useGateCommand } from "../src/gate-commands.js"
 import { login } from "../src/login.js"
+import { setShare, shareStatus } from "../src/outcomes.js"
+import { latestSession, makeReceipt, makeReport, ReceiptError, verifyReceipt } from "../src/receipts.js"
+import { readRelease, ReleaseError, useRelease } from "../src/release.js"
 import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob, switchEnv } from "../src/modes.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
 import { deleteDevice, ensureHome, kriyaUrl, readDevice } from "../src/store.js"
@@ -31,6 +36,20 @@ Usage:
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
   kriya usage [--json]  this month's Kriya Harness spend and limit
+  kriya release use --build "<cmd>" --app http://localhost:<port> [--out dist] [--routes /,/pricing]
+                    [--budget-kb <n>] [--domain <host>] [--headers <names>] [--marker "<text>"]
+                        confirm how this project's production build is made and checked
+  kriya release         show it
+  kriya doctor --gates  which gates work on this computer, and their self-tests
+  kriya report          write a redacted bundle for a bug report (you attach it)
+  kriya receipt make [<session>]
+                        write this project's proof receipt (what Kriya checked by
+                        code on this computer) to ~/.kriya/receipts/
+  kriya receipt verify <file>
+                        recheck a receipt against this computer's records
+  kriya share on|off|status
+                        share counts of verified and blocked steps per role
+                        cartridge version with Kriya (off by default; counts only)
                         (your editor starts it; kriya acp --help for details)
   kriya handoff ["<note>"]
                         hand this repository's uncommitted work to your Kriya
@@ -66,6 +85,17 @@ Usage:
   kriya verify status [--session <id>] [--json]
                         where the newest session here stands, with each check
                         run as evidence; exits 0 only when verified
+  kriya stack use --app http://localhost:<port> [--db postgresql://…@127.0.0.1:<port>/<db>]
+                        confirm the app and database you run on this computer, for
+                        the live gates (--gates): only local addresses are accepted
+  kriya stack           show them; kriya stack forget removes them
+  kriya gates use <data|eval|san|iac|sim|sim-headless> "<command>" [options]
+                        confirm the command a gate runs (data: --output <path>;
+                        eval: --metrics <file.json> --metric <name> [--direction
+                        lower] [--margin <n>]; sim-headless: [--frame-budget-ms <n>])
+  kriya gates           show them; kriya gates forget <gate> removes one
+  kriya eval baseline confirm
+                        make the last recorded evaluation the baseline G-EVAL compares to
   kriya undo            put this repository's files back one step (with the loop
                         the agent saves a checkpoint before each change)
   kriya undo --list     the checkpoints, newest first
@@ -219,7 +249,48 @@ async function main(argv) {
       return 0
     }
     case "doctor":
+      if (args.includes("--gates")) {
+        const { doctorGates } = await import("../src/doctor.js")
+        return (await doctorGates()) ? 0 : 1
+      }
       return (await doctor()) ? 0 : 1
+    case "release": {
+      const [action, ...rest] = args
+      if (action === "use") {
+        try {
+          const entry = useRelease(process.cwd(), {
+            build: option(rest, "--build"),
+            app: option(rest, "--app"),
+            out: option(rest, "--out"),
+            routes: option(rest, "--routes"),
+            budgetKb: option(rest, "--budget-kb"),
+            domain: option(rest, "--domain"),
+            headers: option(rest, "--headers"),
+            marker: option(rest, "--marker"),
+          })
+          say(`Release confirmed: build \`${entry.build}\`${entry.app ? `, production server ${entry.app}` : " (no production server yet: start it and add --app http://localhost:<port>)"}.`)
+          return 0
+        } catch (error) {
+          if (error instanceof ReleaseError) {
+            say(error.message)
+            return 1
+          }
+          throw error
+        }
+      }
+      if (action !== undefined) {
+        say(`Unknown release command ${action}.\n\n${HELP}`)
+        return 1
+      }
+      const release = readRelease(process.cwd())
+      say(release ? JSON.stringify(release, null, 2) : 'No release confirmed: kriya release use --build "<command>" --app http://localhost:<port> sets one.')
+      return 0
+    }
+    case "report": {
+      const { file } = await makeReport(projectRoot(process.cwd()))
+      say(`Wrote ${file}. It holds versions, the gates' matrix and self-tests, and this project's receipts: no file contents, prompts, commands' secrets or query strings. Attach it yourself if you report a bug.`)
+      return 0
+    }
     // Track E: nothing under src/edit/ loads unless the switch is on
     case "edit": {
       useLoop(args)
@@ -238,6 +309,61 @@ async function main(argv) {
       if (args.includes("--json")) say(JSON.stringify({ usedMicroInr: harness.usedMicroInr, capMicroInr: harness.capMicroInr, unpriced: harness.unpriced }))
       else say(`This month: ₹${(harness.usedMicroInr / 1e6).toFixed(2)} of ₹${(harness.capMicroInr / 1e6).toFixed(2)}${harness.unpriced ? ` (${harness.unpriced} not priced yet)` : ""}.`)
       return 0
+    }
+    case "receipt": {
+      const [action, target] = args
+      if (action === "make") {
+        const root = projectRoot(process.cwd())
+        const session = target ?? latestSession(root)
+        if (!session) {
+          say("No Kriya session has records in this project yet.")
+          return 1
+        }
+        try {
+          const { receipt, files } = makeReceipt(root, session)
+          say(`Receipt for session ${session}: ${receipt.verdict}, ${receipt.runs} check run(s), chain ${receipt.chain}.\n${files.json}\n${files.md}`)
+          return 0
+        } catch (error) {
+          if (error instanceof ReceiptError || error instanceof VerifyError) {
+            say(error.message)
+            return 1
+          }
+          throw error
+        }
+      }
+      if (action === "verify" && target) {
+        let text
+        try {
+          text = readFileSync(target, "utf8")
+        } catch {
+          say(`Can't read ${target}.`)
+          return 1
+        }
+        const { ok, problems } = verifyReceipt(text)
+        say(ok ? "The receipt matches this computer's records: every run and field checks out." : `The receipt doesn't match:\n${problems.map((p) => `- ${p}`).join("\n")}`)
+        return ok ? 0 : 1
+      }
+      say("kriya receipt make [<session>] | kriya receipt verify <file>")
+      return 1
+    }
+    case "share": {
+      const [action] = args
+      if (action === "on" || action === "off") {
+        setShare(action === "on")
+        say(
+          action === "on"
+            ? "Sharing is on: Kriya gets counts of verified, blocked and unchecked steps per role cartridge version, with your mirrored turns. No text, names or files. kriya share off stops it."
+            : "Sharing is off. Counts not yet sent were dropped."
+        )
+        return 0
+      }
+      if (action === undefined || action === "status") {
+        const { on, changedAt } = shareStatus()
+        say(on ? `Sharing is on${changedAt ? ` (since ${changedAt})` : ""}: counts only, sent with mirrored turns.` : "Sharing is off (the default). kriya share on shares counts of step outcomes per role cartridge version.")
+        return 0
+      }
+      say("kriya share takes on, off or status.")
+      return 1
     }
     case "skills": {
       const [action, target] = args
@@ -321,6 +447,64 @@ async function main(argv) {
         suggestions.forEach((s, i) => say(`  ${i + 1}. ${s.command.padEnd(28)} ${s.source}`))
         say("\nkriya verify use <number> to confirm one, or kriya verify use \"<command>\".")
       } else say('This project defines no check Kriya recognises; kriya verify use "<command>" sets one.')
+      return 0
+    }
+    case "stack": {
+      const [action, ...rest] = args
+      if (action === "use") {
+        const entry = useStack(process.cwd(), { app: option(rest, "--app"), db: option(rest, "--db") })
+        say(`Confirmed for ${entry.root}:${entry.app ? ` app ${entry.app}` : ""}${entry.db ? ` database ${shownDatabase(entry.db)}` : ""}`)
+        say("With --gates, the live gates check against these and nothing else. The API and tenant gates send requests to this app, writes included, using the test identities in .kriya/gates/tenants.json; migrations run in a transaction that is rolled back.")
+        return 0
+      }
+      if (action === "forget") {
+        say(forgetStack(process.cwd()) ? "Forgot this project's stack." : "This project had no stack.")
+        return 0
+      }
+      if (action !== undefined) {
+        say(`Unknown stack command ${action}.\n\n${HELP}`)
+        return 1
+      }
+      const stack = readStack(process.cwd())
+      say(stack.app || stack.db ? `App: ${stack.app ?? "none"}\nDatabase: ${stack.db ? shownDatabase(stack.db) : "none"}` : 'No stack confirmed: kriya stack use --app http://localhost:<port> sets one.')
+      const hosted = hostedDatabase(projectRoot(process.cwd()))
+      if (hosted) say(`${hosted.variable} in ${hosted.file} points off this computer, so the database gate won't run here.`)
+      return 0
+    }
+    case "gates": {
+      const [action, gate, ...rest] = args
+      if (action === "use") {
+        const words = []
+        const opts = {}
+        for (let i = 0; i < rest.length; i++) {
+          const m = /^--(output|metrics|metric|direction|margin|frame-budget-ms)$/.exec(rest[i])
+          if (m) opts[m[1] === "frame-budget-ms" ? "frameBudgetMs" : m[1]] = rest[++i]
+          else words.push(rest[i])
+        }
+        const e = useGateCommand(process.cwd(), gate, words.join(" "), opts)
+        say(`Confirmed ${COMMAND_GATES[gate].id} for ${e.root}: ${e.command}`)
+        return 0
+      }
+      if (action === "forget") {
+        say(forgetGateCommand(process.cwd(), gate) ? `Forgot the ${gate} gate's command.` : `No ${gate} command was confirmed.`)
+        return 0
+      }
+      if (action !== undefined) {
+        say(`Unknown gates command ${action}.\n\n${HELP}`)
+        return 1
+      }
+      const mine = gateCommands(process.cwd())
+      for (const [name, spec] of Object.entries(COMMAND_GATES)) say(`  ${spec.id.padEnd(15)} ${mine[name] ? mine[name].command : `not confirmed (${spec.what})`}`)
+      return 0
+    }
+    case "eval": {
+      const [what, action] = args
+      if (what !== "baseline" || action !== "confirm") {
+        say(`kriya eval baseline confirm\n\n${HELP}`)
+        return 1
+      }
+      const c = confirmBaseline(process.cwd())
+      say(`Baseline confirmed: ${c.metric} = ${c.value} (${c.direction} is better). G-EVAL fails anything worse.`)
       return 0
     }
     case "rules": {
@@ -570,7 +754,9 @@ main(process.argv.slice(2)).then(
       error instanceof SkillsError ||
       error instanceof VerifyError ||
       error instanceof CheckpointError ||
-      error instanceof RulesError
+      error instanceof RulesError ||
+      error instanceof StackError ||
+      error instanceof GateCommandError
     process.stderr.write(`kriya: ${known ? error.message : error?.message ?? error}\n`)
     process.exit(1)
   }

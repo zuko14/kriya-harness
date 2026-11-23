@@ -11,6 +11,8 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const PLUGIN = "@kriya-ai/harness-overview"
+    // Harness 2.0 W18: with --runstrip, plugins/runstrip names the four tracks and adds each one's section; absent, nothing changes
+    const tracks = () => globalThis.__kriyaTracks
     const KIND = "kriya-overview"
     const API = "api/kriya.overview"
     const REFRESH_MS = 4000
@@ -244,6 +246,7 @@ window.__ModuleLoader__.load({
         { className: "kh-ov" },
         error && h("div", { className: "kh-ov-error", role: "alert" }, error),
         h(Environment, { key: "e", env: data.environment, action: refresh }),
+        tracks() && h(tracks().Project, { key: "p", sessionId }),
         h(Remote, { key: "r", sessionId }),
         h(Context, { key: "c", data }),
         h(Changes, { key: "ch", changes: data.changes }),
@@ -256,8 +259,8 @@ window.__ModuleLoader__.load({
       id: PLUGIN,
       kind: KIND,
       priority: "extension",
-      title: () => "Overview",
-      guide: [{ id: "overview", order: 5, title: () => "Overview", description: () => "Environment, context, changes, tasks and connectors", icon: () => icon(ICONS.overview, 20) }],
+      title: () => tracks()?.title[KIND] ?? "Overview",
+      guide: [{ id: "overview", get order() { return tracks()?.order[KIND] ?? 5 }, title: () => tracks()?.title[KIND] ?? "Overview", description: () => "Environment, context, changes, tasks and connectors", icon: () => icon(ICONS.overview, 20) }],
     }
 
     const inject = ["slots", "sidebarRightTabs"]

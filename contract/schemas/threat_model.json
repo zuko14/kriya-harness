@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "threat_model.json",
+  "type": "array",
+  "maxItems": 300,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "asset",
+      "boundary",
+      "threat",
+      "control",
+      "test"
+    ],
+    "properties": {
+      "asset": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "boundary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "threat": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "control": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "test": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    }
+  }
+}
