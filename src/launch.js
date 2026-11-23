@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process"
 
 import { broadcastRun } from "./daemon.js"
-import { BODY_ENCODING, startGatewayProxy } from "./gateway-proxy.js"
+import { BODY_ENCODING, ORCHESTRA_ALIAS, startGatewayProxy } from "./gateway-proxy.js"
 import { BASE_PATH, models } from "./api.js"
 import { applyWorkforce, DEFAULT_MODE, modeEnv } from "./modes.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
@@ -101,7 +101,13 @@ export async function startTier(device, list = models) {
 }
 
 /** @param {{ url: string, token: string } | null} device */
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = [], orchestra) {
+/** The picker's name for the Orchestration choice: which model leads and which builds. */
+export function orchestraName(orchestra, names = {}) {
+  const plain = (tier) => String(names[tier] ?? `Kriya ${tier}`).replace(/ · (budget|balanced|escalation)$/, "")
+  return `Orchestration · ${plain(orchestra.head)} leads, ${plain(orchestra.worker)} builds`.slice(0, 120)
+}
+
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = [], orchestra, pick = false) {
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -123,9 +129,18 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
   // Harness 2.0 W2: the head and worker levels come only from Kriya's GET /models, never the shell
   delete env.KRIYA_ORCHESTRA_HEAD
   delete env.KRIYA_ORCHESTRA_WORKER
+  delete env.KRIYA_ORCHESTRA_PICK
+  delete env.KRIYA_ORCHESTRA_NAME
   if (orchestra && START_TIERS.includes(orchestra.head) && START_TIERS.includes(orchestra.worker)) {
     env.KRIYA_ORCHESTRA_HEAD = orchestra.head
     env.KRIYA_ORCHESTRA_WORKER = orchestra.worker
+    // The picker's own "Orchestration" choice (only through the local relay, which turns it into the head tier):
+    // sessions start on it, and picking a single model instead runs everything on that one model
+    if (pick) {
+      env.KRIYA_ORCHESTRA_PICK = ORCHESTRA_ALIAS
+      env.KRIYA_ORCHESTRA_NAME = orchestraName(orchestra, names)
+      env.KRIYA_START_TIER = ORCHESTRA_ALIAS
+    }
   }
   // A token from the person's environment never stands in for the sign-in
   delete env[TOKEN_ENV]
@@ -262,6 +277,8 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       ? await startGatewayProxy({
           target: device.url,
           encode: tiers.encodings.includes(BODY_ENCODING),
+          // Harness 2.0: the picker's Orchestration choice reaches Kriya as the head tier
+          ...(orchestra && { aliases: { [ORCHESTRA_ALIAS]: orchestra.head } }),
           // A Kriya deployed after launch is picked up without a restart
           checkSupport: async () => ((await models(device.url, device.token)).bodyEncodings ?? []).includes(BODY_ENCODING),
           log: (text) => process.stderr.write(`kriya: ${text}\n`),
@@ -279,7 +296,7 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       // stdout: the answer (kriya run) and ACP's protocol frames pass untouched;
       // the Web UI's stdout carries only log lines, rebranded like stderr
       stdio: ["inherit", profile === "kriya" ? "pipe" : "inherit", "pipe"],
-      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, orchestra ? orchestra.head : tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images, orchestra),
+      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, orchestra ? orchestra.head : tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images, orchestra, Boolean(relay)),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(rebrand(text)))

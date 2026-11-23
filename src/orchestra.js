@@ -41,3 +41,10 @@ export function tierFor({ orchestra, attempt, previous, earlier, force = false, 
 export function escalateAfterFromEnv(env = process.env) {
   return /^[0-4]$/.test(env.KRIYA_ESCALATE_AFTER ?? "") ? Number(env.KRIYA_ESCALATE_AFTER) : undefined
 }
+
+/**
+ * Harness 2.0: whether a session runs split (head and worker). With the
+ * picker's Orchestration choice offered (`pick`), only a session whose model
+ * is that choice; without it, every session (the earlier behaviour).
+ */
+export const sessionOrchestrated = (levels, pick, model) => Boolean(levels) && (!pick || model === pick)

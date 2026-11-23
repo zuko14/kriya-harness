@@ -97,15 +97,19 @@
         headers:
           X-Kriya-Harness: !!js process.env.KRIYA_CLIENT_VERSION ?? '0.0.0'
         models: !!js >-
-          ((names, limits) => [['balanced', 'Kriya balanced'], ['budget', 'Kriya
-          budget'], ['escalation', 'Kriya escalation']] .filter(([id]) =>
-          (process.env.KRIYA_ALLOWED_TIERS ||
+          ((names, limits) => [...(process.env.KRIYA_ORCHESTRA_PICK &&
+          process.env.KRIYA_ORCHESTRA_HEAD ? [[process.env.KRIYA_ORCHESTRA_PICK,
+          process.env.KRIYA_ORCHESTRA_NAME || 'Orchestration',
+          process.env.KRIYA_ORCHESTRA_HEAD]] : []), ...[['balanced', 'Kriya
+          balanced'], ['budget', 'Kriya budget'], ['escalation', 'Kriya
+          escalation']] .filter(([id]) => (process.env.KRIYA_ALLOWED_TIERS ||
           'balanced,budget,escalation').split(',').includes(id)) .map(([id,
-          name]) => ({ id, name: typeof names[id] === 'string' && names[id] ?
-          names[id] : name, ...((process.env.KRIYA_MODEL_IMAGES ||
-          '').split(',').includes(id) ? { input: ['text', 'image'] } : {}),
-          ...(limits[id] ? { contextWindow: limits[id].contextWindow, maxTokens:
-          limits[id].maxTokens } : {}) }))) ((() => { try { return
+          name]) => [id, typeof names[id] === 'string' && names[id] ? names[id]
+          : name, id])] .map(([id, name, tier]) => ({ id, name,
+          ...((process.env.KRIYA_MODEL_IMAGES || '').split(',').includes(tier) ?
+          { input: ['text', 'image'] } : {}), ...(limits[tier] ? {
+          contextWindow: limits[tier].contextWindow, maxTokens:
+          limits[tier].maxTokens } : {}) }))) ((() => { try { return
           JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {}
           } })(), (() => { try { return
           JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {}
@@ -340,8 +344,10 @@
     modelPolicies: !!js >-
       Object.entries((() => { try { return
       JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} }
-      })()) .map(([model, l]) => ({ provider: 'kriya', model, headroomTokens:
-      l.headroomTokens }))
+      })()) .flatMap(([model, l]) => [model,
+      ...(process.env.KRIYA_ORCHESTRA_PICK && process.env.KRIYA_ORCHESTRA_HEAD
+      === model ? [process.env.KRIYA_ORCHESTRA_PICK] : [])] .map((id) => ({
+      provider: 'kriya', model: id, headroomTokens: l.headroomTokens })))
 # == @deepseek-ai/dsh-base
 - id: command-compact
   name: '@deepseek-ai/dsh-command-compact'

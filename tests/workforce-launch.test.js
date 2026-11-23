@@ -5,7 +5,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 
-import { planTiers } from "../src/launch.js"
+import { aliased, ORCHESTRA_ALIAS } from "../src/gateway-proxy.js"
+import { launchEnv, orchestraName, planTiers } from "../src/launch.js"
+import { sessionOrchestrated } from "../src/orchestra.js"
 import { applyWorkforce, SET_BY_PERSON, switchEnv, SWITCHES, WORKFORCE_SWITCHES } from "../src/modes.js"
 import { startFakeKriya } from "./fake-kriya.js"
 import { freshHome, ROOT } from "./helpers.js"
@@ -63,15 +65,17 @@ function kriya(args, cwd, env = {}) {
   })
 }
 
-async function launch({ workforce, flags = [] }) {
+async function launch({ workforce, flags = [], env = {} }) {
   freshHome()
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "kriya-wf-")))
   writeFileSync(join(dir, "README.md"), "x\n")
   const seen = []
+  const models = []
   const fake = await startFakeKriya({
     models: ["budget", "balanced", "escalation"],
     orchestra: { head: "escalation", worker: "budget" },
     chat: (body) => {
+      models.push(body.model)
       if (body.tools?.length) seen.push({ model: body.model, tools: body.tools.map((t) => t.function?.name ?? t.name) })
       return { content: "Hello." }
     },
@@ -79,8 +83,8 @@ async function launch({ workforce, flags = [] }) {
   fake.state.workforce = workforce
   try {
     assert.equal((await kriya(["login", "--url", fake.url, "--no-browser"], ROOT)).code, 0)
-    const run = await kriya(["run", ...flags, "Say hello"], dir)
-    return { run, first: seen[0] }
+    const run = await kriya(["run", ...flags, "Say hello"], dir, env)
+    return { run, first: seen[0], models }
   } finally {
     await fake.close()
   }
@@ -107,4 +111,49 @@ test("WT-WF-04: without the owner's workforce, plain `kriya run` is exactly as b
   assert.doesNotMatch(plain.run.stderr, /Harness 2\.0 is on/, report)
   assert.notEqual(plain.first.model, "escalation", report)
   for (const tool of ["kriya_milestones", "api_lookup"]) assert.ok(!plain.first.tools.includes(tool), `${tool}: ${report}`)
+})
+
+test("WT-WF-05: the picker's Orchestration choice: named by its models, started on, and turned into the head tier before it leaves", () => {
+  const h = { "content-type": "application/json" }
+  const path = "/api/harness/v1/chat/completions"
+  const body = Buffer.from(JSON.stringify({ model: ORCHESTRA_ALIAS, messages: [{ role: "user", content: "orchestra" }] }))
+  assert.deepEqual(JSON.parse(aliased(body, path, h, { orchestra: "escalation" })), { model: "escalation", messages: [{ role: "user", content: "orchestra" }] })
+  for (const [b, p, hh, a] of [
+    [Buffer.from('{"model":"budget"}'), path, h, { orchestra: "escalation" }],
+    [body, "/api/harness/v1/me", h, { orchestra: "escalation" }],
+    [body, path, { "content-type": "text/plain" }, { orchestra: "escalation" }],
+    [body, path, h, {}],
+    [Buffer.from("not json orchestra"), path, h, { orchestra: "escalation" }],
+  ])
+    assert.equal(aliased(b, p, hh, a), b, "anything else passes byte for byte")
+  const names = { escalation: "gemini-4-neon", budget: "DeepSeek V4.1 Flash 1017 · budget" }
+  const o = { head: "escalation", worker: "budget" }
+  assert.equal(orchestraName(o, names), "Orchestration · gemini-4-neon leads, DeepSeek V4.1 Flash 1017 builds")
+  const device = { url: "https://kriya.example", token: "t" }
+  const picked = launchEnv(device, {}, undefined, "escalation", ["budget", "escalation"], names, {}, [], o, true)
+  assert.deepEqual([picked.KRIYA_START_TIER, picked.KRIYA_ORCHESTRA_PICK, picked.KRIYA_ORCHESTRA_HEAD], ["orchestra", "orchestra", "escalation"])
+  assert.equal(picked.KRIYA_ORCHESTRA_NAME, orchestraName(o, names))
+  // Without the relay (KRIYA_RELAY=off) there's nothing to turn the choice into a tier: no choice, the head as before
+  const direct = launchEnv(device, { KRIYA_ORCHESTRA_PICK: "x", KRIYA_ORCHESTRA_NAME: "x" }, undefined, "escalation", ["budget", "escalation"], names, {}, [], o, false)
+  assert.equal(direct.KRIYA_START_TIER, "escalation")
+  assert.equal("KRIYA_ORCHESTRA_PICK" in direct || "KRIYA_ORCHESTRA_NAME" in direct, false, "never from the shell")
+  // A session splits only when it chose Orchestration; without the choice offered, every session (as before)
+  assert.equal(sessionOrchestrated(o, "orchestra", "orchestra"), true)
+  assert.equal(sessionOrchestrated(o, "orchestra", "escalation"), false)
+  assert.equal(sessionOrchestrated(o, "orchestra", "budget"), false)
+  assert.equal(sessionOrchestrated(o, undefined, "balanced"), true)
+  assert.equal(sessionOrchestrated(undefined, "orchestra", "orchestra"), false)
+})
+
+test("WT-WF-06: Kriya never receives the local choice: every request names a plan tier, the session's the head (real DSH)", { timeout: 300_000 }, async () => {
+  const on = await launch({ workforce: true })
+  assert.equal(on.run.code, 0, on.run.stderr.slice(-800))
+  assert.ok(on.models.length > 0)
+  assert.ok(on.models.every((m) => ["budget", "balanced", "escalation"].includes(m)), on.models.join(","))
+  assert.equal(on.first.model, "escalation")
+  // Talking to Kriya directly (no relay): no choice is offered and the session starts on the head as before
+  const direct = await launch({ workforce: true, env: { KRIYA_RELAY: "off" } })
+  assert.equal(direct.run.code, 0, direct.run.stderr.slice(-800))
+  assert.ok(direct.models.every((m) => ["budget", "balanced", "escalation"].includes(m)), direct.models.join(","))
+  assert.equal(direct.first.model, "escalation")
 })

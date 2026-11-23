@@ -7,7 +7,7 @@ import { extname, join, resolve } from "node:path"
 
 import { cartridgeSource, ROLES, selectCartridge } from "../../src/cartridges.js"
 import { checkpoint, restoreTree } from "../../src/checkpoints.js"
-import { escalateAfterFromEnv, orchestraFromEnv, tierFor } from "../../src/orchestra.js"
+import { escalateAfterFromEnv, orchestraFromEnv, sessionOrchestrated, tierFor } from "../../src/orchestra.js"
 import { contractSlices, CONTRACT_NAMES } from "../../src/contracts.js"
 import { recordOutcome } from "../../src/outcomes.js"
 import { bindPlan, checkPlanAllowed, MAX_MILESTONES, milestonesText, saveMilestones, syncMilestones } from "../../src/milestones.js"
@@ -397,7 +397,7 @@ export function stepTool(host) {
         ...(host.guardSteps && { guard: host.guardSteps(exec, cwd) }),
         ...(host.questions && { pickCheck: (found) => askCheck(host.questions(), exec, found) }),
         ...(host.cartridge && { cartridge: host.cartridge }),
-        ...(host.orchestra && { orchestra: host.orchestra }),
+        ...(host.orchestra && (host.orchestrated?.(exec) ?? true) && { orchestra: host.orchestra }),
         ...(host.contracts && { slices: (step) => contractSlices(projectRoot(cwd), step.contracts) }),
         ...(host.polish && { polish: host.polish(exec, cwd) }),
         ...(host.explore && { explore: host.explore(exec, cwd) }),
@@ -828,6 +828,10 @@ export function apply(ctx) {
     }
   // Harness 2.0 orchestra (--orchestra, Kriya's offer): builders on the worker level, the head after
   const levels = orchestraFromEnv()
+  // With the picker's Orchestration choice (KRIYA_ORCHESTRA_PICK), the split is for the sessions that chose it;
+  // a session on a single model runs its steps on that model. Without the choice, every session, as before
+  const pick = process.env.KRIYA_ORCHESTRA_PICK
+  const orchestrated = (exec) => sessionOrchestrated(levels, pick, exec.agent?.session?.requestHeader?.()?.config?.model ?? exec.agent?.options?.model)
   // KRHE's escalateAfter (W10): a profile pins it through the environment; else the default
   const escalateAfter = escalateAfterFromEnv()
   // Harness 2.0 milestones (--milestones, WD-12)
@@ -851,7 +855,7 @@ export function apply(ctx) {
       activation = await subagents.startActivation({
         provider: "spawn",
         label: `Review step ${n}`,
-        request: { prompt: [{ type: "text", text: critiquePrompt({ role: chosen?.cartridge.role, judgement: chosen?.cartridge.judgement, plan, n, changed, notes }) }], parent: exec.agent, signal: exec.signal, maxDepth: 1, ...(levels && { agentOptions: { model: levels.head } }) },
+        request: { prompt: [{ type: "text", text: critiquePrompt({ role: chosen?.cartridge.role, judgement: chosen?.cartridge.judgement, plan, n, changed, notes }) }], parent: exec.agent, signal: exec.signal, maxDepth: 1, ...(orchestrated(exec) && { agentOptions: { model: levels.head } }) },
         signal: exec.signal,
         delivery: "caller",
       })
@@ -884,6 +888,7 @@ export function apply(ctx) {
             },
     }),
     ...(gatesOn && { contracts: CONTRACT_NAMES }),
+    ...(levels && { orchestrated }),
     ...(levels && { orchestra: { head: levels.head, tier: (input) => tierFor({ orchestra: levels, ...input, role: input.step?.role, ...(escalateAfter !== undefined && { escalateAfter }) }) } }),
     ...(milestonesOn && { milestones: true }),
     // Harness 2.0 W14 (WD-18): Explore takes; never in Read only (runStep refuses), needs roles
@@ -981,7 +986,7 @@ export function apply(ctx) {
       })
       const id = String(activation.childId)
       builders.add(id)
-      if (levels && live) advising.set(id, { head: exec.agent, live, cwd: await host.cwd(exec), n: live.n })
+      if (levels && live?.tier) advising.set(id, { head: exec.agent, live, cwd: await host.cwd(exec), n: live.n })
       if (live) guard.start(id, live)
       masks.delete(exec.agent)
       const stop = () => activation.dispose().catch(() => {})

@@ -75,6 +75,24 @@ async function readAll(req) {
   return Buffer.concat(chunks)
 }
 
+// Harness 2.0: the picker's local aliases (the "orchestra" choice), turned into the
+// plan tier they stand for before a request leaves this computer, so Kriya only
+// ever sees its own tier names (track H rule 4). Any other body passes untouched.
+export const ORCHESTRA_ALIAS = "orchestra"
+export function aliased(body, path, headers, aliases) {
+  if (!body || !Object.keys(aliases).length || !path.endsWith("/chat/completions") || !/^application\/json\b/i.test(headers["content-type"] ?? "")) return body
+  const text = body.toString("utf8")
+  if (!Object.keys(aliases).some((alias) => text.includes(`"${alias}"`))) return body
+  let value
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return body
+  }
+  if (typeof value?.model !== "string" || !Object.hasOwn(aliases, value.model)) return body
+  return Buffer.from(JSON.stringify({ ...value, model: aliases[value.model] }))
+}
+
 /**
  * Starts the relay in front of `target` (the signed-in Kriya's address).
  * `encode`: whether Kriya decodes encoded bodies, as known at launch.
@@ -87,7 +105,7 @@ async function readAll(req) {
  * @param {{ target: string, encode: boolean, checkSupport?: () => Promise<boolean>, fetchImpl?: typeof fetch, log?: (text: string) => void, now?: () => number, retryMs?: number }} options
  * @returns {Promise<{ url: string, close: () => Promise<void>, encoding: () => boolean }>} url stands in for device.url inside DSH
  */
-export async function startGatewayProxy({ target, encode, checkSupport, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
+export async function startGatewayProxy({ target, encode, checkSupport, aliases = {}, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
   const origin = new URL(target).origin
   const support = { on: Boolean(encode), checked: now(), pending: null }
   // One question at a time; a failed question changes nothing
@@ -121,7 +139,7 @@ export async function startGatewayProxy({ target, encode, checkSupport, fetchImp
       if (body === null) return error(413, "This request is larger than Kriya Harness sends (64 MB).")
       const headers = {}
       for (const [name, value] of Object.entries(req.headers)) if (!DROP_REQUEST.has(name) && value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value
-      const plain = body?.length ? body : undefined
+      const plain = aliased(body?.length ? body : undefined, path, headers, aliases)
       const encodable = Boolean(plain) && /^application\/json\b/i.test(headers["content-type"] ?? "")
       if (encodable && !support.on && now() - support.checked >= RECHECK_MS) await recheck()
       const once = (encoded) => {
