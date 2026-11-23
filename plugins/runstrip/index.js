@@ -8,6 +8,7 @@ import { listCheckpoints, restoreTree, trackedRoot } from "../../src/checkpoints
 import { gateMatrix } from "../../src/doctor.js"
 import { liveBuild } from "../../src/loop.js"
 import { readMilestones } from "../../src/milestones.js"
+import { SWITCHES } from "../../src/modes.js"
 import { orchestraFromEnv } from "../../src/orchestra.js"
 import { kriyaHome } from "../../src/paths.js"
 import { readState } from "../../src/release.js"
@@ -81,6 +82,16 @@ export function spendTracker({ account }) {
       }
       return { since: t.since, spend: t.base === undefined ? null : { inr: formatInr(t.used - t.base), estimated: t.unpriced } }
     },
+  }
+}
+
+/** What this harness was launched with: the head and worker levels (with their models' names) and each switch. */
+export function workforceOf(env = process.env) {
+  const o = orchestraFromEnv(env)
+  const named = names(env)
+  return {
+    orchestra: o ? { head: o.head, worker: o.worker, headName: named[o.head] ?? null, workerName: named[o.worker] ?? null } : null,
+    switches: SWITCHES.map(([flag, name]) => ({ flag, on: env[name] === "on" })),
   }
 }
 
@@ -215,7 +226,7 @@ export function handlers(host) {
         (host.matrix ?? gateMatrix)(),
         (host.mcp ?? (async () => []))().catch(() => []),
       ])
-      return { repo, matrix, mcp }
+      return { repo, matrix, mcp, workforce: workforceOf(env) }
     }
     throw new ChangesError("Which part?")
   }

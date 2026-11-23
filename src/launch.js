@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { broadcastRun } from "./daemon.js"
 import { BODY_ENCODING, startGatewayProxy } from "./gateway-proxy.js"
 import { BASE_PATH, models } from "./api.js"
-import { DEFAULT_MODE, modeEnv } from "./modes.js"
+import { applyWorkforce, DEFAULT_MODE, modeEnv } from "./modes.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
 import { ensureProfile } from "./profiles.js"
 
@@ -40,7 +40,9 @@ export async function planTiers(device, list = models) {
     // Harness 2.0 W2: the owner's head and worker levels, only if both are offered and differ
     const o = answer.orchestra
     const orchestra = o && allowed.includes(o.head) && allowed.includes(o.worker) && o.head !== o.worker ? { head: o.head, worker: o.worker } : undefined
-    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings, ...(orchestra && { orchestra }) } : { ...all, encodings }
+    // Harness 2.0: the owner turned the workforce on for this device (Kriya's harness.workforce)
+    const workforce = answer.workforce === 1
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings, ...(orchestra && { orchestra }), ...(workforce && { workforce }) } : { ...all, encodings }
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
@@ -247,6 +249,9 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   ensureProfile(profile)
   const headless = profile === "kriya-run"
   const tiers = await planTiers(device)
+  // Harness 2.0: the owner's switches, where the person set none of their own (src/modes.js applyWorkforce)
+  const turned = applyWorkforce(process.env, tiers.workforce)
+  if (turned.length) process.stderr.write(`kriya: Harness 2.0 is on from your Kriya owner settings: ${turned.join(", ")}. Turn one off with --no-<name>, e.g. --no-${turned[0]}.\n`)
   // Harness 2.0 W2: with --orchestra and Kriya's offer, the session itself runs on the head level
   const orchestra = process.env.KRIYA_ORCHESTRA === "on" && process.env.KRIYA_LOOP === "on" ? tiers.orchestra : undefined
   // DSH and the Kriya plugins reach Kriya through the local relay

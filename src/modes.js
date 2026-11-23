@@ -144,17 +144,52 @@ export const SWITCHES = [
   ["edit", "KRIYA_EDIT", false],
 ]
 
+/** The launch variable naming the switches the person set themself (a flag, or the variable in their shell) */
+export const SET_BY_PERSON = "KRIYA_SWITCHES_SET"
+
 /** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */
 export function switchEnv(args, env = process.env) {
+  const chosen = new Set((env[SET_BY_PERSON] ?? "").split(",").filter(Boolean))
   for (const [flag, name, byDefault] of SWITCHES) {
+    if (env[name] === "on" || env[name] === "off") chosen.add(flag)
     let value = env[name] === "on" ? true : env[name] === "off" ? false : byDefault
     for (const [form, on] of [[`--${flag}`, true], [`--no-${flag}`, false]]) {
       const at = args.indexOf(form)
       if (at === -1) continue
       args.splice(at, 1)
       value = on
+      chosen.add(flag)
     }
     env[name] = value ? "on" : "off"
   }
+  // Recorded once, from the first call: later calls see the defaults written above, not the person's choice
+  env[SET_BY_PERSON] ??= [...chosen].join(",")
+}
+
+/**
+ * Harness 2.0 switches the owner turns on for every device with Kriya's
+ * harness.workforce (GET /models `workforce: 1`). Each still yields to the
+ * person's own flag or variable (`kriya --no-gates`). Repository tools and
+ * deploys act on the person's own GitHub and hosting logins, so they stay the
+ * person's to turn on per device (`kriya --repo-tools --deploy`); the Editing
+ * Studio has its own owner switch.
+ */
+export const WORKFORCE_SWITCHES = Object.freeze(["cartridges", "orchestra", "gates", "critic", "milestones", "grounding", "explore", "runstrip", "mcp"])
+
+/**
+ * Turns on the owner's Harness 2.0 switches the person didn't set, when Kriya
+ * advertises them. Without the advertisement nothing changes (HT-REG).
+ * @returns {string[]} the switches this turned on
+ */
+export function applyWorkforce(env = process.env, advertised = false) {
+  if (!advertised) return []
+  const chosen = new Set((env[SET_BY_PERSON] ?? "").split(",").filter(Boolean))
+  const turned = []
+  for (const [flag, name] of SWITCHES) {
+    if (!WORKFORCE_SWITCHES.includes(flag) || chosen.has(flag) || env[name] === "on") continue
+    env[name] = "on"
+    turned.push(flag)
+  }
+  return turned
 }
 

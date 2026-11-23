@@ -306,6 +306,7 @@ test("WT-UX-10: Proof, Live, Project and Mission Control read the records, the r
     matrix: async () => [{ gate: "G-UI", works: true }],
     mcp: async () => [{ id: "docs", name: "Docs" }],
     now: () => NOW,
+    env: { KRIYA_LOOP: "on", KRIYA_ORCHESTRA: "on", KRIYA_ALLOWED_TIERS: "budget,escalation", KRIYA_ORCHESTRA_HEAD: "escalation", KRIYA_ORCHESTRA_WORKER: "budget", KRIYA_MODEL_NAMES: JSON.stringify({ escalation: "gemini-4-neon", budget: "DeepSeek V4.1 Flash" }), KRIYA_GATES: "on" },
   })
   const get = (part) => answer(r.track, new Request(`http://127.0.0.1${ROUTES.track}?session=s1&part=${part}`)).then((x) => x.json())
   const proof = await get("proof")
@@ -314,7 +315,11 @@ test("WT-UX-10: Proof, Live, Project and Mission Control read the records, the r
   assert.equal(proof.release, null)
   assert.equal(proof.receipt, null)
   assert.deepEqual((await get("live")).gates.map((g) => g.text), ["UI · not checked: no dev server"])
-  assert.deepEqual(await get("project"), { repo: { state: "no remote", text: "Not connected to a remote." }, matrix: [{ gate: "G-UI", works: true }], mcp: [{ id: "docs", name: "Docs" }] })
+  const shown = await get("project")
+  assert.deepEqual({ ...shown, workforce: undefined }, { repo: { state: "no remote", text: "Not connected to a remote." }, matrix: [{ gate: "G-UI", works: true }], mcp: [{ id: "docs", name: "Docs" }], workforce: undefined })
+  // What this harness runs with: the owner's head and worker by name, and each switch
+  assert.deepEqual(shown.workforce.orchestra, { head: "escalation", worker: "budget", headName: "gemini-4-neon", workerName: "DeepSeek V4.1 Flash" })
+  assert.deepEqual(shown.workforce.switches.filter((x) => x.on).map((x) => x.flag), ["loop", "orchestra", "gates"])
   assert.equal((await answer(r.track, new Request(`http://127.0.0.1${ROUTES.track}?session=s1&part=nope`))).status, 400)
   // The strip route: every running session, from its records
   const { runs } = await (await answer(r.strip, new Request(`http://127.0.0.1${ROUTES.strip}`))).json()

@@ -327,6 +327,16 @@ window.__ModuleLoader__.load({
         React.Fragment,
         null,
         Section("Repository", h(React.Fragment, null, h("div", { className: "kh-tx-row" }, h("b", null, d.repo.state)), h("div", { className: "kh-tx-note", style: { whiteSpace: "pre-line" } }, d.repo.text)), refresh),
+        d.workforce &&
+          Section(
+            "Harness 2.0",
+            h(
+              React.Fragment,
+              null,
+              h("div", { className: "kh-tx-row" }, d.workforce.orchestra ? `Orchestra: head ${d.workforce.orchestra.headName ?? d.workforce.orchestra.head}, worker ${d.workforce.orchestra.workerName ?? d.workforce.orchestra.worker}` : "Orchestra: off (one level for everything)"),
+              h("div", { className: "kh-tx-grid" }, d.workforce.switches.flatMap((x) => [h("span", { key: `${x.flag}a`, className: "kh-tx-mono" }, x.flag), h("span", { key: `${x.flag}b`, className: x.on ? "" : "kh-tx-note" }, x.on ? "on" : "off")]))
+            )
+          ),
         Section("MCP servers", d.mcp.length ? d.mcp.map((m) => h("div", { key: m.id, className: "kh-tx-row" }, m.name)) : h("div", { className: "kh-tx-note" }, "None offered (kriya --mcp, and the owner's registry).")),
         Section(
           "What can be checked here",
