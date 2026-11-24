@@ -1,5 +1,15 @@
 # Kriya Harness release notes
 
+## 2.1.1
+
+- **Fixed:** the Developer tab showed "Kriya couldn't do that; see the
+  terminal for details." for any folder that isn't a git repository. It now
+  offers "Start a git repository" there. Each section (GitHub, connections,
+  running servers, project health, your models) also loads on its own, so
+  one that can't be read says so in its place instead of blanking the tab.
+- **Fixed:** the one-line installer (`install.sh`) installed 2.0.1; it now
+  installs this release.
+
 ## Unreleased: Harness 2.0, "the Autonomous Workforce" (beta)
 
 Built on DeepSeek Harness. Everything below is **off by default**: with none

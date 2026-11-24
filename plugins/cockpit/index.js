@@ -22,6 +22,7 @@ const REPO_NAME = /^[A-Za-z0-9._-]{1,100}$/
  */
 export function handler(host) {
   const run = host.run ?? runner()
+  const log = host.log ?? (() => {})
   const now = host.now ?? Date.now
   const signIn = host.signIn ?? githubSignIn()
   const switches = host.switches ?? { read: () => savedSwitches(), save: saveSwitch }
@@ -66,7 +67,9 @@ export function handler(host) {
     } catch (e) {
       return { state: "unavailable", note: e instanceof RepoError ? e.message : "git couldn't be read here." }
     }
-    const out = { state: status.state, branch: status.branch, changed: status.changed, remotes: status.remotes.filter(Boolean), exposed: status.exposed }
+    // Not a repository: status has no branch or remotes, and the tab offers `git init`
+    if (status.state === "not a repository") return { state: status.state }
+    const out = { state: status.state, branch: status.branch, changed: status.changed ?? 0, remotes: (status.remotes ?? []).filter(Boolean), exposed: status.exposed ?? [] }
     if (status.state !== "remote, signed in") return out
     const pr = await run("gh", ["pr", "view", "--json", "number,title,url,state,isDraft"], cwd)
     if (pr.code !== 0) return { ...out, pr: null }
@@ -99,8 +102,22 @@ export function handler(host) {
     async read(request) {
       const url = new URL(request.url)
       const cwd = await folder(url.searchParams.get("session"))
-      const [list, gh, running, checkup] = await Promise.all([connected(url.searchParams.get("fresh") === "1"), github(cwd), servers(cwd, run), health(cwd, run)])
-      return { folder: cwd, connections: list, signIn: signIn.state(), github: gh, servers: running, health: checkup, switches: saved(), own: own() }
+      // Each section on its own: one that fails says so in its place, never the whole tab
+      const section = (name, work, fallback) =>
+        Promise.resolve()
+          .then(work)
+          .catch((error) => {
+            log(error)
+            return { ...fallback, error: `Kriya couldn't read ${name} here; see the terminal for details.` }
+          })
+      const [list, gh, running, checkup, ownView] = await Promise.all([
+        section("the connections", () => connected(url.searchParams.get("fresh") === "1"), { items: [] }),
+        section("this folder's git state", () => github(cwd), { state: "unavailable", note: "Kriya couldn't read git here; see the terminal for details." }),
+        section("the running servers", () => servers(cwd, run), { available: true, list: [] }),
+        section("the project's health", () => health(cwd, run), { stack: [], scripts: [], check: null, git: false, tracked: [], unignored: [] }),
+        section("your models", () => own(), null),
+      ])
+      return { folder: cwd, connections: Array.isArray(list) ? list : [], ...(list?.error && { connectionsError: list.error }), signIn: signIn.state(), github: gh, servers: running, health: checkup, switches: saved(), own: ownView?.error ? null : ownView, ...(ownView?.error && { ownError: ownView.error }) }
     },
     async act(request) {
       let body
@@ -183,8 +200,8 @@ export function apply(ctx) {
     const stored = live === undefined ? await ctx.get("sessionPersistence")?.stat(id) : undefined
     return (live ?? stored?.header)?.cwd
   }
-  const routes = handler({ folderOf })
   const log = (error) => ctx.logger("kriya-cockpit").warn(error)
+  const routes = handler({ folderOf, log })
   ctx.effect(() =>
     ctx.connection.fetch.register({
       path: ROUTE,

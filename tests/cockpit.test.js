@@ -208,3 +208,30 @@ test("CK-08: planTiers carries the owner's cockpit advert; nothing without it", 
   assert.equal((await planTiers(device, answer({ cockpit: 1 }))).cockpit, true)
   assert.equal("cockpit" in (await planTiers(device, answer({}))), false)
 })
+
+test("CK-09: a folder that isn't a git repository reads cleanly (owner report 2026-11-24: the tab said \"Kriya couldn't do that\")", async () => {
+  const dir = tmp("kriya-ck-nogit2-")
+  writeFileSync(join(dir, "index.html"), "<h1>scene</h1>\n")
+  const routes = handler({ folderOf: async () => dir })
+  const view = await routes.read(new Request("http://x/api/kriya.cockpit?session=s"))
+  assert.deepEqual(view.github, { state: "not a repository" })
+  assert.equal(view.health.git, false)
+  assert.ok(Array.isArray(view.connections))
+})
+
+test("CK-10: one section failing says so in its place; the others still load", async () => {
+  const dir = tmp("kriya-ck-iso-")
+  const logged = []
+  const run = async (file, args) => {
+    if (file === "lsof") throw new Error("lsof exploded")
+    if (file === "git" && args[0] === "--version") return ok("git version 2.45.0")
+    if (file === "git") return fail("fatal: not a git repository", 128)
+    return { code: 1, missing: true, stdout: "", stderr: "" }
+  }
+  const routes = handler({ folderOf: async () => dir, run, log: (e) => logged.push(e.message) })
+  const view = await routes.read(new Request("http://x/api/kriya.cockpit?session=s"))
+  assert.match(view.servers.error, /running servers/)
+  assert.deepEqual(view.github, { state: "not a repository" })
+  assert.equal(view.health.error, undefined)
+  assert.deepEqual(logged, ["lsof exploded"])
+})

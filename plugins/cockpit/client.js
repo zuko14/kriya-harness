@@ -215,6 +215,7 @@ select.kh-dv-input { padding-right: 6px; }
       return Section(
         "Connections",
         [
+          data.connectionsError && h("p", { key: "e", className: "kh-dv-note kh-dv-err", role: "alert" }, data.connectionsError),
           ...rows,
           h(React.Fragment, { key: "pt" }, Saved({ label: "Supabase and Render tools", what: "The agent may read projects, services, deploys, logs and migrations; anything that changes something asks you first.", state: data.switches.providerTools, busy, onChange: (on) => act({ action: "switch", flag: "provider-tools", on }) })),
         ],
@@ -224,6 +225,7 @@ select.kh-dv-input { padding-right: 6px; }
 
     function Servers({ data, act, busy }) {
       const s = data.servers
+      if (s.error) return Section("Running servers", h("p", { className: "kh-dv-note kh-dv-err", role: "alert" }, s.error))
       if (!s.available) return Section("Running servers", h("p", { className: "kh-dv-note" }, "Listing servers needs lsof on this computer."))
       if (!s.list.length) return Section("Running servers", h("div", { className: "kh-dv-row kh-dv-dim" }, "No server is running in this folder."))
       return Section(
@@ -248,6 +250,7 @@ select.kh-dv-input { padding-right: 6px; }
 
     function Health({ data, act, busy }) {
       const x = data.health
+      if (x.error) return Section("Project health", h("p", { className: "kh-dv-note kh-dv-err", role: "alert" }, x.error))
       return Section("Project health", [
         x.stack.length ? h("div", { key: "s", className: "kh-dv-chips" }, ...x.stack.map((s) => h(React.Fragment, { key: s.id }, Pill(s.label)))) : h("div", { key: "s", className: "kh-dv-row kh-dv-dim" }, "No known project files here."),
         x.scripts.length ? h("div", { key: "sc", className: "kh-dv-row" }, h("span", { className: "kh-dv-val" }, "Scripts ", h("span", { className: "kh-dv-mono kh-dv-dim" }, x.scripts.join(" · ")))) : null,
@@ -465,6 +468,7 @@ select.kh-dv-input { padding-right: 6px; }
         done && h("div", { className: "kh-dv-empty", role: "status" }, "Created: ", h("a", { className: "kh-dv-link", href: done, target: "_blank", rel: "noreferrer" }, done)),
         h(GitHub, { key: "g", data, act, busy }),
         data.own && h(OwnModels, { key: "o", own: data.own, run, busy, changed }),
+        data.ownError && Section("Your models", h("p", { className: "kh-dv-note kh-dv-err", role: "alert" }, data.ownError)),
         h(Connections, { key: "c", data, act, busy, refresh: () => load(true) }),
         h(Servers, { key: "s", data, act, busy }),
         h(Health, { key: "h", data, act, busy })
