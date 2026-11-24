@@ -3,7 +3,10 @@ import { spawn, spawnSync } from "node:child_process"
 import { broadcastRun } from "./daemon.js"
 import { BODY_ENCODING, ORCHESTRA_ALIAS, startGatewayProxy } from "./gateway-proxy.js"
 import { BASE_PATH, models } from "./api.js"
-import { applyWorkforce, DEFAULT_MODE, modeEnv } from "./modes.js"
+import { applyWorkforce, DEFAULT_MODE, modeEnv, SET_BY_PERSON } from "./modes.js"
+import { LOCAL_WORKER, localWorker } from "./local-model.js"
+import { launchOwn, ownFile, readOwn } from "./own-models.js"
+import { usageReporter } from "./own-usage.js"
 import { CLIENT_VERSION, DSH_BIN, kriyaHome } from "./paths.js"
 import { ensureProfile } from "./profiles.js"
 
@@ -42,7 +45,13 @@ export async function planTiers(device, list = models) {
     const orchestra = o && allowed.includes(o.head) && allowed.includes(o.worker) && o.head !== o.worker ? { head: o.head, worker: o.worker } : undefined
     // Harness 2.0: the owner turned the workforce on for this device (Kriya's harness.workforce)
     const workforce = answer.workforce === 1
-    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings, ...(orchestra && { orchestra }), ...(workforce && { workforce }) } : { ...all, encodings }
+    // S-1: the owner offers local models (Kriya's harness.localModels)
+    const localModels = answer.localModels === 1
+    // The owner's Developer tab (Kriya's harness.cockpit)
+    const cockpit = answer.cockpit === 1
+    // Own models: the person may use their own keys and orchestration (Kriya's harness.ownModels)
+    const ownModels = answer.ownModels === 1
+    return allowed.length ? { start: allowed[0], allowed, names: modelNames(data, allowed), limits: modelLimits(data, allowed), images: allowed.filter((tier) => data.find((m) => m.id === tier)?.images === true), encodings, ...(orchestra && { orchestra }), ...(workforce && { workforce }), ...(localModels && { localModels }), ...(cockpit && { cockpit }), ...(ownModels && { ownModels }) } : { ...all, encodings }
   } catch {
     // Kriya answers the first request with the reason if it's refused
     return all
@@ -107,7 +116,17 @@ export function orchestraName(orchestra, names = {}) {
   return `Orchestration · ${plain(orchestra.head)} leads, ${plain(orchestra.worker)} builds`.slice(0, 120)
 }
 
-export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = [], orchestra, pick = false) {
+export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier = START_TIERS[0], allowed = START_TIERS, names = {}, limits = {}, images = [], orchestra, pick = false, local = null, own = null) {
+  // Own models (src/own-models.js): ids, names and windows only; keys stay in the launcher's relay
+  const ownModels = pick && own?.models?.length ? own.models : []
+  const ownIds = ownModels.map((m) => m.id)
+  // The person's own orchestration, when it's the one chosen (and the relay that routes it is on)
+  const personal = Boolean(pick && own?.orchestra && orchestra === own.orchestra)
+  // S-1: a found local server builds as the owner's orchestra's worker; in the person's own, only where they chose it
+  const localOn = Boolean(local && orchestra && pick && (!personal || orchestra.worker === LOCAL_WORKER))
+  const levels = personal ? orchestra : localOn ? { ...orchestra, worker: LOCAL_WORKER } : orchestra
+  const named = { ...names, ...(localOn && { [LOCAL_WORKER]: `Local · ${local.model}`.slice(0, 80) }), ...Object.fromEntries(ownModels.map((m) => [m.id, m.name])) }
+  const usable = (id) => START_TIERS.includes(id) || ownIds.includes(id) || (id === LOCAL_WORKER && localOn)
   const env = {
     ...base,
     // The mode always comes from `--mode` (or the default), never the shell
@@ -120,7 +139,7 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
     // Read by the kriya provider row: the models the picker offers. Never from the shell
     KRIYA_ALLOWED_TIERS: (allowed.filter((t) => START_TIERS.includes(t)).length ? allowed.filter((t) => START_TIERS.includes(t)) : START_TIERS).join(","),
     // The picker's name per tier (modelNames), as JSON. Never from the shell
-    KRIYA_MODEL_NAMES: JSON.stringify(Object.fromEntries(Object.entries(names).filter(([t, n]) => START_TIERS.includes(t) && typeof n === "string" && n.length <= 80))),
+    KRIYA_MODEL_NAMES: JSON.stringify(Object.fromEntries(Object.entries(named).filter(([t, n]) => usable(t) && typeof n === "string" && n.length <= 80))),
     // Each tier's context window, output cap and compaction headroom (modelLimits), as JSON. Never from the shell
     KRIYA_MODEL_LIMITS: JSON.stringify(Object.fromEntries(Object.entries(limits).filter(([t]) => START_TIERS.includes(t)))),
     // The tiers whose model takes images, as GET /models says. Never from the shell
@@ -131,14 +150,30 @@ export function launchEnv(device, base = process.env, mode = DEFAULT_MODE, tier 
   delete env.KRIYA_ORCHESTRA_WORKER
   delete env.KRIYA_ORCHESTRA_PICK
   delete env.KRIYA_ORCHESTRA_NAME
-  if (orchestra && START_TIERS.includes(orchestra.head) && START_TIERS.includes(orchestra.worker)) {
-    env.KRIYA_ORCHESTRA_HEAD = orchestra.head
-    env.KRIYA_ORCHESTRA_WORKER = orchestra.worker
+  delete env.KRIYA_LOCAL_MODEL_ID
+  delete env.KRIYA_LOCAL_MODEL_LABEL
+  delete env.KRIYA_OWN_MODELS
+  delete env.KRIYA_OWN_MODEL_IDS
+  delete env.KRIYA_KEY_HASHES
+  if (ownModels.length) {
+    // The picker's extra models and their windows (no key, no address), and the key hashes DSH redacts by
+    env.KRIYA_OWN_MODELS = JSON.stringify(ownModels.map((m) => ({ id: m.id, name: m.name, contextWindow: m.contextWindow })))
+    env.KRIYA_OWN_MODEL_IDS = ownIds.join(",")
+    if (own.hashes?.length) env.KRIYA_KEY_HASHES = own.hashes.join(",")
+  }
+  const valid = personal ? usable(levels.head) && usable(levels.worker) && levels.head !== levels.worker : orchestra && START_TIERS.includes(orchestra.head) && START_TIERS.includes(orchestra.worker)
+  if (orchestra && valid) {
+    env.KRIYA_ORCHESTRA_HEAD = levels.head
+    env.KRIYA_ORCHESTRA_WORKER = levels.worker
+    if (localOn && levels.worker === LOCAL_WORKER) {
+      env.KRIYA_LOCAL_MODEL_ID = local.model
+      env.KRIYA_LOCAL_MODEL_LABEL = named[LOCAL_WORKER]
+    }
     // The picker's own "Orchestration" choice (only through the local relay, which turns it into the head tier):
     // sessions start on it, and picking a single model instead runs everything on that one model
     if (pick) {
       env.KRIYA_ORCHESTRA_PICK = ORCHESTRA_ALIAS
-      env.KRIYA_ORCHESTRA_NAME = orchestraName(orchestra, names)
+      env.KRIYA_ORCHESTRA_NAME = orchestraName(levels, named)
       env.KRIYA_START_TIER = ORCHESTRA_ALIAS
     }
   }
@@ -266,19 +301,50 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
   const tiers = await planTiers(device)
   // Harness 2.0: the owner's switches, where the person set none of their own (src/modes.js applyWorkforce)
   const turned = applyWorkforce(process.env, tiers.workforce)
+  // The Developer tab from the owner's settings, unless the person said --no-cockpit
+  if (tiers.cockpit && !(process.env[SET_BY_PERSON] ?? "").split(",").includes("cockpit")) process.env.KRIYA_COCKPIT = "on"
   if (turned.length) process.stderr.write(`kriya: Harness 2.0 is on from your Kriya owner settings: ${turned.join(", ")}. Turn one off with --no-<name>, e.g. --no-${turned[0]}.\n`)
-  // Harness 2.0 W2: with --orchestra and Kriya's offer, the session itself runs on the head level
-  const orchestra = process.env.KRIYA_ORCHESTRA === "on" && process.env.KRIYA_LOOP === "on" ? tiers.orchestra : undefined
+  const relayOn = Boolean(device) && process.env.KRIYA_RELAY !== "off"
+  // Own models (src/own-models.js): the person's keys and orchestration, with the owner's
+  // harness.ownModels and the relay that routes them; keys stay in this process
+  const own = tiers.ownModels && relayOn ? launchOwn(ownFile(), { allowed: tiers.allowed, local: true }) : null
+  if (tiers.ownModels && !relayOn && readOwn().models.length) process.stderr.write("kriya: your own models need the local relay (KRIYA_RELAY=off turns it off); using Kriya's models.\n")
+  const personChose = (process.env[SET_BY_PERSON] ?? "").split(",")
+  // Their orchestration from the Developer tab counts as their choice, under any --no-orchestra of theirs
+  if (own?.orchestra && !personChose.includes("orchestra")) process.env.KRIYA_ORCHESTRA = "on"
+  if (own?.orchestra?.worker === LOCAL_WORKER && !process.env.KRIYA_LOCAL_MODEL) process.env.KRIYA_LOCAL_MODEL = "on"
+  // Harness 2.0 W2: with the orchestra on, the session itself runs on the head level: the person's own, else Kriya's offer
+  const orchestrating = process.env.KRIYA_ORCHESTRA === "on" && process.env.KRIYA_LOOP === "on"
+  let orchestra = orchestrating ? (own?.orchestra ?? tiers.orchestra) : undefined
+  // S-1: `--local-model`, with the owner's offer, the orchestra and the relay (which sends the local model's requests)
+  const { local, note } = await localWorker(process.env, { offered: Boolean(tiers.localModels) && relayOn, orchestra })
+  if (note) process.stderr.write(`kriya: ${note}\n`)
+  if (orchestra && orchestra === own?.orchestra && orchestra.worker === LOCAL_WORKER && !local) {
+    process.stderr.write("kriya: your orchestration builds on the local model, which isn't available now; using Kriya's orchestration instead.\n")
+    orchestra = tiers.orchestra
+  }
+  if (orchestra && orchestra === own?.orchestra) {
+    const name = (id) => own.models.find((m) => m.id === id)?.name ?? (id === LOCAL_WORKER ? `Local · ${local?.model}` : tiers.names?.[id] ?? `Kriya ${id}`)
+    process.stderr.write(`kriya: your orchestration: ${name(orchestra.head)} leads, ${name(orchestra.worker)} builds.\n`)
+  }
+  // What the Developer tab may offer (plugins/cockpit): from Kriya's advert only, never the shell
+  process.env.KRIYA_OWN_MODELS_OFFER = tiers.ownModels && relayOn ? "on" : "off"
+  process.env.KRIYA_LOCAL_MODELS_OFFER = tiers.localModels && relayOn ? "on" : "off"
+  // Counts of own-key and local calls for Kriya (src/own-usage.js); never content or keys
+  const reporter = own ? usageReporter({ device, log: (text) => process.stderr.write(`kriya: ${text}\n`) }) : null
   // DSH and the Kriya plugins reach Kriya through the local relay
   // (src/gateway-proxy.js): encoded bodies past the host's firewall, and a
   // block said as such. KRIYA_RELAY=off talks to Kriya directly, as before
   const relay =
-    device && process.env.KRIYA_RELAY !== "off"
+    relayOn
       ? await startGatewayProxy({
           target: device.url,
           encode: tiers.encodings.includes(BODY_ENCODING),
           // Harness 2.0: the picker's Orchestration choice reaches Kriya as the head tier
           ...(orchestra && { aliases: { [ORCHESTRA_ALIAS]: orchestra.head } }),
+          ...(local && { local }),
+          ...(own && { routes: own.routes }),
+          ...(reporter && { onUsage: reporter.add }),
           // A Kriya deployed after launch is picked up without a restart
           checkSupport: async () => ((await models(device.url, device.token)).bodyEncodings ?? []).includes(BODY_ENCODING),
           log: (text) => process.stderr.write(`kriya: ${text}\n`),
@@ -296,7 +362,7 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       // stdout: the answer (kriya run) and ACP's protocol frames pass untouched;
       // the Web UI's stdout carries only log lines, rebranded like stderr
       stdio: ["inherit", profile === "kriya" ? "pipe" : "inherit", "pipe"],
-      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, orchestra ? orchestra.head : tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images, orchestra, Boolean(relay)),
+      env: launchEnv(relay ? { ...device, url: relay.url } : device, process.env, mode, orchestra ? orchestra.head : tiers.start, tiers.allowed, tiers.names, tiers.limits, tiers.images, orchestra, Boolean(relay), local ?? null, own),
     })
     let explained = null
     const filter = htmlFilter((text) => process.stderr.write(rebrand(text)))
@@ -329,7 +395,8 @@ export async function runDsh(profile, rest, device, mode = DEFAULT_MODE) {
       filter.end()
       explained ??= filter.explained
       if (explained) process.stderr.write(`kriya: ${explained}\n`)
-      ended.finally(() => done(code ?? (signal ? 1 : 0)))
+      // The last own-model counts go before kriya exits (best effort)
+      Promise.allSettled([ended, reporter?.close()]).finally(() => done(code ?? (signal ? 1 : 0)))
     })
   })
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@kriya-ai/harness-directory-picker",
+  "description": "Kriya Harness: the workspace folder chooser, opening where projects live",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./native": "./native.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

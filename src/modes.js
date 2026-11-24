@@ -1,3 +1,7 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
+
 // Kriya Harness modes: how much the agent may do on its own. Each mode is one
 // sandbox mode and one approval policy of DeepSeek Harness, set through the
 // kriya bundle's rows (bundle/cordis.patch.yml) from the launch variables
@@ -142,15 +146,47 @@ export const SWITCHES = [
   // The Editing Studio (track E): off until the owner turns it on; off, nothing
   // under src/edit/ loads
   ["edit", "KRIYA_EDIT", false],
+  // The Developer tab (plugins/cockpit, Kriya-Tavi docs/kriya-harness/DEVELOPER_COCKPIT.md):
+  // GitHub, connections, running servers, project health; on from the owner's harness.cockpit
+  ["cockpit", "KRIYA_COCKPIT", false],
+  // Supabase and Render tools through the person's own CLIs (plugins/providers): reads free,
+  // writes approved; the person's per computer, like repo-tools
+  ["provider-tools", "KRIYA_PROVIDER_TOOLS", false],
 ]
+
+/** Switches the person may turn on or off from the Developer tab, kept per computer in ~/.kriya/switches.json */
+export const SAVED_SWITCHES = Object.freeze(["repo-tools", "provider-tools"])
+
+const savedFile = () => join(process.env.KRIYA_HOME || join(homedir(), ".kriya"), "switches.json")
+
+/** The person's saved switches ({ "repo-tools": true }); none when the file is missing or broken */
+export function savedSwitches(file = savedFile()) {
+  try {
+    const value = JSON.parse(readFileSync(file, "utf8"))
+    return Object.fromEntries(Object.entries(value ?? {}).filter(([k, v]) => SAVED_SWITCHES.includes(k) && typeof v === "boolean"))
+  } catch {
+    return {}
+  }
+}
+
+/** Saves one of the person's switches for the next start of Kriya Harness */
+export function saveSwitch(flag, on, file = savedFile()) {
+  if (!SAVED_SWITCHES.includes(flag) || typeof on !== "boolean") throw new Error(`${flag} can't be saved.`)
+  const next = { ...savedSwitches(file), [flag]: on }
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+  writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
+  return next
+}
 
 /** The launch variable naming the switches the person set themself (a flag, or the variable in their shell) */
 export const SET_BY_PERSON = "KRIYA_SWITCHES_SET"
 
 /** Takes the switch flags out of `args` and sets each switch to "on" or "off" in `env`. */
-export function switchEnv(args, env = process.env) {
+export function switchEnv(args, env = process.env, saved = savedSwitches()) {
   const chosen = new Set((env[SET_BY_PERSON] ?? "").split(",").filter(Boolean))
   for (const [flag, name, byDefault] of SWITCHES) {
+    // The person's choice from the Developer tab, under any flag or variable of theirs
+    if (env[name] !== "on" && env[name] !== "off" && SAVED_SWITCHES.includes(flag) && typeof saved[flag] === "boolean") env[name] = saved[flag] ? "on" : "off"
     if (env[name] === "on" || env[name] === "off") chosen.add(flag)
     let value = env[name] === "on" ? true : env[name] === "off" ? false : byDefault
     for (const [form, on] of [[`--${flag}`, true], [`--no-${flag}`, false]]) {

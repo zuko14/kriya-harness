@@ -32,6 +32,9 @@
         # Harness 2.0: with the owner's orchestra and the local relay, an
         # "Orchestration" choice first (KRIYA_ORCHESTRA_PICK, from the launcher):
         # the head's limits and images; the relay sends it to Kriya as the head tier
+        # S-1: with --local-model and the owner's harness.localModels, a "Local ·
+        # <model>" entry last (KRIYA_LOCAL_MODEL_ID, set by the launcher only when
+        # it found the server); the relay sends its requests to that server
         models: !!js >-
           ((names, limits) => [...(process.env.KRIYA_ORCHESTRA_PICK && process.env.KRIYA_ORCHESTRA_HEAD ? [[process.env.KRIYA_ORCHESTRA_PICK, process.env.KRIYA_ORCHESTRA_NAME || 'Orchestration', process.env.KRIYA_ORCHESTRA_HEAD]] : []),
           ...[['balanced', 'Kriya balanced'], ['budget', 'Kriya budget'], ['escalation', 'Kriya escalation']]
@@ -39,9 +42,16 @@
           .map(([id, name]) => [id, typeof names[id] === 'string' && names[id] ? names[id] : name, id])]
           .map(([id, name, tier]) => ({ id, name,
           ...((process.env.KRIYA_MODEL_IMAGES || '').split(',').includes(tier) ? { input: ['text', 'image'] } : {}),
-          ...(limits[tier] ? { contextWindow: limits[tier].contextWindow, maxTokens: limits[tier].maxTokens } : {}) })))
+          ...(limits[tier] ? { contextWindow: limits[tier].contextWindow, maxTokens: limits[tier].maxTokens } : {}) }))
+          .concat(process.env.KRIYA_LOCAL_MODEL_ID ? [{ id: 'local', name: process.env.KRIYA_LOCAL_MODEL_LABEL || 'Local model',
+          contextWindow: Math.min(1048576, Math.max(16384, Math.floor(Number(process.env.KRIYA_LOCAL_CONTEXT)) || 32768)), maxTokens: 8192 }] : [])
+          .concat((() => { try { return JSON.parse(process.env.KRIYA_OWN_MODELS || '[]') } catch { return [] } })()
+          .filter((m) => m && typeof m.id === 'string' && limits[m.id]).map((m) => ({ id: m.id, name: String(m.name || m.id), contextWindow: limits[m.id].contextWindow, maxTokens: limits[m.id].maxTokens }))))
           ((() => { try { return JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {} } })(),
-          (() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })())
+          Object.assign((() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })(),
+          Object.fromEntries((() => { try { return JSON.parse(process.env.KRIYA_OWN_MODELS || '[]') } catch { return [] } })()
+          .filter((m) => m && typeof m.id === 'string' && /^own-\d{1,3}$/.test(m.id))
+          .map((m) => [m.id, ((w) => ({ contextWindow: w, maxTokens: Math.min(16384, Math.floor(w / 4)), headroomTokens: Math.floor(w / 4) }))(Math.min(2000000, Math.max(16384, Math.floor(Number(m.contextWindow)) || 131072)))]))))
 
 # Harness upgrade U3: compaction headroom per tier from the same limits, so
 # DSH's trigger (W − O − headroom) stays positive on a small window. No
@@ -49,9 +59,13 @@
 - id: compaction-basic
   config:
     modelPolicies: !!js >-
-      Object.entries((() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })())
+      Object.entries(Object.assign((() => { try { return JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} } })(),
+      Object.fromEntries((() => { try { return JSON.parse(process.env.KRIYA_OWN_MODELS || '[]') } catch { return [] } })()
+      .filter((m) => m && typeof m.id === 'string' && /^own-\d{1,3}$/.test(m.id))
+      .map((m) => [m.id, { headroomTokens: Math.floor(Math.min(2000000, Math.max(16384, Math.floor(Number(m.contextWindow)) || 131072)) / 4) }]))))
       .flatMap(([model, l]) => [model, ...(process.env.KRIYA_ORCHESTRA_PICK && process.env.KRIYA_ORCHESTRA_HEAD === model ? [process.env.KRIYA_ORCHESTRA_PICK] : [])]
       .map((id) => ({ provider: 'kriya', model: id, headroomTokens: l.headroomTokens })))
+      .concat(process.env.KRIYA_LOCAL_MODEL_ID ? [{ provider: 'kriya', model: 'local', headroomTokens: Math.floor(Math.min(1048576, Math.max(16384, Math.floor(Number(process.env.KRIYA_LOCAL_CONTEXT)) || 32768)) / 4) }] : [])
 
 # The starting tier: balanced, or the best tier the plan allows, chosen by
 # the launcher from GET /models (src/launch.js startTier)
@@ -141,6 +155,17 @@
       # Web UI only: it needs the web server's connection, which the other profiles lack
       disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 
+# The workspace folder chooser (plugins/directory-picker): DSH's adaptive
+# chooser, but on macOS the panel opens next to the last folder picked, else
+# in ~/Developer, instead of wherever the last panel was. Same decision, same
+# client surface; only the kriya profile has the row
+- id: directory-picker
+  disabled: true
+- insert:
+    - id: kriya-directory-picker
+      name: '@kriya-ai/harness-directory-picker'
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
+
 # The Editing Studio row (plugins/edit, track E): an "Editing Studio" row in the
 # sidebar that opens the Edit Host's own Studio app in the same tab, through one
 # route inside Connection's fence. Off unless kriya was started with --edit
@@ -199,6 +224,24 @@
     - id: kriya-repo
       name: '@kriya-ai/harness-repo'
       disabled: !!js process.env.KRIYA_REPO_TOOLS !== 'on'
+
+# Own models (plugins/keyguard; Kriya-Tavi docs/kriya-harness/OWN_MODELS.md):
+# the person's API keys never reach a model. Redacted by hash from every tool
+# result, and the key file refused to tools. Only with saved keys
+# (KRIYA_KEY_HASHES from the launcher); otherwise it registers nothing
+- insert:
+    - id: kriya-keyguard
+      name: '@kriya-ai/harness-keyguard'
+      disabled: !!js (process.env.KRIYA_KEY_HASHES || '') === ''
+
+# Supabase and Render tools (plugins/providers; Kriya-Tavi docs/kriya-harness/
+# DEVELOPER_COCKPIT.md §4): reads through the person's own CLIs run freely; the
+# one write (local migrations) needs approval; no remote database is ever
+# written. Off unless --provider-tools or the Developer tab's switch
+- insert:
+    - id: kriya-providers
+      name: '@kriya-ai/harness-providers'
+      disabled: !!js process.env.KRIYA_PROVIDER_TOOLS !== 'on'
 
 # Harness 2.0 W16, MCP P3a (plugins/mcp): the owner's registry servers that need
 # no sign-in, each tool registered only if its definition matches the hash the
@@ -288,6 +331,15 @@
       name: '@kriya-ai/harness-overview'
       # Web UI only: it needs the web server's connection, which the other profiles lack
       disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
+
+# The Developer tab (plugins/cockpit; Kriya-Tavi docs/kriya-harness/
+# DEVELOPER_COCKPIT.md): GitHub, connections through each provider's own CLI,
+# running servers and project health. Off unless KRIYA_COCKPIT=on (the
+# owner's harness.cockpit, or --cockpit); Web UI only
+- insert:
+    - id: kriya-cockpit
+      name: '@kriya-ai/harness-cockpit'
+      disabled: !!js ctx.get('profileContext')?.name !== 'kriya' || process.env.KRIYA_COCKPIT !== 'on'
 
 # Remote Control (plugins/remote): the switch in the Overview tab streams a
 # session to the person's Kriya and listens for the Control Center while this

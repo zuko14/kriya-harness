@@ -203,6 +203,10 @@ export async function startFakeKriya(script = {}) {
         ...(script.orchestra && { orchestra: script.orchestra }),
         // Harness 2.0 W11: this Kriya takes cartridge outcome counts
         ...(state.workforce && { workforce: 1 }),
+        // S-1: the owner offers local models (harness.localModels)
+        ...(script.localModels && { localModels: 1 }),
+        // Own models: the person's own keys and orchestration (harness.ownModels)
+        ...(script.ownModels && { ownModels: 1 }),
       })
     // Editing: 404 unless the test says this Kriya has it. An upload goes to `uploads`,
     // as to Storage: a signed link on this same fake, needing no token
@@ -283,6 +287,12 @@ export async function startFakeKriya(script = {}) {
       ;(state.reports ??= []).push({ id: d.id, ...body })
       if (!(d.status === "canceling" && body.status === "running")) d.status = body.status
       d.result = body.result ?? d.result
+      return send(204)
+    }
+    // Own models: counts only, recorded as sent
+    if (req.method === "POST" && path === "/own-usage") {
+      if (!script.ownModels) return fail(404, "not_found", "Not found.")
+      ;(state.ownUsage ??= []).push(body)
       return send(204)
     }
     if (req.method === "POST" && path === "/runs") {

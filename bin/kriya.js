@@ -6,6 +6,7 @@ import { handoff, HandoffError, pull } from "../plugins/kriya-handoff/index.js"
 import { KriyaError, me, revokeDevice } from "../src/api.js"
 import { doctor, nodeOk } from "../src/doctor.js"
 import { runDsh } from "../src/launch.js"
+import { localModelArgs } from "../src/local-model.js"
 import { daemonPidFile, runDaemon, serviceDefinition } from "../src/daemon.js"
 import { serve, servedFolder, ServeError } from "../src/world.js"
 import { HEAVY_CATALOG, linkSkills, SKILL_ROOTS, skillsDir, SkillsError, unlinkSkill, visibleSkills } from "../src/local-skills.js"
@@ -31,7 +32,11 @@ const HELP = `Kriya Harness (beta)
 Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
   kriya [--mode <mode>] [--no-loop] [--loop-v2] [--loop-guard] [--strict-loop] [--defensive] [--recon] [--jit-tools] [--no-browser-tools] [--router] [--no-budget] [--anchor] [--no-open] [--port <n>]
+                        [--local-model [<url>]] [--local-model-name <name>]
                         open the agent in your browser (local, 127.0.0.1)
+                        --local-model: a model on this computer (Ollama or LM Studio, found
+                        by itself, or <url> on your network) builds; Kriya's model plans
+                        and reviews. Needs the orchestra and your Kriya owner's switch
   kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--loop-guard] [--strict-loop] [--defensive] [--recon] [--jit-tools] [--no-browser-tools] [--router] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
   kriya acp             the agent for editors: an ACP server on stdin/stdout
@@ -58,9 +63,11 @@ Usage:
                         bring a workspace's changes back on a new branch
                         kriya/pull-<id> (default: your last handoff)
   kriya daemon [--folder <path>]… [--allow-full-access] [--allow-serve] [--allow-edit]
+               [--local-model [<url>]] [--local-model-name <name>]
                         let Kriya (/harness, your phone) run tasks, health checks,
                         rule decisions, handoff and pull on this computer, in this
-                        folder and each --folder only, while it runs
+                        folder and each --folder only, while it runs; with
+                        --local-model, those tasks build on this computer's model
   kriya daemon install [same options]
                         keep it running in the background (launchd / systemd)
   kriya daemon uninstall
@@ -193,7 +200,8 @@ function option(args, name) {
 }
 
 // The loop, budget and kept-request switches (src/modes.js switchEnv)
-const useLoop = (args) => switchEnv(args)
+// and --local-model [url] / --local-model-name <name> (S-1, src/local-model.js)
+const useLoop = (args) => (switchEnv(args), localModelArgs(args))
 
 function signedIn() {
   const device = readDevice()
@@ -580,13 +588,17 @@ async function main(argv) {
       let allowFullAccess = false
       let allowServe = false
       let allowEdit = false
+      // S-1/S-3: tasks from Kriya build on this computer's model too (src/local-model.js); the child runs inherit it
+      localModelArgs(args)
+      const local = process.env.KRIYA_LOCAL_MODEL
+      const localFlags = local && local !== "off" ? ["--local-model", ...(local === "on" ? [] : [local]), ...(process.env.KRIYA_LOCAL_MODEL_NAME ? ["--local-model-name", process.env.KRIYA_LOCAL_MODEL_NAME] : [])] : []
       for (let i = 0; i < args.length; i++) {
         if (args[i] === "--folder" && args[i + 1]) folders.push(args[++i])
         else if (args[i] === "--allow-full-access") allowFullAccess = true
         else if (args[i] === "--allow-serve") allowServe = true
         else if (args[i] === "--allow-edit") allowEdit = true
         else {
-          say("Usage: kriya daemon [install|uninstall] [--folder <path>]… [--allow-full-access] [--allow-serve] [--allow-edit]")
+          say("Usage: kriya daemon [install|uninstall] [--folder <path>]… [--allow-full-access] [--allow-serve] [--allow-edit] [--local-model [<url>]] [--local-model-name <name>]")
           return 1
         }
       }
@@ -598,7 +610,7 @@ async function main(argv) {
         const { dirname } = await import("node:path")
         const service = serviceDefinition({
           bin: new URL(import.meta.url).pathname,
-          args: [...offered.flatMap((f) => ["--folder", f]), ...(allowFullAccess ? ["--allow-full-access"] : []), ...(allowServe ? ["--allow-serve"] : []), ...(allowEdit ? ["--allow-edit"] : [])],
+          args: [...offered.flatMap((f) => ["--folder", f]), ...(allowFullAccess ? ["--allow-full-access"] : []), ...(allowServe ? ["--allow-serve"] : []), ...(allowEdit ? ["--allow-edit"] : []), ...localFlags],
         })
         if (!service) {
           say("kriya daemon install supports macOS (launchd) and Linux (systemd). Run kriya daemon in a terminal instead.")
@@ -714,6 +726,8 @@ async function main(argv) {
     case "--no-budget":
     case "--no-anchor":
     case "--no-open":
+    case "--local-model":
+    case "--local-model-name":
     case "--port": {
       // Only these Web UI flags pass through; never --host, so the UI stays on 127.0.0.1
       const flags = command === undefined ? [] : [command, ...args]

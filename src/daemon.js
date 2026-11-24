@@ -8,6 +8,7 @@ import { gzipSync } from "node:zlib"
 import { BASE_PATH, call, KriyaError, models } from "./api.js"
 import { doctor } from "./doctor.js"
 import { CLIENT_VERSION, kriyaHome } from "./paths.js"
+import { baseline, changesSince } from "./proof.js"
 import { confirmRule, dismissRule, listRules } from "./rules.js"
 
 // `kriya daemon` (the Control Center, CONTROL_CENTER.md in the Kriya
@@ -294,8 +295,12 @@ export async function runDaemon(options) {
       if (running.size >= MAX_RUNNING) return refuse(`This computer is already running ${MAX_RUNNING} tasks from Kriya.`)
       await report(id, "running")
       log(`kriya daemon: task in ${folder.shown} (${payload.mode})`)
-      const flow = payload.plan || payload.profile ? mkdtempSync(join(tmpdir(), "kriya-flow-")) : null
+      // S-3: Kriya asked for the proof card (harness.taskProof): live steps, the verdict, changed files
+      const proofOn = payload.proof === true
+      const flow = payload.plan || payload.profile || proofOn ? mkdtempSync(join(tmpdir(), "kriya-flow-")) : null
       const env = flow ? flowEnv(payload, flow) : {}
+      if (proofOn) Object.assign(env, { KRIYA_TASK_PROOF: "on", KRIYA_PROGRESS_FILE: env.KRIYA_PROGRESS_FILE ?? join(flow, "progress.json") })
+      const base = proofOn ? await baseline(folder.path) : null
       let sent = ""
       const beat = () => {
         const seen = env.KRIYA_PROGRESS_FILE && readProgressFile(env.KRIYA_PROGRESS_FILE)
@@ -308,6 +313,7 @@ export async function runDaemon(options) {
       const r = await child(id, runArgs(payload), folder.path, env)
       clearInterval(reporting)
       const progress = env.KRIYA_PROGRESS_FILE ? readProgressFile(env.KRIYA_PROGRESS_FILE) : null
+      const changes = proofOn ? await changesSince(base) : null
       if (flow) rmSync(flow, { recursive: true, force: true })
       const stopped = r.canceled
       // The answer on success; on failure the last error lines too (DSH writes the reason to stderr)
@@ -316,7 +322,8 @@ export async function runDaemon(options) {
         .filter((line) => line.trim() && !/^(dsh: warning: \d+ entries did not activate|kriya-[\w-]+ \(@kriya-ai\/[\w-]+\): pending)/.test(line))
         .join("\n")
       const answer = r.code === 0 ? r.out.trim() || errors : [r.out.trim(), errors].filter(Boolean).join("\n\n")
-      return report(id, stopped ? "canceled" : r.code === 0 ? "done" : "failed", { exitCode: r.code, answer: tail(answer), ...(progress && { plan: progress.plan }) })
+      const proof = proofOn ? { ...(progress?.proof ?? {}), ...(changes && { changes }) } : null
+      return report(id, stopped ? "canceled" : r.code === 0 ? "done" : "failed", { exitCode: r.code, answer: tail(answer), ...(progress?.plan && { plan: progress.plan }), ...(proof && { proof }) })
     }
     if (kind === "edit") {
       if (!capabilities.edit) return report(id, "failed", { code: "not_allowed" })

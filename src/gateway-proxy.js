@@ -93,6 +93,71 @@ export function aliased(body, path, headers, aliases) {
   return Buffer.from(JSON.stringify({ ...value, model: aliases[value.model] }))
 }
 
+// S-1 and own models (src/local-model.js, src/own-models.js): a chat request
+// for a routed model id (`local`, `own-N`) goes to that model's own endpoint,
+// with its real model name; nothing else goes there, and Kriya never sees it
+export const LOCAL_MODEL = "local"
+/** { route, body } for a routed model's chat request, else null */
+export function routedBody(body, path, headers, routes) {
+  if (!routes || !body || !path.endsWith("/chat/completions") || !/^application\/json\b/i.test(headers["content-type"] ?? "")) return null
+  const text = body.toString("utf8")
+  if (!Object.keys(routes).some((id) => text.includes(`"${id}"`))) return null
+  let value
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const route = typeof value?.model === "string" && Object.hasOwn(routes, value.model) ? routes[value.model] : null
+  if (!route) return null
+  // OpenAI-compatible streams carry token counts only when asked; OpenRouter adds its cost to them
+  const counted = value.stream ? { stream_options: { ...(value.stream_options ?? {}), include_usage: true } } : {}
+  return { route, body: Buffer.from(JSON.stringify({ ...value, ...counted, model: route.model })) }
+}
+/** The S-1 shape, kept for its callers */
+export const localBody = (body, path, headers, local) => routedBody(body, path, headers, local ? { [LOCAL_MODEL]: local } : null)?.body ?? null
+
+/** Token counts (and a provider's own cost, in micro-USD) from the end of an answer: JSON or an SSE stream */
+export function usageOf(tail) {
+  const candidates = []
+  for (const line of String(tail).split("\n").reverse()) {
+    const text = line.startsWith("data:") ? line.slice(5).trim() : line.trim()
+    if (text.startsWith("{") && /"usage"\s*:\s*\{/.test(text)) candidates.push(text)
+  }
+  if (!candidates.length && String(tail).trim().startsWith("{")) candidates.push(String(tail).trim())
+  for (const text of candidates) {
+    let value
+    try {
+      value = JSON.parse(text)
+    } catch {
+      continue
+    }
+    // Groq puts a stream's figures under x_groq
+    const u = value?.usage ?? value?.x_groq?.usage
+    if (!u || typeof u !== "object") continue
+    const int = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : 0)
+    const cost = typeof u.cost === "number" && Number.isFinite(u.cost) && u.cost >= 0 ? Math.round(u.cost * 1_000_000) : undefined
+    return { inputTokens: int(u.prompt_tokens), outputTokens: int(u.completion_tokens), ...(cost !== undefined && { reportedCostMicroUsd: cost }) }
+  }
+  return null
+}
+
+const TAIL = 256 * 1024
+/** Passes an answer through untouched, keeping its tail to read the usage when it ends */
+function counting(onEnd) {
+  const decoder = new TextDecoder()
+  let tail = ""
+  return new TransformStream({
+    transform(chunk, controller) {
+      tail = (tail + decoder.decode(chunk, { stream: true })).slice(-TAIL)
+      controller.enqueue(chunk)
+    },
+    flush() {
+      onEnd(usageOf(tail + decoder.decode()))
+    },
+  })
+}
+
 /**
  * Starts the relay in front of `target` (the signed-in Kriya's address).
  * `encode`: whether Kriya decodes encoded bodies, as known at launch.
@@ -105,9 +170,11 @@ export function aliased(body, path, headers, aliases) {
  * @param {{ target: string, encode: boolean, checkSupport?: () => Promise<boolean>, fetchImpl?: typeof fetch, log?: (text: string) => void, now?: () => number, retryMs?: number }} options
  * @returns {Promise<{ url: string, close: () => Promise<void>, encoding: () => boolean }>} url stands in for device.url inside DSH
  */
-export async function startGatewayProxy({ target, encode, checkSupport, aliases = {}, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
+export async function startGatewayProxy({ target, encode, checkSupport, aliases = {}, local = null, routes = null, onUsage = () => {}, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
   const origin = new URL(target).origin
   const support = { on: Boolean(encode), checked: now(), pending: null }
+  // Routed models: the person's own (with their key) and S-1's local model (without one)
+  const table = { ...(routes ?? {}), ...(local && { [LOCAL_MODEL]: { ...local, provider: "local" } }) }
   // One question at a time; a failed question changes nothing
   const recheck = () => {
     if (support.on || !checkSupport) return Promise.resolve(support.on)
@@ -139,7 +206,46 @@ export async function startGatewayProxy({ target, encode, checkSupport, aliases 
       if (body === null) return error(413, "This request is larger than Kriya Harness sends (64 MB).")
       const headers = {}
       for (const [name, value] of Object.entries(req.headers)) if (!DROP_REQUEST.has(name) && value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value
+      // The picker's Orchestration alias first: its head may itself be a routed model
       const plain = aliased(body?.length ? body : undefined, path, headers, aliases)
+      const routed = routedBody(plain, path, headers, Object.keys(table).length ? table : null)
+      if (routed) {
+        const { route } = routed
+        const local = route.provider === "local"
+        // Only the body, its type and the person's own key for that provider: never the device token or Kriya's headers
+        let answer
+        const send = (payload) =>
+          fetchImpl(`${route.url}/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: headers.accept ?? "*/*", ...(route.key && { authorization: `Bearer ${route.key}` }) },
+            body: payload,
+            signal: upstream.signal,
+            redirect: "error",
+          })
+        try {
+          answer = await send(routed.body)
+          // A provider that refuses stream_options: once more without it (a refused request generated nothing)
+          if ((answer.status === 400 || answer.status === 422) && routed.body.includes('"stream_options"')) {
+            const value = JSON.parse(routed.body.toString("utf8"))
+            delete value.stream_options
+            await answer.body?.cancel().catch(() => {})
+            answer = await send(Buffer.from(JSON.stringify(value)))
+          }
+        } catch (e) {
+          if (e?.name === "AbortError") return
+          log(`relay: ${local ? "the local model server" : route.provider} didn't answer (${e?.cause?.code ?? e?.name ?? "error"})`)
+          return error(502, local ? `Your local model server at ${route.url} isn't answering; start it again, or restart kriya without --local-model.` : `${new URL(route.url).host} isn't answering; try again, or choose another model.`)
+        }
+        const out = {}
+        answer.headers.forEach((value, name) => {
+          if (!DROP_RESPONSE.has(name)) out[name] = value
+        })
+        res.writeHead(answer.status, out)
+        if (!answer.body) return res.end()
+        // Counts only, from the answer's own usage figures: never its text
+        const counted = answer.ok ? answer.body.pipeThrough(counting((u) => onUsage({ provider: route.provider, model: route.model, requests: 1, inputTokens: u?.inputTokens ?? 0, outputTokens: u?.outputTokens ?? 0, ...(u?.reportedCostMicroUsd !== undefined && { reportedCostMicroUsd: u.reportedCostMicroUsd }) }))) : answer.body
+        return await pipeline(Readable.fromWeb(counted), res)
+      }
       const encodable = Boolean(plain) && /^application\/json\b/i.test(headers["content-type"] ?? "")
       if (encodable && !support.on && now() - support.checked >= RECHECK_MS) await recheck()
       const once = (encoded) => {

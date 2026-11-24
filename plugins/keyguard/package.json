@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-keyguard",
+  "description": "Kriya Harness: the person's own API keys never reach a model (redacted by hash from every tool result; the key file refused to tools)",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}

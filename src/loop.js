@@ -5,6 +5,7 @@ import { checkPremortem } from "./sentinel.js"
 import { PLAN_LIMITS, taskKind, TASK_KINDS } from "./strict.js"
 import { confirmCheck, markStalled, MAX_ATTEMPTS, readProgress, stepLabel, trimOutput, verdict, VerifyError, writeProgress } from "./verify.js"
 import { projectRoot } from "./skill-switches.js"
+import { stepsProof } from "./proof.js"
 import { cartridgeSection } from "./cartridges.js"
 import { polishSection } from "./critic.js"
 import { directionHints, EXPLORE_ROLES, MAX_TAKES, MIN_TAKES, takeSection } from "./explore.js"
@@ -168,7 +169,9 @@ export function writeSnapshot(cwd, sessionId, { current, env = process.env } = {
   if (!env.KRIYA_PROGRESS_FILE) return
   try {
     const plan = planStatus(cwd, sessionId)?.map((s) => ({ ...s, ...(s.n === current && !s.building && { building: { attempt: s.attempts + 1 } }) }))
-    writeFileSync(env.KRIYA_PROGRESS_FILE, JSON.stringify({ plan }))
+    // S-3: with Kriya's proof asked for, the code-computed verdict too (src/proof.js)
+    const proof = env.KRIYA_TASK_PROOF === "on" ? stepsProof(readProgress(projectRoot(cwd), sessionId), env) : undefined
+    writeFileSync(env.KRIYA_PROGRESS_FILE, JSON.stringify({ plan, ...(proof && { proof }) }))
   } catch {
     // The run doesn't depend on being reported
   }

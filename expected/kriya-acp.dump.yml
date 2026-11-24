@@ -111,11 +111,27 @@
           ...((process.env.KRIYA_MODEL_IMAGES || '').split(',').includes(tier) ?
           { input: ['text', 'image'] } : {}), ...(limits[tier] ? {
           contextWindow: limits[tier].contextWindow, maxTokens:
-          limits[tier].maxTokens } : {}) }))) ((() => { try { return
+          limits[tier].maxTokens } : {}) }))
+          .concat(process.env.KRIYA_LOCAL_MODEL_ID ? [{ id: 'local', name:
+          process.env.KRIYA_LOCAL_MODEL_LABEL || 'Local model', contextWindow:
+          Math.min(1048576, Math.max(16384,
+          Math.floor(Number(process.env.KRIYA_LOCAL_CONTEXT)) || 32768)),
+          maxTokens: 8192 }] : []) .concat((() => { try { return
+          JSON.parse(process.env.KRIYA_OWN_MODELS || '[]') } catch { return [] }
+          })() .filter((m) => m && typeof m.id === 'string' &&
+          limits[m.id]).map((m) => ({ id: m.id, name: String(m.name || m.id),
+          contextWindow: limits[m.id].contextWindow, maxTokens:
+          limits[m.id].maxTokens })))) ((() => { try { return
           JSON.parse(process.env.KRIYA_MODEL_NAMES || '{}') } catch { return {}
-          } })(), (() => { try { return
+          } })(), Object.assign((() => { try { return
           JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {}
-          } })())
+          } })(), Object.fromEntries((() => { try { return
+          JSON.parse(process.env.KRIYA_OWN_MODELS || '[]') } catch { return [] }
+          })() .filter((m) => m && typeof m.id === 'string' &&
+          /^own-\d{1,3}$/.test(m.id)) .map((m) => [m.id, ((w) => ({
+          contextWindow: w, maxTokens: Math.min(16384, Math.floor(w / 4)),
+          headroomTokens: Math.floor(w / 4) }))(Math.min(2000000,
+          Math.max(16384, Math.floor(Number(m.contextWindow)) || 131072)))]))))
 # == @deepseek-ai/dsh-base
 - id: session-persistence-jsonl
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -344,12 +360,22 @@
   name: '@deepseek-ai/dsh-compaction-basic'
   config:
     modelPolicies: !!js >-
-      Object.entries((() => { try { return
+      Object.entries(Object.assign((() => { try { return
       JSON.parse(process.env.KRIYA_MODEL_LIMITS || '{}') } catch { return {} }
-      })()) .flatMap(([model, l]) => [model,
-      ...(process.env.KRIYA_ORCHESTRA_PICK && process.env.KRIYA_ORCHESTRA_HEAD
-      === model ? [process.env.KRIYA_ORCHESTRA_PICK] : [])] .map((id) => ({
-      provider: 'kriya', model: id, headroomTokens: l.headroomTokens })))
+      })(), Object.fromEntries((() => { try { return
+      JSON.parse(process.env.KRIYA_OWN_MODELS || '[]') } catch { return [] }
+      })() .filter((m) => m && typeof m.id === 'string' &&
+      /^own-\d{1,3}$/.test(m.id)) .map((m) => [m.id, { headroomTokens:
+      Math.floor(Math.min(2000000, Math.max(16384,
+      Math.floor(Number(m.contextWindow)) || 131072)) / 4) }]))))
+      .flatMap(([model, l]) => [model, ...(process.env.KRIYA_ORCHESTRA_PICK &&
+      process.env.KRIYA_ORCHESTRA_HEAD === model ?
+      [process.env.KRIYA_ORCHESTRA_PICK] : [])] .map((id) => ({ provider:
+      'kriya', model: id, headroomTokens: l.headroomTokens })))
+      .concat(process.env.KRIYA_LOCAL_MODEL_ID ? [{ provider: 'kriya', model:
+      'local', headroomTokens: Math.floor(Math.min(1048576, Math.max(16384,
+      Math.floor(Number(process.env.KRIYA_LOCAL_CONTEXT)) || 32768)) / 4) }] :
+      [])
 # == @deepseek-ai/dsh-base
 - id: command-compact
   name: '@deepseek-ai/dsh-command-compact'
@@ -518,6 +544,9 @@
 - id: kriya-projects
   name: '@kriya-ai/harness-projects'
   disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
+- id: kriya-directory-picker
+  name: '@kriya-ai/harness-directory-picker'
+  disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
 - id: kriya-edit
   name: '@kriya-ai/harness-edit'
   disabled: !!js >-
@@ -538,6 +567,12 @@
 - id: kriya-repo
   name: '@kriya-ai/harness-repo'
   disabled: !!js process.env.KRIYA_REPO_TOOLS !== 'on'
+- id: kriya-keyguard
+  name: '@kriya-ai/harness-keyguard'
+  disabled: !!js (process.env.KRIYA_KEY_HASHES || '') === ''
+- id: kriya-providers
+  name: '@kriya-ai/harness-providers'
+  disabled: !!js process.env.KRIYA_PROVIDER_TOOLS !== 'on'
 - id: kriya-mcp
   name: '@kriya-ai/harness-mcp'
   disabled: !!js process.env.KRIYA_MCP !== 'on'
@@ -558,6 +593,11 @@
 - id: kriya-overview
   name: '@kriya-ai/harness-overview'
   disabled: !!js ctx.get('profileContext')?.name !== 'kriya'
+- id: kriya-cockpit
+  name: '@kriya-ai/harness-cockpit'
+  disabled: !!js >-
+    ctx.get('profileContext')?.name !== 'kriya' || process.env.KRIYA_COCKPIT !==
+    'on'
 - id: kriya-remote
   name: '@kriya-ai/harness-remote'
   disabled: !!js ctx.get('profileContext')?.name !== 'kriya'

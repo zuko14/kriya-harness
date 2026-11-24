@@ -7,6 +7,8 @@
 // --orchestra (KRIYA_ORCHESTRA=on) and Kriya offered both levels (GET /models
 // `orchestra`); otherwise every builder runs on the session's own level, as before.
 
+import { LOCAL_WORKER } from "./local-model.js"
+
 export const DEFAULT_ESCALATE_AFTER = 2
 
 /** The head and worker levels for this process, or undefined: only aliases the plan allows, never from the shell alone. */
@@ -15,7 +17,12 @@ export function orchestraFromEnv(env = process.env) {
   const allowed = String(env.KRIYA_ALLOWED_TIERS ?? "").split(",").filter(Boolean)
   const head = env.KRIYA_ORCHESTRA_HEAD
   const worker = env.KRIYA_ORCHESTRA_WORKER
-  if (!head || !worker || head === worker || !allowed.includes(head) || !allowed.includes(worker)) return undefined
+  // S-1: the local worker (src/local-model.js), only when the launcher found its server
+  const local = worker === LOCAL_WORKER && Boolean(env.KRIYA_LOCAL_MODEL_ID)
+  // Own models (src/own-models.js): the person's own, as the launcher listed them
+  const own = String(env.KRIYA_OWN_MODEL_IDS ?? "").split(",").filter(Boolean)
+  const level = (id) => allowed.includes(id) || own.includes(id)
+  if (!head || !worker || head === worker || !level(head) || !(local || level(worker))) return undefined
   return { head, worker }
 }
 

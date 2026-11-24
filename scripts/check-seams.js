@@ -123,6 +123,18 @@ export const SEAMS = [
     must: [/export type ToolGuard = \(execution: Readonly<ToolExecution>\) => string \| undefined;/],
     users: "plugins/deploy (Harness 2.0 W17, WD-22 refusals)",
   },
+  {
+    seam: "the macOS chooser's panel script line and its run hook",
+    file: "dsh-host-directory-picker-native/lib/index.js",
+    must: [/panel\.message = argv\[0\];/, /const run = internals\.run \?\? runNativeCommand;/],
+    users: "plugins/directory-picker (opens in ~/Developer)",
+  },
+  {
+    seam: "the adaptive chooser exports its decision and package names",
+    file: "dsh-host-directory-picker-auto/lib/index.js",
+    must: [/export \{ BACKEND_PACKAGES, SURFACE_PACKAGES, apply, canExecute, hasLinuxChooserBinary, inject, name, resolveDirectoryPickerBackend \}/],
+    users: "plugins/directory-picker",
+  },
 ]
 
 /**

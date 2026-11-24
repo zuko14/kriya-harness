@@ -1,0 +1,13 @@
+{
+  "name": "@kriya-ai/harness-providers",
+  "description": "Kriya Harness: Supabase and Render tools through the person's own CLIs; reads free, the one local write approved",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "UNLICENSED"
+}
