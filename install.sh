@@ -16,7 +16,7 @@
 
 set -eu
 
-KRIYA_VERSION="2.1.1"
+KRIYA_VERSION="2.2.0"
 NODE_VERSION="24.22.0"
 # The Kriya that served this script fills this in; left as is, no sign-in is started
 KRIYA_URL_DEFAULT="__KRIYA_URL__"

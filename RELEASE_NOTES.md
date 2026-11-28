@@ -1,5 +1,18 @@
 # Kriya Harness release notes
 
+## 2.2.0
+
+- **Added:** **Standalone Mode** (`--standalone`, or automatically when signed
+  out or when Kriya is unreachable due to network errors, timeouts, or 5xx
+  responses). All local Harness 2.0 features run on your machine using your own
+  API keys (OpenRouter, OpenAI, DeepSeek, Groq, Together, Mistral, or custom
+  OpenAI-compatible endpoints), your own Orchestration, or a local model
+  (`--local-model`). Explicit account refusals (401, 403, 426) are surfaced
+  and never bypassed.
+- **Added:** **Settings → Models** panel in the Web UI (and `--workforce`
+  flag) to configure your own API keys, models, and Orchestration without an
+  active session.
+
 ## 2.1.1
 
 - **Fixed:** the Developer tab showed "Kriya couldn't do that; see the

@@ -1,6 +1,6 @@
 {
   "name": "@kriya-ai/harness",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Kriya Harness (beta): a Kriya agent on your machine, built on DeepSeek Harness",
   "publishConfig": {
     "access": "public"
