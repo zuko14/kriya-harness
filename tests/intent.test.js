@@ -144,3 +144,9 @@ test("IR-07: a short one-line request isn't told to plan; a long one, or one wit
   assert.doesNotMatch(brief("Fix the date test\nand the parser\nand the docs", [], tools), /do it directly/)
   assert.doesNotMatch(brief("Fix the failing date test", [], ["read"]), /do it directly/)
 })
+
+test("IR-STEM: a plural and its singular stem the same, so a skill about 'PDF files' ranks for 'a pdf file'", () => {
+  for (const [one, many] of [["file", "files"], ["page", "pages"], ["image", "images"], ["fix", "fixes"], ["box", "boxes"], ["match", "matches"], ["class", "classes"], ["pass", "passes"]]) assert.deepEqual(tokens(one), tokens(many), `${one} / ${many}`)
+  const ranked = rankSkills("convert a pdf file", [{ name: "pdf-tools", description: "Merge and split PDF files" }, { name: "zip", description: "Archive things" }])
+  assert.equal(ranked[0]?.name, "pdf-tools")
+})

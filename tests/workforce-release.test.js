@@ -13,7 +13,8 @@ test("WT-REG-04: every Harness 2.0 switch and sharing default off; switched off,
   const wanted = { cartridges: "KRIYA_CARTRIDGES", orchestra: "KRIYA_ORCHESTRA", gates: "KRIYA_GATES", critic: "KRIYA_CRITIC", milestones: "KRIYA_MILESTONES", grounding: "KRIYA_GROUNDING", "repo-tools": "KRIYA_REPO_TOOLS", mcp: "KRIYA_MCP", deploy: "KRIYA_DEPLOY" }
   for (const [flag, name] of Object.entries(wanted)) assert.deepEqual(SWITCHES.find(([f]) => f === flag), [flag, name, false], flag)
   const env = {}
-  switchEnv([], env)
+  // No saved switches: the person's own ~/.kriya/switches.json mustn't reach this test
+  switchEnv([], env, {})
   for (const name of Object.values(wanted)) assert.equal(env[name], "off", name)
   freshHome()
   assert.deepEqual(shareStatus(), { on: false })

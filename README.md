@@ -17,6 +17,25 @@ npm install
 node bin/kriya.js login --url https://<your Kriya address>
 ```
 
+### Standalone Mode (no Kriya account needed)
+
+`npm i -g @kriya-ai/harness && kriya` works with no setup. Signed out,
+with `--standalone`, or when Kriya can't be reached (network error, a
+timeout, or a 5xx such as a suspended host's 503), Kriya Harness runs every
+Harness 2.0 feature on this computer: cartridges, orchestra, gates, critic,
+milestones, grounding, explore, the Run strip and the Developer tab. Models
+come from **Settings → Models** or the **Developer** tab: your own API keys
+(OpenRouter, OpenAI, DeepSeek, Groq, Together, Mistral, or any
+OpenAI-compatible endpoint), alone or as your own Orchestration (a head that
+plans and reviews, a worker that builds), or a local model
+(`kriya --local-model`, Ollama or LM Studio). Keys stay in
+`~/.kriya/own-models.json` (mode 600) and go only to their provider.
+
+A Kriya that answers and refuses (401 signed out, 403 paused, 426 update
+needed) is never bypassed: kriya says why and runs connected, as before.
+`kriya login`, `handoff`, `pull`, `usage`, `daemon` and `serve` need an
+account.
+
 | Command | What it does |
 | --- | --- |
 | `kriya login [--url …] [--no-browser]` | Signs this device in: shows a code, opens Kriya's connect page, waits for you to approve it there |

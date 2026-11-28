@@ -31,6 +31,9 @@ export function readDevice() {
   return null
 }
 
+/** Inside DSH: the sign-in, unless the launcher started in Standalone Mode (Kriya unreachable or --standalone) */
+export const activeDevice = (env = process.env) => (env.KRIYA_STANDALONE === "on" ? null : readDevice())
+
 /** @param {{ url: string, token: string, deviceId: string }} device */
 export function writeDevice(device) {
   ensureHome()

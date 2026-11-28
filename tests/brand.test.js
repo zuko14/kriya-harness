@@ -157,7 +157,7 @@ test("the start screen asks a plain question and says what's true", () => {
   const hero = slots.registered.find((r) => r.name === "conversation.hero.brand.mark").component({})
   const text = JSON.stringify(hero)
   assert.match(text, /What are we working on\?/)
-  assert.match(text, /Runs in this folder on your computer\. Model use counts toward your Kriya plan\./)
+  assert.match(text, /Runs in this folder on your computer, on Kriya's models or your own\./)
   assert.doesNotMatch(text, /DeepSeek/)
 })
 

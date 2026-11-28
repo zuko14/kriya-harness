@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
     const PLUGIN = "@kriya-ai/harness-cockpit"
     const KIND = "kriya-cockpit"
     const API = "api/kriya.cockpit"
+    const MODELS_API = "api/kriya.models"
     const REFRESH_MS = 5000
 
     const CSS = `
@@ -25,6 +26,9 @@ window.__ModuleLoader__.load({
 .kh-dv-mono { font-family: var(--dsw-font-code, ui-monospace, monospace); font-size: 12px; }
 .kh-dv-dim { color: var(--dsw-alias-label-tertiary); }
 .kh-dv-note { font-size: 12px; line-height: 1.45; color: var(--dsw-alias-label-tertiary); margin: 2px 0 6px; }
+.kh-dv-settings { padding: 0 0 24px; }
+.kh-dv-title { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+.kh-dv-steps { font-size: 12px; line-height: 1.5; margin: 4px 0 6px; padding-left: 18px; display: grid; gap: 6px; }
 .kh-dv-warn { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-error-primary)); }
 .kh-dv-err { color: var(--dsw-alias-state-error-primary); }
 .kh-dv-ok { color: var(--dsw-alias-state-success-primary); }
@@ -278,7 +282,32 @@ select.kh-dv-input { padding-right: 6px; }
     // Your models (Kriya-Tavi docs/kriya-harness/OWN_MODELS.md): the person's own API keys and
     // their own orchestration. A key is typed here once, saved on this computer only, and never
     // shown again (its last four characters only)
-    function OwnModels({ own, run, busy, changed }) {
+    // Standalone Mode (no Kriya account, or Kriya unreachable): what runs, and the two ways to a model
+    const WHY = {
+      signed_out: "You're not signed in to Kriya.",
+      server_unreachable: "Kriya isn't reachable right now.",
+      requested: "Started with --standalone.",
+    }
+    function GetStarted({ mode, own }) {
+      if (!mode?.standalone) return null
+      const ready = (own?.models?.length ?? 0) > 0 || Boolean(mode.localModel)
+      const rows = [h("p", { key: "w", className: "kh-dv-note" }, `${WHY[mode.reason] ?? WHY.signed_out} Kriya Harness runs in Standalone Mode: every Harness 2.0 feature works on this computer, on your own models.`)]
+      if (ready)
+        rows.push(h("p", { key: "r", className: "kh-dv-note" }, `Ready: ${[...(own?.models ?? []).map((m) => m.name), ...(mode.localModel ? [mode.localModel] : [])].join(", ")}. Choose one, or Orchestration, in the model picker.`))
+      else
+        rows.push(
+          h(
+            "ol",
+            { key: "s", className: "kh-dv-steps" },
+            h("li", null, "Add an API key under ", h("b", null, "Your models"), " below (OpenRouter, OpenAI, DeepSeek, Groq, …), load its models and add one or two; pick a head and a worker for Orchestration. Then restart kriya."),
+            h("li", null, "Or run a model on this computer: start Ollama or LM Studio, then restart with ", h(Copy, { text: "kriya --local-model" })),
+            h("li", null, "Or connect a Kriya account (cloud, or your own at localhost:6796): ", h(Copy, { text: "kriya login --url https://<your Kriya address>" }))
+          )
+        )
+      return Section("Standalone Mode", rows)
+    }
+
+    function OwnModels({ own, run, busy, changed, standalone }) {
       const [keyFor, setKeyFor] = useState(null)
       const [key, setKey] = useState("")
       const [url, setUrl] = useState("")
@@ -363,7 +392,7 @@ select.kh-dv-input { padding-right: 6px; }
       }
       const options = (role) => [h("option", { key: "", value: "" }, role === "head" ? "Choose the head…" : "Choose the worker…"), ...own.choices.filter((c) => role === "worker" || c.id !== "local").map((c) => h("option", { key: c.id, value: c.id }, c.name))]
       push("oh", h("h4", { className: "kh-dv-sub" }, "Your orchestration"))
-      push("on", h("p", { className: "kh-dv-note" }, "The head plans, reviews and takes over when the worker is stuck; the worker builds each step. Mix your models, Kriya's and a local one."))
+      push("on", h("p", { className: "kh-dv-note" }, `The head plans, reviews and takes over when the worker is stuck; the worker builds each step. Mix your models${standalone ? "" : ", Kriya's"} and a local one.`))
       push(
         "os",
         h(
@@ -378,7 +407,7 @@ select.kh-dv-input { padding-right: 6px; }
         h(
           "div",
           { className: "kh-dv-row" },
-          h("span", { className: "kh-dv-val kh-dv-dim kh-dv-wrap" }, own.orchestra ? `Saved: ${name(own.orchestra.head)} leads, ${name(own.orchestra.worker)} builds.` : "Not set: Kriya's orchestration is used."),
+          h("span", { className: "kh-dv-val kh-dv-dim kh-dv-wrap" }, own.orchestra ? `Saved: ${name(own.orchestra.head)} leads, ${name(own.orchestra.worker)} builds.` : standalone ? "Not set: one model runs the whole session." : "Not set: Kriya's orchestration is used."),
           own.orchestra && h("button", { type: "button", className: "kh-dv-btn", disabled: busy, onClick: () => run({ action: "own.orchestra", orchestra: null }).then(() => (setHead(""), setWorker(""))) }, "Clear"),
           h("button", { type: "button", className: "kh-dv-btn primary", disabled: busy || !head || !worker || head === worker || (own.orchestra?.head === head && own.orchestra?.worker === worker), onClick: () => run({ action: "own.orchestra", orchestra: { head, worker } }) }, "Save")
         )
@@ -386,6 +415,57 @@ select.kh-dv-input { padding-right: 6px; }
       if (head && head === worker) push("ow", h("p", { className: "kh-dv-note kh-dv-warn" }, "Choose two different models."))
       if (changed) push("rs", h("p", { className: "kh-dv-note", role: "status" }, "Saved. Restart Kriya Harness to use these changes."))
       return Section("Your models", rows)
+    }
+
+    // Settings → Models (in place of DSH's page, which can't save next to Kriya's own route):
+    // the person's API keys, models and Orchestration, the same as the Developer tab, no session needed
+    function SettingsModels() {
+      const [data, setData] = useState(null)
+      const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const [changed, setChanged] = useState(false)
+      const load = useCallback(async () => {
+        try {
+          const response = await fetch(MODELS_API, { credentials: "same-origin" })
+          const body = await response.json().catch(() => ({}))
+          if (!response.ok) throw new Error(body.error || `Kriya Harness answered ${response.status}.`)
+          setData(body)
+        } catch (e) {
+          setError(e.message === "Failed to fetch" ? "Kriya Harness isn't answering; is it still running?" : e.message)
+        }
+      }, [])
+      useEffect(() => {
+        load()
+      }, [load])
+      const run = async (body) => {
+        setBusy(true)
+        setError(null)
+        try {
+          const response = await fetch(MODELS_API, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+          const answer = await response.json().catch(() => ({}))
+          if (!response.ok) throw new Error(answer.error || `Kriya Harness answered ${response.status}.`)
+          if (body.action !== "own.models.list") setChanged(true)
+          if (answer.own) setData((d) => ({ ...d, own: answer.own }))
+          return answer
+        } catch (e) {
+          setError(e.message)
+          return null
+        } finally {
+          setBusy(false)
+        }
+      }
+      const standalone = Boolean(data?.mode?.standalone)
+      return h(
+        "div",
+        { className: "kh-dv kh-dv-settings" },
+        h("h2", { className: "kh-dv-title" }, "Models"),
+        h("p", { className: "kh-dv-note" }, standalone ? "Kriya Harness runs in Standalone Mode: use your own API keys (OpenRouter, OpenAI, …) or a local model, one at a time or as an Orchestration." : "Kriya's models come with your Kriya plan. Add your own API keys to use other models, alone or in your own Orchestration."),
+        error && h("div", { className: "kh-dv-error", role: "alert" }, error),
+        !data && !error && h("div", { className: "kh-dv-empty" }, "Loading…"),
+        data && h(GetStarted, { mode: data.mode, own: data.own }),
+        data?.own && h(OwnModels, { own: data.own, run, busy, changed, standalone }),
+        data && !data.own && h("p", { className: "kh-dv-note" }, "Your own models aren't turned on for your Kriya account yet; ask your Kriya owner, or run kriya --standalone.")
+      )
     }
 
     function DeveloperBody({ useTabInfo, sessionId }) {
@@ -466,8 +546,11 @@ select.kh-dv-input { padding-right: 6px; }
             )
           ),
         done && h("div", { className: "kh-dv-empty", role: "status" }, "Created: ", h("a", { className: "kh-dv-link", href: done, target: "_blank", rel: "noreferrer" }, done)),
+        h(GetStarted, { key: "gs", mode: data.mode, own: data.own }),
+        // Standalone, your models come first: nothing answers until one is set up
+        data.mode?.standalone && data.own && h(OwnModels, { key: "o", own: data.own, run, busy, changed, standalone: true }),
         h(GitHub, { key: "g", data, act, busy }),
-        data.own && h(OwnModels, { key: "o", own: data.own, run, busy, changed }),
+        !data.mode?.standalone && data.own && h(OwnModels, { key: "o", own: data.own, run, busy, changed }),
         data.ownError && Section("Your models", h("p", { className: "kh-dv-note kh-dv-err", role: "alert" }, data.ownError)),
         h(Connections, { key: "c", data, act, busy, refresh: () => load(true) }),
         h(Servers, { key: "s", data, act, busy }),
@@ -489,6 +572,8 @@ select.kh-dv-input { padding-right: 6px; }
       if (typeof document !== "undefined") ctx.effect(installStyles, "kriya-cockpit: styles")
       ctx.effect(() => ctx.sidebarRightTabs.register(definition), "kriya-cockpit: type")
       ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: PLUGIN }, DeveloperBody)), "kriya-cockpit: body")
+      // Settings → Models, where DSH's own section was (bundle/cordis.patch.yml turns that one off)
+      ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: "models", order: 10, label: () => "Models" }, SettingsModels)), "kriya-cockpit: settings models")
     }
 
     return { apply, inject, DeveloperBody, definition, API }

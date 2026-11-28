@@ -140,7 +140,7 @@ test("CK-06: the routes: switches saved, names validated, home refused, unknown 
   await assert.rejects(post({ session: "s1", action: "rm -rf" }), /doesn't know/)
   await assert.rejects(post({ session: "nope", action: "git.init" }), /isn't known/)
   const view = await routes.read(new Request(`http://x/api/kriya.cockpit?session=s1`))
-  assert.deepEqual(Object.keys(view).sort(), ["connections", "folder", "github", "health", "own", "servers", "signIn", "switches"])
+  assert.deepEqual(Object.keys(view).sort(), ["connections", "folder", "github", "health", "mode", "own", "servers", "signIn", "switches"])
 })
 
 test("CK-07: saved switches: the Developer tab's choice, under the person's flag or variable", () => {

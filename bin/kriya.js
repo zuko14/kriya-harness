@@ -20,7 +20,7 @@ import { login } from "../src/login.js"
 import { setShare, shareStatus } from "../src/outcomes.js"
 import { latestSession, makeReceipt, makeReport, ReceiptError, verifyReceipt } from "../src/receipts.js"
 import { readRelease, ReleaseError, useRelease } from "../src/release.js"
-import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob, switchEnv } from "../src/modes.js"
+import { APP_MODES, FULL_ACCESS_WARNING, MODES, ModeError, parseMode, planJob, SWITCHES, switchEnv, WORKFORCE_SWITCHES } from "../src/modes.js"
 import { CLIENT_VERSION, DSH_VERSION, kriyaHome } from "../src/paths.js"
 import { deleteDevice, ensureHome, kriyaUrl, readDevice } from "../src/store.js"
 
@@ -33,13 +33,19 @@ Usage:
   kriya login [--url <your Kriya address>] [--no-browser]
   kriya [--mode <mode>] [--no-loop] [--loop-v2] [--loop-guard] [--strict-loop] [--defensive] [--recon] [--jit-tools] [--no-browser-tools] [--router] [--no-budget] [--anchor] [--no-open] [--port <n>]
                         [--local-model [<url>]] [--local-model-name <name>]
+                        [--standalone] [--workforce] [--<switch> | --no-<switch>]
                         open the agent in your browser (local, 127.0.0.1)
+                        --standalone: no Kriya account needed (also what happens when
+                        you're signed out or Kriya is unreachable): your own API keys
+                        (OpenRouter, OpenAI, …) or a local model, with Orchestration,
+                        set up in the Developer tab. --workforce: every Harness 2.0 switch
                         --local-model: a model on this computer (Ollama or LM Studio, found
                         by itself, or <url> on your network) builds; Kriya's model plans
                         and reviews. Needs the orchestra and your Kriya owner's switch
   kriya run [--mode <mode>] [--no-loop] [--loop-v2] [--loop-guard] [--strict-loop] [--defensive] [--recon] [--jit-tools] [--no-browser-tools] [--router] [--no-budget] [--anchor] "<job>"
                         run one job and print the answer (--json for events)
-  kriya acp             the agent for editors: an ACP server on stdin/stdout
+  kriya run --standalone "<job>"   the same, without a Kriya account
+  kriya acp [--standalone]   the agent for editors: an ACP server on stdin/stdout
   kriya usage [--json]  this month's Kriya Harness spend and limit
   kriya release use --build "<cmd>" --app http://localhost:<port> [--out dist] [--routes /,/pricing]
                     [--budget-kb <n>] [--domain <host>] [--headers <names>] [--marker "<text>"]
@@ -199,14 +205,29 @@ function option(args, name) {
   return value
 }
 
-// The loop, budget and kept-request switches (src/modes.js switchEnv)
+/** Takes a bare flag out of `args`; true when it was there */
+function flag(args, name) {
+  const at = args.indexOf(name)
+  if (at !== -1) args.splice(at, 1)
+  return at !== -1
+}
+
+// --workforce: every Harness 2.0 switch on, as the person's own choice; a --no-<name>
+// or KRIYA_<NAME>=off of theirs still wins
+function workforceArg(args, env = process.env) {
+  if (!flag(args, "--workforce")) return
+  for (const [name, variable] of SWITCHES) if (WORKFORCE_SWITCHES.includes(name) && env[variable] === undefined) env[variable] = "on"
+}
+
+// The loop, budget and kept-request switches (src/modes.js switchEnv), --workforce,
 // and --local-model [url] / --local-model-name <name> (S-1, src/local-model.js)
-const useLoop = (args) => (switchEnv(args), localModelArgs(args))
+const useLoop = (args) => (workforceArg(args), switchEnv(args), localModelArgs(args))
+
 
 function signedIn() {
   const device = readDevice()
   if (!device) {
-    say("Run `kriya login` to connect your Kriya account.")
+    say("This needs a Kriya account: run `kriya login`. (kriya, kriya run and kriya acp work without one, in Standalone Mode.)")
     process.exit(1)
   }
   return device
@@ -669,69 +690,47 @@ async function main(argv) {
     }
     case "run": {
       useLoop(args)
+      const standalone = flag(args, "--standalone")
       const mode = parseMode(option(args, "--mode"))
-      const device = signedIn()
+      const device = readDevice()
       if (mode === "full") process.stderr.write(`${FULL_ACCESS_WARNING}\n`)
       // The job is the first argument that isn't a flag; plan asks for a plan
       const job = args.findIndex((arg) => !arg.startsWith("-"))
       if (mode === "plan" && job !== -1) args[job] = planJob(args[job])
-      return runDsh("kriya-run", args, device, mode)
+      return runDsh("kriya-run", args, device, mode, { standalone })
     }
     case "acp": {
       // Stdout carries only ACP frames (newline-delimited JSON-RPC), so
       // everything kriya itself says goes to stderr. DSH's ACP app takes no
       // options but --help; the transport is stdio, the editor's choice
+      const standalone = flag(args, "--standalone")
       const help = args.length === 1 && (args[0] === "--help" || args[0] === "-h")
       if (args.length && !help) {
-        process.stderr.write(`kriya acp takes no options but --help.\n`)
+        process.stderr.write(`kriya acp takes no options but --help. (--standalone runs it without a Kriya account.)\n`)
         return 1
       }
       if (help) {
         say(ACP_HELP)
         return 0
       }
+      // Signed out: Standalone Mode (src/launch.js says so on stderr)
       const device = readDevice()
-      if (!device) {
-        process.stderr.write("kriya: run `kriya login` to connect your Kriya account.\n")
-        return 1
-      }
       // The same defaults as kriya run (U10), from the editor's environment
       useLoop([])
-      return runDsh("kriya-acp", [], device)
+      return runDsh("kriya-acp", [], device, undefined, { standalone })
     }
+    // The Web UI: plain `kriya` and any flag (every switch in src/modes.js SWITCHES, --workforce,
+    // --standalone, --mode, --port, --no-open, --local-model); anything else is refused below
     case undefined:
-    case "--mode":
-    case "--loop":
-    case "--budget":
-    case "--anchor":
-    case "--no-loop":
-    case "--loop-v2":
-    case "--no-loop-v2":
-    case "--loop-guard":
-    case "--no-loop-guard":
-    case "--strict-loop":
-    case "--no-strict-loop":
-    case "--defensive":
-    case "--no-defensive":
-    case "--recon":
-    case "--no-recon":
-    case "--jit-tools":
-    case "--no-jit-tools":
-    case "--browser-tools":
-    case "--no-browser-tools":
-    case "--router":
-    case "--no-router":
-    case "--edit":
-    case "--no-edit":
-    case "--no-budget":
-    case "--no-anchor":
-    case "--no-open":
-    case "--local-model":
-    case "--local-model-name":
-    case "--port": {
+    default: {
+      if (command !== undefined && !command.startsWith("-")) {
+        say(`Unknown command ${command}.\n\n${HELP}`)
+        return 1
+      }
       // Only these Web UI flags pass through; never --host, so the UI stays on 127.0.0.1
       const flags = command === undefined ? [] : [command, ...args]
       useLoop(flags)
+      const standalone = flag(flags, "--standalone")
       const port = option(flags, "--port")
       const mode = option(flags, "--mode")
       if (mode === "plan") {
@@ -747,13 +746,10 @@ async function main(argv) {
         say(`Unknown option ${flags.find((flag) => flag !== "--no-open")}.\n\n${HELP}`)
         return 1
       }
-      const device = signedIn()
+      const device = readDevice()
       if (chosen === "full") process.stderr.write(`${FULL_ACCESS_WARNING}\n`)
-      return runDsh("kriya", [...flags, ...(port ? ["--port", port] : [])], device, chosen)
+      return runDsh("kriya", [...flags, ...(port ? ["--port", port] : [])], device, chosen, { standalone })
     }
-    default:
-      say(`Unknown command ${command}.\n\n${HELP}`)
-      return 1
   }
 }
 

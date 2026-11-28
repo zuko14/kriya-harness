@@ -107,6 +107,14 @@
   disabled: true
 - id: ui-settings-account
   disabled: true
+# DSH's Settings → Models page saves into `llm-pi-ai`, whose `kriya` route is
+# built from `!!js` values; pi-ai checks a section before evaluating them, so
+# every save there failed ("$.providers.kriya.baseURL expected string but got
+# [object Object]"). Kriya's own Models section (plugins/cockpit) takes its
+# place: the person's API keys (OpenRouter, OpenAI, …), models and Orchestration
+# through the local relay. Web UI only; a no-op in the other profiles
+- id: ui-settings-models
+  disabled: true
 
 # The Web UI shows Kriya, not DeepSeek: the official brand row is off and
 # Kriya's brand plugin (plugins/brand: sidebar mark and name, hero mark,

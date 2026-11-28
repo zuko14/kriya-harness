@@ -21,7 +21,7 @@ const name = (flag) => SWITCHES.find(([f]) => f === flag)[1]
 
 test("WT-WF-01: with Kriya's advert, the owner's switches turn on unless the person set them; without it, nothing changes", () => {
   const env = {}
-  switchEnv(["--no-gates", "--critic"], env)
+  switchEnv(["--no-gates", "--critic"], env, {})
   assert.deepEqual(env[SET_BY_PERSON].split(",").sort(), ["critic", "gates"])
   const turned = applyWorkforce(env, true)
   assert.deepEqual(turned.sort(), WORKFORCE_SWITCHES.filter((f) => f !== "gates" && f !== "critic").sort())
@@ -30,13 +30,13 @@ test("WT-WF-01: with Kriya's advert, the owner's switches turn on unless the per
   for (const flag of ["repo-tools", "deploy", "edit", "loop-v2", "anchor"]) assert.equal(env[name(flag)], "off", `${flag} stays the person's to turn on`)
   // A variable in the person's shell counts as their choice too
   const shell = { KRIYA_ORCHESTRA: "off" }
-  switchEnv([], shell)
+  switchEnv([], shell, {})
   applyWorkforce(shell, true)
   assert.equal(shell.KRIYA_ORCHESTRA, "off")
   assert.equal(shell.KRIYA_CARTRIDGES, "on")
   // No advert (harness.workforce off, or an older Kriya): exactly as before
   const plain = {}
-  switchEnv([], plain)
+  switchEnv([], plain, {})
   const before = { ...plain }
   assert.deepEqual(applyWorkforce(plain, false), [])
   assert.deepEqual(plain, before)

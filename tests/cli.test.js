@@ -75,9 +75,12 @@ test("login, doctor, run, logout", { timeout: 300_000 }, async () => {
     assert.equal(readDevice(), null)
     assert.ok(fake.state.revoked.has(token))
 
+    // Signed out, kriya run goes Standalone; with no model of the person's own it says how to get one
     const after = await kriya(["run", "Say hello"], { cwd: workspace })
     assert.equal(after.code, 1)
-    assert.match(after.stdout, /Run `kriya login`/)
+    assert.match(after.stderr, /Not signed in to Kriya\. Standalone Mode/)
+    assert.match(after.stderr, /no model is set up yet: .*or run kriya login/)
+    assert.ok(fake.state.requests.every((r) => r.headers.authorization !== "Bearer kriya-standalone"), "the stand-in token never reaches Kriya")
   } finally {
     await fake.close()
   }

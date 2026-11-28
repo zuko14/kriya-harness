@@ -134,3 +134,25 @@ test("kriya_memory_save saves an unconfirmed note; Kriya's refusals reach the mo
   delete process.env.KRIYA_DEVICE_TOKEN
   await assert.rejects(memorySearch.execute({ query: "x" }, exec), /kriya login/)
 })
+
+test("KT-OFF: signed out or Standalone Mode, the memory tools aren't offered to the model at all", async () => {
+  const { apply } = await import("../plugins/kriya-tools/index.js")
+  const registered = []
+  const ctx = { skills: { registerProvider: () => {} }, tools: { register: (t) => registered.push(t.name) } }
+  const saved = { token: process.env.KRIYA_DEVICE_TOKEN, url: process.env.KRIYA_GATEWAY_URL, standalone: process.env.KRIYA_STANDALONE }
+  try {
+    delete process.env.KRIYA_DEVICE_TOKEN
+    apply(ctx)
+    assert.deepEqual(registered, [])
+    process.env.KRIYA_DEVICE_TOKEN = "t"
+    process.env.KRIYA_GATEWAY_URL = "http://127.0.0.1:5/api/harness/v1"
+    process.env.KRIYA_STANDALONE = "on"
+    apply(ctx)
+    assert.deepEqual(registered, [], "Standalone Mode")
+    delete process.env.KRIYA_STANDALONE
+    apply(ctx)
+    assert.deepEqual(registered.sort(), ["kriya_memory_save", "kriya_memory_search"])
+  } finally {
+    for (const [k, v] of [["KRIYA_DEVICE_TOKEN", saved.token], ["KRIYA_GATEWAY_URL", saved.url], ["KRIYA_STANDALONE", saved.standalone]]) v === undefined ? delete process.env[k] : (process.env[k] = v)
+  }
+})

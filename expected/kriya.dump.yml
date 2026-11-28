@@ -697,10 +697,9 @@
   name: '@deepseek-ai/dsh-client-ui-settings-general'
   config:
     welcomeNoticeVersion: 2026-09-28.1
-# == @deepseek-ai/dsh-web-app
 - id: ui-settings-models
   name: '@deepseek-ai/dsh-client-ui-settings-models'
-# == @deepseek-ai/dsh-web-app, patched by @kriya-ai/harness
+  disabled: true
 - id: ui-plugin-manager
   name: '@deepseek-ai/dsh-client-ui-plugin-manager'
   disabled: true

@@ -19,7 +19,8 @@ export function tokens(text) {
     .filter((w) => w.length > 1 && !STOP.has(w))
     .map((w) => {
       const base = w.replace(/(ies)$/, "y")
-      const stem = base.replace(/(ing|ed|es|s)$/, (m, _e, _i, str) => (str.length - m.length >= 3 ? "" : m))
+      // "-es" only after s, x, z, ch, sh ("fixes" → "fix"); else just "-s" ("files" → "file", not "fil")
+      const stem = base.replace(/(?:(?<=(?:s|x|z|ch|sh))es|ing|ed|s)$/, (m, _i, str) => (str.length - m.length >= 3 && !/ss$/.test(str) ? "" : m))
       // "debugging" → "debugg" → "debug", "running" → "run" (not "ll", "ss", "zz")
       return stem !== base && /(ing|ed)$/.test(base) && /([b-df-hj-km-np-rtv-y])\1$/.test(stem) ? stem.slice(0, -1) : stem
     })

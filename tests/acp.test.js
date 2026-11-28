@@ -118,12 +118,12 @@ test("kriya acp --help explains the editor command and exits; other options are 
   }
 })
 
-test("kriya acp signed out: a message on stderr, nothing on stdout, exit 1", async () => {
+test("kriya acp signed out: Standalone Mode, said on stderr, nothing on stdout", async () => {
   freshHome()
   const out = await run(["acp"], { input: "" })
-  assert.equal(out.code, 1)
-  assert.equal(out.stdout, "")
-  assert.match(out.stderr, /run `kriya login` to connect your Kriya account/)
+  assert.equal(out.code, 0, out.stderr)
+  assert.equal(out.stdout, "", "stdout carries only ACP frames")
+  assert.match(out.stderr, /Not signed in to Kriya\. Standalone Mode/)
 })
 
 test("the kriya-acp profile is dsh-base, DSH's ACP app and the kriya bundle; ACP sessions start on the launcher's start tier (balanced if unset)", () => {

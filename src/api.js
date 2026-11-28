@@ -73,6 +73,8 @@ export async function call(url, method, path, { token, body, bodyText, signal, h
  * (src/launch.js), for the Kriya plugins. Null when signed out.
  */
 export function deviceFromEnv(env = process.env) {
+  // Standalone Mode (src/launch.js): the token is a stand-in and the relay has no Kriya behind it
+  if (env.KRIYA_STANDALONE === "on") return null
   const token = env.KRIYA_DEVICE_TOKEN
   const gateway = env.KRIYA_GATEWAY_URL
   if (!token || !gateway?.endsWith(BASE_PATH)) return null

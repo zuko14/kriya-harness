@@ -213,16 +213,24 @@ export function switchEnv(args, env = process.env, saved = savedSwitches()) {
 export const WORKFORCE_SWITCHES = Object.freeze(["cartridges", "orchestra", "gates", "critic", "milestones", "grounding", "explore", "runstrip", "mcp"])
 
 /**
+ * Standalone Mode (no Kriya account, or Kriya unreachable): the Harness 2.0
+ * switches that run on this computer alone. MCP reads the owner's registry
+ * from Kriya, so it stays off.
+ */
+export const STANDALONE_SWITCHES = Object.freeze(WORKFORCE_SWITCHES.filter((flag) => flag !== "mcp"))
+
+/**
  * Turns on the owner's Harness 2.0 switches the person didn't set, when Kriya
- * advertises them. Without the advertisement nothing changes (HT-REG).
+ * advertises them (or Standalone Mode, with its own list). Without the
+ * advertisement nothing changes (HT-REG).
  * @returns {string[]} the switches this turned on
  */
-export function applyWorkforce(env = process.env, advertised = false) {
+export function applyWorkforce(env = process.env, advertised = false, list = WORKFORCE_SWITCHES) {
   if (!advertised) return []
   const chosen = new Set((env[SET_BY_PERSON] ?? "").split(",").filter(Boolean))
   const turned = []
   for (const [flag, name] of SWITCHES) {
-    if (!WORKFORCE_SWITCHES.includes(flag) || chosen.has(flag) || env[name] === "on") continue
+    if (!list.includes(flag) || chosen.has(flag) || env[name] === "on") continue
     env[name] = "on"
     turned.push(flag)
   }

@@ -16,7 +16,7 @@ import { receiptFiles, verifyReceipt } from "../../src/receipts.js"
 import { formatInr, liveGates, missionRows, stepChips, stripState } from "../../src/runstrip.js"
 import { projectRoot } from "../../src/skill-switches.js"
 import { readProgress } from "../../src/verify.js"
-import { readDevice } from "../../src/store.js"
+import { activeDevice as readDevice } from "../../src/store.js"
 import { createRepo } from "../repo/repo.js"
 
 // Harness 2.0 W18 (WD-23), node half: the Run strip, Mission Control and the

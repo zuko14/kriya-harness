@@ -4,7 +4,7 @@ import { basename, join } from "node:path"
 import { deviceSender, externalDaemon, offeredProjects, runDaemon } from "../../src/daemon.js"
 import { liveChange } from "../../src/live.js"
 import { kriyaHome } from "../../src/paths.js"
-import { readDevice } from "../../src/store.js"
+import { activeDevice as readDevice } from "../../src/store.js"
 
 // Remote Control (Kriya-Tavi docs/kriya-harness/REMOTE_CONTROL.md): the switch
 // in a session's Overview tab. On, this process (1) streams that session to
@@ -280,7 +280,7 @@ export function apply(ctx) {
           const body = await request.json().catch(() => null)
           const session = await sessionOf(id)
           if (!body || !session) return reply({ error: "That session isn't known here." }, 400)
-          if (body.on === true && !readDevice()) return reply({ error: "Sign in with kriya login first." }, 400)
+          if (body.on === true && !readDevice()) return reply({ error: process.env.KRIYA_STANDALONE === "on" ? "Remote Control needs Kriya, and this app runs in Standalone Mode; restart kriya once Kriya is reachable (or after kriya login)." : "Sign in with kriya login first." }, 400)
           // The allowances exist only while Remote Control is on
           if ((body.serve === true || body.fullAccess === true || body.edit === true) && !r.state.sessions[id]) return reply({ error: "Turn on Remote Control first." }, 400)
           await r.set(id, { on: body.on, serve: body.serve, fullAccess: body.fullAccess, edit: body.edit }, session)

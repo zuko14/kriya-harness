@@ -433,8 +433,10 @@ test("ET-REG-01: off is the default, and off runs nothing", async () => {
 
 test("ET-REG-01: `kriya --edit` is a known flag, and `edit` with an unknown word says what it takes", async () => {
   const home = freshHome()
-  const flag = await kriya(["--edit"], { KRIYA_HOME: home })
+  // A bad --port stops before launch (signed out, plain kriya now starts in Standalone Mode)
+  const flag = await kriya(["--edit", "--port", "nope"], { KRIYA_HOME: home })
   assert.doesNotMatch(flag.stdout, /Unknown/)
+  assert.match(flag.stdout, /--port takes a number/)
   const word = await kriya(["edit", "fly"], { KRIYA_HOME: home, KRIYA_EDIT: "on" })
   assert.equal(word.code, 1)
   assert.match(word.stdout, /kriya edit setup/)

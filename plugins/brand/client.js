@@ -355,7 +355,7 @@ window.__ModuleLoader__.load({
           jsx("span", { className: "kh-hero-question", children: "What are we working on?" }),
           jsx("span", {
             className: "kh-hero-note",
-            children: "Runs in this folder on your computer. Model use counts toward your Kriya plan.",
+            children: "Runs in this folder on your computer, on Kriya's models or your own.",
           }),
         ],
       })

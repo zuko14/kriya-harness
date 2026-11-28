@@ -170,8 +170,10 @@ function counting(onEnd) {
  * @param {{ target: string, encode: boolean, checkSupport?: () => Promise<boolean>, fetchImpl?: typeof fetch, log?: (text: string) => void, now?: () => number, retryMs?: number }} options
  * @returns {Promise<{ url: string, close: () => Promise<void>, encoding: () => boolean }>} url stands in for device.url inside DSH
  */
-export async function startGatewayProxy({ target, encode, checkSupport, aliases = {}, local = null, routes = null, onUsage = () => {}, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
-  const origin = new URL(target).origin
+export async function startGatewayProxy({ target = null, offline = null, encode, checkSupport, aliases = {}, local = null, routes = null, onUsage = () => {}, fetchImpl = fetch, log = () => {}, now = Date.now, retryMs = RETRY_MS, outageMs = OUTAGE_MS, outageWaitMs = OUTAGE_WAIT_MS }) {
+  // Standalone Mode: no Kriya behind the relay; only routed models answer, anything else gets `offline`
+  const origin = target ? new URL(target).origin : null
+  if (!origin && !offline) throw new Error("The relay needs a Kriya address, or an offline answer")
   const support = { on: Boolean(encode), checked: now(), pending: null }
   // Routed models: the person's own (with their key) and S-1's local model (without one)
   const table = { ...(routes ?? {}), ...(local && { [LOCAL_MODEL]: { ...local, provider: "local" } }) }
@@ -246,6 +248,8 @@ export async function startGatewayProxy({ target, encode, checkSupport, aliases 
         const counted = answer.ok ? answer.body.pipeThrough(counting((u) => onUsage({ provider: route.provider, model: route.model, requests: 1, inputTokens: u?.inputTokens ?? 0, outputTokens: u?.outputTokens ?? 0, ...(u?.reportedCostMicroUsd !== undefined && { reportedCostMicroUsd: u.reportedCostMicroUsd }) }))) : answer.body
         return await pipeline(Readable.fromWeb(counted), res)
       }
+      // A 400 is shown and not retried (DSH retries 5xx), so the person reads what to do at once
+      if (!origin) return reply(400, JSON.stringify({ error: { message: offline, type: "kriya_offline", code: "kriya_offline" } }))
       const encodable = Boolean(plain) && /^application\/json\b/i.test(headers["content-type"] ?? "")
       if (encodable && !support.on && now() - support.checked >= RECHECK_MS) await recheck()
       const once = (encoded) => {

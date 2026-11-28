@@ -96,13 +96,15 @@ export function localModelArgs(args, env = process.env) {
  * orchestra is on (the local model only builds), and a server answered.
  * @returns {Promise<{ local?: { url: string, model: string, server: string }, note?: string }>}
  */
-export async function localWorker(env, { offered, orchestra }, find = findLocalModel) {
+export async function localWorker(env, { offered, orchestra, alone = false }, find = findLocalModel) {
   const asked = env.KRIYA_LOCAL_MODEL
   if (!asked || asked === "off") return {}
   if (!offered) return { note: "local models aren't turned on for your Kriya account yet (the owner's harness.localModels); using Kriya's models." }
-  if (!orchestra) return { note: "a local model builds the orchestra's worker steps, and the orchestra is off; using Kriya's models." }
+  // Standalone, the local model may run the whole session by itself
+  if (!orchestra && !alone) return { note: "a local model builds the orchestra's worker steps, and the orchestra is off; using Kriya's models." }
   const found = await find({ url: asked === "on" ? undefined : asked, name: env.KRIYA_LOCAL_MODEL_NAME || undefined })
-  if ("error" in found) return { note: `${found.error} Using Kriya's models.` }
+  if ("error" in found) return { note: `${found.error} ${alone ? "Using your own models only." : "Using Kriya's models."}` }
+  if (!orchestra) return { local: found, note: `${found.model} (${found.server}, ${found.url}) runs on this computer; choose it in the model picker.` }
   return {
     local: found,
     note: `${found.model} (${found.server}, ${found.url}) builds on this computer; Kriya's ${orchestra.head} plans, reviews and takes over when it's stuck.${found.server === "Ollama" ? " Give Ollama a 32k context: OLLAMA_CONTEXT_LENGTH=32768 ollama serve." : ""}`,

@@ -14,6 +14,9 @@ export const name = "kriya-cockpit"
 export const inject = ["connection", "sessions"]
 
 export const ROUTE = "/api/kriya.cockpit"
+// Settings → Models (Kriya's, in place of DSH's): the same own-model setup, with no session needed
+export const MODELS_ROUTE = "/api/kriya.models"
+const OWN_ACTIONS = new Set(["own.key.save", "own.key.remove", "own.models.list", "own.model.add", "own.model.remove", "own.orchestra"])
 export const CACHE_MS = 60_000
 const REPO_NAME = /^[A-Za-z0-9._-]{1,100}$/
 
@@ -30,6 +33,13 @@ export function handler(host) {
   const ownOn = host.ownOn ?? (() => process.env.KRIYA_OWN_MODELS_OFFER === "on")
   const ownPath = host.ownFile ?? ownFile()
   const fetchImpl = host.fetchImpl ?? fetch
+  const standalone = host.standalone ?? (() => process.env.KRIYA_STANDALONE === "on")
+  // How this app runs, for the tab's first card: connected to Kriya, or Standalone Mode and why
+  const mode = () => ({
+    standalone: standalone(),
+    ...(standalone() && { reason: ["signed_out", "server_unreachable", "requested"].includes(process.env.KRIYA_STANDALONE_REASON) ? process.env.KRIYA_STANDALONE_REASON : "signed_out" }),
+    localModel: process.env.KRIYA_LOCAL_MODEL_ID ? String(process.env.KRIYA_LOCAL_MODEL_LABEL || process.env.KRIYA_LOCAL_MODEL_ID).slice(0, 80) : null,
+  })
   // What the head and worker can be: this plan's Kriya tiers, the person's own models, and the local model
   const choices = () => {
     let names = {}
@@ -38,7 +48,8 @@ export function handler(host) {
     } catch {
       names = {}
     }
-    const tiers = String(process.env.KRIYA_ALLOWED_TIERS || "balanced,budget,escalation").split(",").filter(Boolean)
+    // Standalone Mode: no Kriya tier answers, so none is offered
+    const tiers = standalone() ? [] : String(process.env.KRIYA_ALLOWED_TIERS || "balanced,budget,escalation").split(",").filter((t) => ["balanced", "budget", "escalation"].includes(t))
     return [
       // The names keep their " · <tier>" when two tiers share a model, so each choice reads differently
       ...tiers.map((t) => ({ id: t, name: `Kriya · ${String(names[t] ?? t)}` })),
@@ -98,7 +109,35 @@ export function handler(host) {
     return { repoTools: { saved: s["repo-tools"] ?? null, running: process.env.KRIYA_REPO_TOOLS === "on" }, providerTools: { saved: s["provider-tools"] ?? null, running: process.env.KRIYA_PROVIDER_TOOLS === "on" } }
   }
 
+  async function ownAct(body) {
+    if (!ownOn()) throw new CockpitError("Your own models aren't turned on for your Kriya account yet.")
+    if (body.action === "own.key.save") saveKey(body.provider, body.key, body.url, ownPath)
+    else if (body.action === "own.key.remove") removeKey(body.provider, ownPath)
+    else if (body.action === "own.models.list") return { models: await listProviderModels(body.provider, ownPath, fetchImpl) }
+    else if (body.action === "own.model.add") addModel(body.provider, body.model, body.contextWindow, ownPath)
+    else if (body.action === "own.model.remove") removeModel(body.id, ownPath)
+    else setOrchestra(body.orchestra ?? null, ownPath)
+    // Never the key: the masked view only
+    return { done: body.action, own: own() }
+  }
+  const parse = async (request) => {
+    try {
+      return JSON.parse(await request.text())
+    } catch {
+      throw new CockpitError("Kriya couldn't read that request.")
+    }
+  }
+
   return {
+    // Settings → Models: how this app runs and the person's own models, outside any session
+    async models() {
+      return { mode: mode(), own: own() }
+    },
+    async modelsAct(request) {
+      const body = await parse(request)
+      if (!OWN_ACTIONS.has(body?.action)) throw new CockpitError("Kriya doesn't know that action.")
+      return ownAct(body)
+    },
     async read(request) {
       const url = new URL(request.url)
       const cwd = await folder(url.searchParams.get("session"))
@@ -117,15 +156,11 @@ export function handler(host) {
         section("the project's health", () => health(cwd, run), { stack: [], scripts: [], check: null, git: false, tracked: [], unignored: [] }),
         section("your models", () => own(), null),
       ])
-      return { folder: cwd, connections: Array.isArray(list) ? list : [], ...(list?.error && { connectionsError: list.error }), signIn: signIn.state(), github: gh, servers: running, health: checkup, switches: saved(), own: ownView?.error ? null : ownView, ...(ownView?.error && { ownError: ownView.error }) }
+      return { folder: cwd, mode: mode(), connections: Array.isArray(list) ? list : [], ...(list?.error && { connectionsError: list.error }), signIn: signIn.state(), github: gh, servers: running, health: checkup, switches: saved(), own: ownView?.error ? null : ownView, ...(ownView?.error && { ownError: ownView.error }) }
     },
     async act(request) {
-      let body
-      try {
-        body = JSON.parse(await request.text())
-      } catch {
-        throw new CockpitError("Kriya couldn't read that request.")
-      }
+      const body = await parse(request)
+      if (OWN_ACTIONS.has(body?.action)) return ownAct(body)
       const cwd = await folder(body?.session)
       switch (body?.action) {
         case "github.signin":
@@ -157,22 +192,6 @@ export function handler(host) {
           if (!["repo-tools", "provider-tools"].includes(flag) || typeof body.on !== "boolean") throw new CockpitError("That switch can't be set here.")
           switches.save(flag, body.on)
           return { done: "switch", switches: saved() }
-        }
-        case "own.key.save":
-        case "own.key.remove":
-        case "own.models.list":
-        case "own.model.add":
-        case "own.model.remove":
-        case "own.orchestra": {
-          if (!ownOn()) throw new CockpitError("Your own models aren't turned on for your Kriya account yet.")
-          if (body.action === "own.key.save") saveKey(body.provider, body.key, body.url, ownPath)
-          else if (body.action === "own.key.remove") removeKey(body.provider, ownPath)
-          else if (body.action === "own.models.list") return { models: await listProviderModels(body.provider, ownPath, fetchImpl) }
-          else if (body.action === "own.model.add") addModel(body.provider, body.model, body.contextWindow, ownPath)
-          else if (body.action === "own.model.remove") removeModel(body.id, ownPath)
-          else setOrchestra(body.orchestra ?? null, ownPath)
-          // Never the key: the masked view only
-          return { done: body.action, own: own() }
         }
         default:
           throw new CockpitError("Kriya doesn't know that action.")
@@ -208,6 +227,14 @@ export function apply(ctx) {
       methods: ["GET", "POST"],
       requestBody: "buffered",
       fetch: (request) => answer(request.method === "POST" ? routes.act : routes.read, request, log),
+    })
+  )
+  ctx.effect(() =>
+    ctx.connection.fetch.register({
+      path: MODELS_ROUTE,
+      methods: ["GET", "POST"],
+      requestBody: "buffered",
+      fetch: (request) => answer(request.method === "POST" ? routes.modelsAct : routes.models, request, log),
     })
   )
 }

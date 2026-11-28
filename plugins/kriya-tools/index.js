@@ -185,6 +185,9 @@ export const memorySave = defineTool({
 export function apply(ctx) {
   ctx.skills.registerProvider(() => kriyaSkills())
   ctx.skills.registerProvider((control) => switchProvider(control))
+  // Signed out or Standalone Mode (the launch's sign-in is fixed for DSH's life): no memory
+  // tools at all, so the model never spends a step on one that can only answer "signed out"
+  if (!deviceFromEnv()) return
   ctx.tools.register(memorySearch)
   ctx.tools.register(memorySave)
 }

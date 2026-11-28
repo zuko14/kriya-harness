@@ -17,6 +17,8 @@ export function usageReporter({ device, post = (body) => call(device.url, "POST"
   const pending = new Map()
   let stopped = false
   let flushing = null
+  // One line per outage, not one every FLUSH_MS
+  let warned = false
   const add = (e) => {
     if (stopped || !e?.provider || !e?.model) return
     const key = `${e.provider}\0${e.model}`
@@ -36,6 +38,7 @@ export function usageReporter({ device, post = (body) => call(device.url, "POST"
         for (const e of batch) pending.delete(`${e.provider}\0${e.model}`)
         try {
           await post({ entries: batch.map((e) => ({ ...e, requests: Math.min(e.requests, 10_000) })) })
+          warned = false
         } catch (error) {
           if (error instanceof KriyaError && error.status === 404) {
             stopped = true
@@ -44,7 +47,8 @@ export function usageReporter({ device, post = (body) => call(device.url, "POST"
           }
           // Kept for the next try, bounded
           for (const e of batch) if (pending.size < MAX_KEYS) pending.set(`${e.provider}\0${e.model}`, e)
-          log(`own-model usage not sent yet (${error?.code ?? error?.message ?? "error"}); will retry`)
+          if (!warned) log(`own-model usage not sent yet (${error?.code ?? error?.message ?? "error"}); will retry quietly`)
+          warned = true
           return
         }
       }
